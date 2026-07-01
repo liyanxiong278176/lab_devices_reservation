@@ -57,7 +57,7 @@
 
 | 层 | 选型 | 版本/说明 |
 |---|---|---|
-| 框架 | Spring Boot | 3.2.x |
+| 框架 | Spring Boot | 3.2.5（父 POM 统一管理，见 §3.1） |
 | 语言 | Java | 17 |
 | 构建 | Maven | - |
 | ORM | MyBatis-Plus | 单表 CRUD 免 SQL |
@@ -70,6 +70,38 @@
 | 测试 | JUnit5 + Mockito + Testcontainers(MySQL) | - |
 
 **依赖约束**：阶段1 仅运行时依赖 MySQL。无 Redis / MQ / WebSocket。
+
+### 3.1 Maven 依赖清单（pom.xml）
+
+groupId/artifactId 与包名对齐：`groupId=com.lab`、`artifactId=lab-devices-reservation`、Java 包 `com.lab.reservation`。以 **`spring-boot-starter-parent:3.2.5`** 为父 POM（统一管理大部分版本，Java 17）。
+
+**A. 由父 POM 管理版本（无需写 `<version>`）**
+
+| groupId:artifactId | scope | 用途 |
+|---|---|---|
+| org.springframework.boot:spring-boot-starter-web | compile | Spring MVC / REST |
+| org.springframework.boot:spring-boot-starter-security | compile | 鉴权框架 |
+| org.springframework.boot:spring-boot-starter-validation | compile | `@Validated` 参数校验 |
+| com.mysql:mysql-connector-j | runtime | MySQL 驱动 |
+| org.flywaydb:flyway-core | compile | 数据库迁移 |
+| org.flywaydb:flyway-mysql | compile | Flyway 对 MySQL 的支持 |
+| org.projectlombok:lombok | provided | 简化 POJO（可选/注解处理器） |
+| org.springframework.boot:spring-boot-starter-test | test | JUnit5 + Mockito + AssertJ |
+
+**B. 需显式指定版本**
+
+| groupId:artifactId | 版本 | scope | 用途 |
+|---|---|---|---|
+| com.baomidou:mybatis-plus-spring-boot3-starter | 3.5.5 | compile | ORM（**SB3 专用 starter**，注意是 `boot3`） |
+| com.github.xiaoymin:knife4j-openapi3-jakarta-spring-boot-starter | 4.5.0 | compile | Knife4j/Swagger（jakarta，SB3） |
+| io.jsonwebtoken:jjwt-api | 0.12.5 | compile | JWT 接口 |
+| io.jsonwebtoken:jjwt-impl | 0.12.5 | runtime | JWT 实现 |
+| io.jsonwebtoken:jjwt-jackson | 0.12.5 | runtime | JWT JSON 序列化 |
+| cn.hutool:hutool-all | 5.8.27 | compile | 工具库 |
+| org.testcontainers:mysql | 1.19.7 | test | 并发集成测试：真实 MySQL |
+| org.testcontainers:junit-jupiter | 1.19.7 | test | Testcontainers × JUnit5 |
+
+> 上述为 Spring Boot 3.2.5 + Java 17 下的已知良好搭配。实现第 1 步（搭骨架）落地 pom.xml 后，以 `mvn -q -DskipTests compile` 验证可编译再推进；个别库如有兼容的新版本可在验证后微调。
 
 ---
 
