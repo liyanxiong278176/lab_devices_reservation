@@ -1,0 +1,29 @@
+spring:
+  profiles:
+    active: dev
+  application:
+    name: lab-devices-reservation
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+lab:
+  slot:
+    minutes: 15
+    work-start: "08:00"
+    work-end: "22:00"
+    check-in-grace-minutes: 0
+jwt:
+  secret: "change-me-please-this-is-a-dev-secret-key-at-least-32-bytes-long!!"
+  access-ttl: 7200
+  refresh-ttl: 604800
