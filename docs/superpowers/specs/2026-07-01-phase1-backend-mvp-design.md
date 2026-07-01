@@ -75,30 +75,75 @@
 
 ## 4. 架构与包结构
 
-标准分层 + 按业务模块组织（模块内 controller/service/mapper/entity/dto/vo）：
+**经典 MVC 三层分包**（按层平铺，非按模块）。MyBatis-Plus 下数据访问层包名为 `mapper`（接口 `extends BaseMapper<T>`，等同传统 DAO/repository 层），数据模型层包名为 `entity`（等同 model/domain 层）。
 
 ```
 com.lab.reservation
-├── ReservationApplication.java
-├── common/
-│   ├── result/       Result<T>、ResultCode（业务错误码枚举）
-│   ├── exception/    BusinessException、GlobalExceptionHandler
-│   ├── security/     JwtUtils、JwtAuthenticationFilter、UserDetails 实现
-│   ├── enums/        DeviceStatus、ReservationStatus、RoleType、UserType
-│   ├── annotation/   @Log（操作日志注解）
-│   └── aspect/       操作日志切面
-├── config/           SecurityConfig、MyBatisPlusConfig、Knife4jConfig、WebConfig、MetaObjectHandler
-└── module/
-    ├── auth/         登录、注册、token 刷新、登出、当前用户
-    ├── user/         用户管理（CRUD、封禁解封）
-    ├── rbac/         角色、权限、用户-角色、角色-权限
-    ├── lab/          实验室（manager_id 关联管理员）
-    ├── device/       设备分类（树）、设备、设备日历
-    ├── reservation/  预约 + 槽位(reservation_item) + SlotCalculator + 冲突检测 + 签到/归还
-    ├── approval/     审批（按实验室范围）
-    ├── notification/ DB 通知
-    └── dashboard/    统计数字汇总
+├── ReservationApplication.java        # 启动入口
+│
+├── controller                         # 控制器层：HTTP 请求、参数校验、调用 Service
+│   ├── AuthController
+│   ├── UserController
+│   ├── LabController
+│   ├── DeviceController / DeviceCategoryController
+│   ├── ReservationController
+│   ├── ApprovalController
+│   ├── RepairReportController
+│   ├── NotificationController
+│   └── DashboardController
+│
+├── service                            # 业务逻辑层：核心业务规则、事务控制
+│   ├── AuthService / UserService / LabService
+│   ├── DeviceService / ReservationService / ApprovalService
+│   ├── RepairReportService / NotificationService / DashboardService
+│   ├── SlotCalculatorService          # 槽位计算（防超约核心，纯逻辑）
+│   └── impl/                          # 各 Service 实现类
+│
+├── mapper                             # 数据访问层 (DAO)：MyBatis-Plus，extends BaseMapper<T>
+│   ├── SysUserMapper / SysRoleMapper / SysPermissionMapper
+│   ├── LabMapper / DeviceMapper / DeviceCategoryMapper
+│   ├── ReservationMapper / ReservationItemMapper
+│   ├── RepairReportMapper / NotificationMapper / OperationLogMapper
+│
+├── entity                             # 数据模型层：数据库表实体 (PO)
+│   ├── SysUser / SysRole / SysUserRole / SysPermission
+│   ├── Lab / DeviceCategory / Device
+│   ├── Reservation / ReservationItem
+│   ├── RepairReport / Notification / OperationLog
+│   └── enums/                         # 枚举：DeviceStatus / ReservationStatus / RepairStatus / RoleType / UserType
+│
+├── dto                                # 数据传输对象：层间/前后端请求体
+│   ├── auth/LoginDTO
+│   ├── reservation/ReservationCreateDTO / ReservationQueryDTO
+│   ├── repair/RepairCreateDTO ...
+│
+├── vo                                 # 视图对象：返回前端（剥离敏感信息）
+│   ├── auth/LoginVO / UserInfoVO
+│   ├── device/DeviceVO / DeviceCalendarVO
+│   ├── reservation/ReservationVO
+│   └── dashboard/DashboardSummaryVO ...
+│
+├── common                             # 公共：统一响应、结果码
+│   └── result/Result / ResultCode
+│
+├── exception                          # 全局异常处理
+│   ├── BusinessException
+│   └── GlobalExceptionHandler
+│
+├── security                           # 鉴权：JWT 工具、过滤器、UserDetails
+│   ├── JwtUtils
+│   ├── JwtAuthenticationFilter
+│   └── SecurityUserDetails
+│
+├── config                             # 配置类
+│   └── SecurityConfig / MyBatisPlusConfig / Knife4jConfig / WebConfig
+│
+└── aspect                             # AOP：操作日志（@Log 注解 + OperationLogAspect）
+    ├── Log
+    └── OperationLogAspect
 ```
+
+> 命名对照：`mapper` = 你模板里的 repository/dao（MyBatis-Plus 习惯名）；`entity` = model/domain。`security`、`aspect` 是为 JWT 鉴权与操作日志切面新增的标准包，其余与经典 MVC 模板一致。dto/vo 按业务子域分子包（auth/reservation/repair…），便于归类。
 
 ---
 
