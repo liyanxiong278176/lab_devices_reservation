@@ -23,6 +23,8 @@ const menuItems = computed<MenuItem[]>(() => {
   const children = root?.children || []
   return children
     .filter((c) => c.meta?.title)
+    // hidden 路由（设备详情/建预约/预约详情）不进侧边栏菜单
+    .filter((c) => !(c.meta as Record<string, unknown>)?.hidden)
     .filter((c) => {
       const need = c.meta?.roles as string[] | undefined
       if (!need || need.length === 0) return true

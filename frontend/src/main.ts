@@ -7,6 +7,7 @@ import 'element-plus/dist/index.css'
 import './styles/theme.scss'
 import App from './App.vue'
 import router from './router'
+import { vPermission } from './directives/permission'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -14,5 +15,7 @@ pinia.use(piniaPluginPersistedstate)
 for (const [k, v] of Object.entries(ElementPlusIconsVue)) {
   app.component(k, v as any)
 }
+// 注册 v-permission 指令（按权限码裁剪元素）
+app.directive('permission', vPermission)
 app.use(pinia).use(router).use(ElementPlus)
 app.mount('#app')
