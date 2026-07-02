@@ -1,14 +1,27 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Bell } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
+import { useNotificationStore } from '@/stores/notification'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const appStore = useAppStore()
+const notifStore = useNotificationStore()
+
+// 通知未读数轮询（S1 兜底，S3 升级为 WebSocket）
+let notifTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  notifStore.loadUnread()
+  notifTimer = setInterval(() => notifStore.loadUnread(), 30000)
+})
+onUnmounted(() => {
+  if (notifTimer) clearInterval(notifTimer)
+})
 
 interface MenuItem {
   path: string
@@ -81,6 +94,16 @@ function onLogout() {
           <span class="layout__title">实验室预约系统</span>
         </div>
         <div class="layout__header-right">
+          <el-badge
+            :value="notifStore.unread"
+            :hidden="notifStore.unread === 0"
+            :max="99"
+            class="layout__notif"
+          >
+            <el-icon class="layout__bell" @click="router.push('/notifications')">
+              <Bell />
+            </el-icon>
+          </el-badge>
           <span class="layout__user">{{ displayName }}</span>
           <el-button text @click="onLogout">退出登录</el-button>
         </div>
@@ -158,6 +181,20 @@ function onLogout() {
 .layout__user {
   font-size: 14px;
   color: var(--el-text-color-secondary); // muted #6b7280
+}
+
+.layout__notif {
+  margin-right: 4px;
+}
+
+.layout__bell {
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--el-text-color-regular);
+}
+
+.layout__bell:hover {
+  color: var(--el-color-primary);
 }
 
 .layout__main {
