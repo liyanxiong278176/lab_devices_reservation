@@ -1,6 +1,7 @@
 package com.lab.reservation.controller;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.lab.reservation.aspect.Log;
 import com.lab.reservation.common.result.Result;
 import com.lab.reservation.dto.approval.BatchApproveDTO;
 import com.lab.reservation.dto.approval.RejectDTO;
@@ -46,6 +47,7 @@ public class ApprovalController {
 
     @Operation(summary = "通过预约（PENDING → APPROVED，保留槽）")
     @PostMapping("/{id}/approve")
+    @Log("审批通过")
     public Result<Void> approve(@PathVariable Long id,
                                 @AuthenticationPrincipal SecurityUserDetails ud) {
         approvalService.approve(id, ud);
@@ -54,6 +56,7 @@ public class ApprovalController {
 
     @Operation(summary = "拒绝预约（PENDING → REJECTED，释放槽）")
     @PostMapping("/{id}/reject")
+    @Log("审批拒绝")
     public Result<Void> reject(@PathVariable Long id,
                                @Valid @RequestBody RejectDTO dto,
                                @AuthenticationPrincipal SecurityUserDetails ud) {
@@ -63,6 +66,7 @@ public class ApprovalController {
 
     @Operation(summary = "批量通过（任一非 PENDING 回滚整体）")
     @PostMapping("/batch-approve")
+    @Log("批量审批通过")
     public Result<Void> batchApprove(@Valid @RequestBody BatchApproveDTO dto,
                                      @AuthenticationPrincipal SecurityUserDetails ud) {
         approvalService.batchApprove(dto.getIds(), ud);

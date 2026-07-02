@@ -1,6 +1,7 @@
 package com.lab.reservation.controller;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.lab.reservation.aspect.Log;
 import com.lab.reservation.common.result.Result;
 import com.lab.reservation.dto.device.DeviceQueryDTO;
 import com.lab.reservation.dto.device.DeviceSaveDTO;
@@ -60,6 +61,7 @@ public class DeviceController {
     @Operation(summary = "新建设备")
     @PostMapping
     @PreAuthorize("hasAuthority('device:manage')")
+    @Log("创建设备")
     public Result<DeviceVO> create(@Valid @RequestBody DeviceSaveDTO dto,
                                    @AuthenticationPrincipal SecurityUserDetails ud) {
         return Result.ok(deviceService.create(dto, ud));
@@ -68,6 +70,7 @@ public class DeviceController {
     @Operation(summary = "更新设备")
     @PutMapping
     @PreAuthorize("hasAuthority('device:manage')")
+    @Log("更新设备")
     public Result<DeviceVO> update(@RequestParam Long id,
                                    @Valid @RequestBody DeviceSaveDTO dto,
                                    @AuthenticationPrincipal SecurityUserDetails ud) {
@@ -77,6 +80,7 @@ public class DeviceController {
     @Operation(summary = "删除设备")
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('device:manage')")
+    @Log("删除设备")
     public Result<?> delete(@PathVariable Long id,
                             @AuthenticationPrincipal SecurityUserDetails ud) {
         deviceService.delete(id, ud);
@@ -86,6 +90,7 @@ public class DeviceController {
     @Operation(summary = "更新设备状态")
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasAuthority('device:manage')")
+    @Log("更新设备状态")
     public Result<?> updateStatus(@PathVariable Long id,
                                   @RequestParam String status,
                                   @AuthenticationPrincipal SecurityUserDetails ud) {

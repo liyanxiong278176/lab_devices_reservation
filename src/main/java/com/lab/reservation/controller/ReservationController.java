@@ -1,5 +1,6 @@
 package com.lab.reservation.controller;
 
+import com.lab.reservation.aspect.Log;
 import com.lab.reservation.common.result.Result;
 import com.lab.reservation.dto.reservation.ReservationCreateDTO;
 import com.lab.reservation.dto.reservation.ReservationQueryDTO;
@@ -28,6 +29,7 @@ public class ReservationController {
 
     @Operation(summary = "创建预约（含冲突检测/防超约）")
     @PostMapping
+    @Log("创建预约")
     public Result<Long> create(@Valid @RequestBody ReservationCreateDTO dto,
                                @AuthenticationPrincipal SecurityUserDetails ud) {
         return Result.ok(reservationService.create(dto, ud.getUserId()));
@@ -35,6 +37,7 @@ public class ReservationController {
 
     @Operation(summary = "取消预约（本人，须在开始前且 PENDING/APPROVED）")
     @PostMapping("/{id}/cancel")
+    @Log("取消预约")
     public Result<Void> cancel(@PathVariable Long id,
                                @AuthenticationPrincipal SecurityUserDetails ud) {
         reservationService.cancel(id, ud.getUserId());
@@ -43,6 +46,7 @@ public class ReservationController {
 
     @Operation(summary = "签到（APPROVED 且在时间窗内，本人或管理员）")
     @PostMapping("/{id}/check-in")
+    @Log("签到")
     public Result<Void> checkIn(@PathVariable Long id,
                                 @AuthenticationPrincipal SecurityUserDetails ud) {
         reservationService.checkIn(id, ud);
@@ -51,6 +55,7 @@ public class ReservationController {
 
     @Operation(summary = "归还（IN_USE → COMPLETED，本人或管理员）")
     @PostMapping("/{id}/check-out")
+    @Log("归还")
     public Result<Void> checkOut(@PathVariable Long id,
                                  @AuthenticationPrincipal SecurityUserDetails ud) {
         reservationService.checkOut(id, ud);
@@ -60,6 +65,7 @@ public class ReservationController {
     @Operation(summary = "标记违规（管理员）")
     @PostMapping("/{id}/violate")
     @PreAuthorize("hasAuthority('device:approve')")
+    @Log("标记违规")
     public Result<Void> violate(@PathVariable Long id) {
         reservationService.markViolated(id);
         return Result.ok();
@@ -68,6 +74,7 @@ public class ReservationController {
     @Operation(summary = "标记爽约（管理员）")
     @PostMapping("/{id}/no-show")
     @PreAuthorize("hasAuthority('device:approve')")
+    @Log("标记爽约")
     public Result<Void> noShow(@PathVariable Long id) {
         reservationService.markNoShow(id);
         return Result.ok();

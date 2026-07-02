@@ -1,5 +1,6 @@
 package com.lab.reservation.controller;
 
+import com.lab.reservation.aspect.Log;
 import com.lab.reservation.common.result.Result;
 import com.lab.reservation.dto.auth.LoginDTO;
 import com.lab.reservation.dto.auth.RegisterDTO;
@@ -34,12 +35,14 @@ public class AuthController {
 
     @Operation(summary = "登录")
     @PostMapping("/login")
+    @Log("登录")
     public Result<LoginVO> login(@Valid @RequestBody LoginDTO dto) {
         return Result.ok(authService.login(dto));
     }
 
     @Operation(summary = "注册")
     @PostMapping("/register")
+    @Log("注册")
     public Result<?> register(@Valid @RequestBody RegisterDTO dto) {
         authService.register(dto);
         return Result.ok();
@@ -53,6 +56,7 @@ public class AuthController {
 
     @Operation(summary = "登出")
     @PostMapping("/logout")
+    @Log("登出")
     public Result<?> logout(@RequestHeader("Authorization") String auth) {
         authService.logout(auth);
         return Result.ok();

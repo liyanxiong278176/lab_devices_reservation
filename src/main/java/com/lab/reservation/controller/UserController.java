@@ -1,6 +1,7 @@
 package com.lab.reservation.controller;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.lab.reservation.aspect.Log;
 import com.lab.reservation.common.result.Result;
 import com.lab.reservation.dto.user.UserCreateDTO;
 import com.lab.reservation.dto.user.UserQueryDTO;
@@ -44,12 +45,14 @@ public class UserController {
 
     @Operation(summary = "创建用户（username 查重 + BCrypt + 绑角色）")
     @PostMapping
+    @Log("创建用户")
     public Result<UserVO> create(@Valid @RequestBody UserCreateDTO dto) {
         return Result.ok(userService.create(dto));
     }
 
     @Operation(summary = "更新用户（改资料/可选改密码/重绑角色）")
     @PutMapping("/{id}")
+    @Log("更新用户")
     public Result<UserVO> update(@PathVariable Long id,
                                  @Valid @RequestBody UserCreateDTO dto) {
         return Result.ok(userService.update(id, dto));
@@ -57,6 +60,7 @@ public class UserController {
 
     @Operation(summary = "删除用户（禁止删自己）")
     @DeleteMapping("/{id}")
+    @Log("删除用户")
     public Result<?> delete(@PathVariable Long id,
                             @AuthenticationPrincipal SecurityUserDetails ud) {
         userService.delete(id, ud.getUserId());
@@ -65,6 +69,7 @@ public class UserController {
 
     @Operation(summary = "封禁/解封（status 0 禁用 / 1 启用）")
     @PatchMapping("/{id}/status")
+    @Log("更新用户状态")
     public Result<?> updateStatus(@PathVariable Long id,
                                   @RequestParam Integer status) {
         userService.updateStatus(id, status);

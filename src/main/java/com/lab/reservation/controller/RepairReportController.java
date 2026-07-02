@@ -1,6 +1,7 @@
 package com.lab.reservation.controller;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.lab.reservation.aspect.Log;
 import com.lab.reservation.common.result.Result;
 import com.lab.reservation.dto.repair.RepairCreateDTO;
 import com.lab.reservation.dto.repair.RepairHandleDTO;
@@ -38,6 +39,7 @@ public class RepairReportController {
 
     @Operation(summary = "提交报修（用户，设备状态不变）")
     @PostMapping
+    @Log("提交报修")
     public Result<Long> create(@Valid @RequestBody RepairCreateDTO dto,
                                @AuthenticationPrincipal SecurityUserDetails ud) {
         return Result.ok(repairReportService.create(dto, ud.getUserId()));
@@ -64,6 +66,7 @@ public class RepairReportController {
     @Operation(summary = "受理报修（PENDING → PROCESSING，设备置 MAINTENANCE）")
     @PostMapping("/{id}/take")
     @PreAuthorize("hasAuthority('repair:handle')")
+    @Log("受理报修")
     public Result<Void> take(@PathVariable Long id,
                              @AuthenticationPrincipal SecurityUserDetails ud) {
         repairReportService.take(id, ud);
@@ -73,6 +76,7 @@ public class RepairReportController {
     @Operation(summary = "解决报修（PROCESSING → RESOLVED，设备置回 IDLE）")
     @PostMapping("/{id}/resolve")
     @PreAuthorize("hasAuthority('repair:handle')")
+    @Log("解决报修")
     public Result<Void> resolve(@PathVariable Long id,
                                 @Valid @RequestBody RepairHandleDTO dto,
                                 @AuthenticationPrincipal SecurityUserDetails ud) {
@@ -83,6 +87,7 @@ public class RepairReportController {
     @Operation(summary = "驳回报修（PENDING → REJECTED，设备不变）")
     @PostMapping("/{id}/reject")
     @PreAuthorize("hasAuthority('repair:handle')")
+    @Log("驳回报修")
     public Result<Void> reject(@PathVariable Long id,
                                @Valid @RequestBody RepairHandleDTO dto,
                                @AuthenticationPrincipal SecurityUserDetails ud) {
