@@ -51,6 +51,7 @@ class ReservationLifecycleTest {
     @Mock private ReservationMapper reservationMapper;
     @Mock private ReservationItemMapper itemMapper;
     @Mock private SlotCalculatorService slotCalculator;
+    @Mock private NotificationService notificationService;
 
     @InjectMocks
     private ReservationServiceImpl service;

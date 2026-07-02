@@ -47,6 +47,7 @@ class RepairReportServiceTest {
     @Mock private RepairReportMapper repairReportMapper;
     @Mock private DeviceMapper deviceMapper;
     @Mock private LabScopeHelper labScopeHelper;
+    @Mock private NotificationService notificationService;
 
     @InjectMocks
     private RepairReportServiceImpl service;
