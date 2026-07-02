@@ -236,10 +236,14 @@ public class ReservationServiceImpl implements ReservationService {
     }
 
     @Override
-    public ReservationVO detail(Long id, Long currentUserId) {
+    public ReservationVO detail(Long id, SecurityUserDetails ud) {
         Reservation r = loadOrThrow(id);
-        // 权限：本人（admin 解禁在 Task12 接入 @PreAuthorize 层）
-        if (!r.getUserId().equals(currentUserId)) {
+        // 权限：本人，或持有 device:approve 的管理员（审批代查），或 SYS_ADMIN
+        boolean isOwner = ud != null && ud.getUserId() != null && ud.getUserId().equals(r.getUserId());
+        boolean isApprover = ud != null && ud.getAuthorities() != null && ud.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch("device:approve"::equals);
+        if (!isOwner && !isApprover) {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
         return toVO(r);

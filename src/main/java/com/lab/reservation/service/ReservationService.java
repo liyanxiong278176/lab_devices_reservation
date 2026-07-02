@@ -55,7 +55,7 @@ public interface ReservationService {
     IPage<ReservationVO> myReservations(Long currentUserId, ReservationStatus status, int page, int size);
 
     /**
-     * 预约详情（本人或 SYS_ADMIN）。
+     * 预约详情（本人，或持有 device:approve 的管理员代查，或 SYS_ADMIN）。
      */
-    ReservationVO detail(Long id, Long currentUserId);
+    ReservationVO detail(Long id, SecurityUserDetails ud);
 }

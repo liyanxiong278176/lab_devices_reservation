@@ -353,7 +353,7 @@ class ReservationLifecycleTest {
                 LocalDateTime.now().plusHours(1), LocalDateTime.now().plusHours(2));
         when(reservationMapper.selectById(RES_ID)).thenReturn(r);
 
-        ReservationVO vo = service.detail(RES_ID, OWNER_ID);
+        ReservationVO vo = service.detail(RES_ID, ownerUd(OWNER_ID));
         assertNotNull(vo);
         assertEquals(RES_ID, vo.getId());
         assertEquals(ReservationStatus.APPROVED.name(), vo.getStatus());
@@ -366,8 +366,22 @@ class ReservationLifecycleTest {
         when(reservationMapper.selectById(RES_ID)).thenReturn(r);
 
         BusinessException e = assertThrows(BusinessException.class,
-                () -> service.detail(RES_ID, OTHER_ID));
+                () -> service.detail(RES_ID, ownerUd(OTHER_ID)));
         assertEquals(ResultCode.FORBIDDEN.getCode(), e.getCode());
+    }
+
+    @Test
+    void detail_by_approver_even_non_owner_succeeds() {
+        Reservation r = reservation(ReservationStatus.APPROVED, OWNER_ID,
+                LocalDateTime.now().plusHours(1), LocalDateTime.now().plusHours(2));
+        when(reservationMapper.selectById(RES_ID)).thenReturn(r);
+
+        // 持 device:approve 的管理员代查他人预约，应放行
+        SecurityUserDetails admin = udWithAuthorities(OTHER_ID,
+                new SimpleGrantedAuthority("device:approve"));
+        ReservationVO vo = service.detail(RES_ID, admin);
+        assertNotNull(vo);
+        assertEquals(RES_ID, vo.getId());
     }
 
     // ---------- myReservations ----------

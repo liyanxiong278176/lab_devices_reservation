@@ -82,10 +82,10 @@ public class ReservationController {
         return Result.ok(reservationService.myReservations(ud.getUserId(), query.getStatus(), page, size));
     }
 
-    @Operation(summary = "预约详情")
+    @Operation(summary = "预约详情（本人或管理员）")
     @GetMapping("/{id}")
     public Result<ReservationVO> detail(@PathVariable Long id,
                                         @AuthenticationPrincipal SecurityUserDetails ud) {
-        return Result.ok(reservationService.detail(id, ud.getUserId()));
+        return Result.ok(reservationService.detail(id, ud));
     }
 }
