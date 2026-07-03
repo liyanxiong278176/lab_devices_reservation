@@ -15,6 +15,12 @@ spring:
       port: 6379
       database: 0
       password:
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    virtual-host: /
 logging:
   level:
     com.lab.reservation: debug
@@ -31,3 +37,8 @@ lab:
     cache-ttl-minutes: 5
   dashboard:
     cache-ttl-minutes: 5
+  reservation:
+    signin-grace-minutes: 30
+  mq:
+    retry-max-attempts: 3
+    idempotent-ttl-hours: 24
