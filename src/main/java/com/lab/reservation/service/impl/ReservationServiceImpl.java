@@ -242,6 +242,19 @@ public class ReservationServiceImpl implements ReservationService {
                 .eq(ReservationItem::getReservationId, id));
     }
 
+    @Override
+    @Transactional
+    public void markTimeoutCancelled(Long id) {
+        Reservation r = reservationMapper.selectById(id);
+        if (r == null) throw new BusinessException(ResultCode.NOT_FOUND);
+        r.setStatus(ReservationStatus.CANCELLED.name());
+        r.setCancelReason("TIMEOUT");
+        reservationMapper.updateById(r);
+        // 释放槽：复用现有 itemMapper 字段（ReservationServiceImpl:60，cancel() 同款用法）
+        itemMapper.delete(new LambdaQueryWrapper<ReservationItem>()
+                .eq(ReservationItem::getReservationId, id));
+    }
+
     // ============ 查询 ============
 
     @Override

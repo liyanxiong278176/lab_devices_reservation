@@ -50,6 +50,11 @@ public interface ReservationService {
     void markNoShow(Long id);
 
     /**
+     * 超时未签到自动取消（延迟队列触发；标记 CANCELLED + TIMEOUT 原因，释放槽）。
+     */
+    void markTimeoutCancelled(Long id);
+
+    /**
      * 我的预约（按 userId 过滤，可叠加 status，按创建时间倒序分页）。
      */
     IPage<ReservationVO> myReservations(Long currentUserId, ReservationStatus status, int page, int size);
