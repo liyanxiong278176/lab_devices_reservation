@@ -1,9 +1,8 @@
 package com.lab.reservation.config;
 
-import com.lab.reservation.security.ws.AuthChannelInterceptor;
+import com.lab.reservation.security.ws.WsAuthHandshakeInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.web.socket.config.annotation.*;
 
@@ -11,18 +10,22 @@ import org.springframework.web.socket.config.annotation.*;
 @EnableWebSocketMessageBroker
 @RequiredArgsConstructor
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
-    private final AuthChannelInterceptor authInterceptor;
+
+    private final WsAuthHandshakeInterceptor wsAuthHandshakeInterceptor;
 
     @Override public void registerStompEndpoints(StompEndpointRegistry r) {
         // STOMP 端点相对 servlet context（context-path=/api）→ 注册 "/ws"，实际对外 URL=/api/ws
-        r.addEndpoint("/ws").setAllowedOriginPatterns("*").withSockJS();
+        // 握手期鉴权(从 query token 取 userId 设为会话 Principal)→ 注册到 SimpUserRegistry → convertAndSendToUser 可达
+        r.addEndpoint("/ws")
+                .addInterceptors(wsAuthHandshakeInterceptor)
+                .setHandshakeHandler(new JwtHandshakeHandler())
+                .setAllowedOriginPatterns("*")
+                .withSockJS();
     }
+
     @Override public void configureMessageBroker(MessageBrokerRegistry r) {
         r.setApplicationDestinationPrefixes("/app");
         r.setUserDestinationPrefix("/user");
         r.enableSimpleBroker("/queue");
-    }
-    @Override public void configureClientInboundChannel(ChannelRegistration r) {
-        r.interceptors(authInterceptor);
     }
 }
