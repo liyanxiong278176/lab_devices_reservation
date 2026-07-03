@@ -12,15 +12,21 @@ let client: Client | null = null
  * （浏览器 WS 鉴权的标准做法）。后端 WsAuthHandshakeInterceptor 校验 token 并经 JwtHandshakeHandler
  * 把 userId 设为会话 Principal → 注册到 SimpUserRegistry → convertAndSendToUser(userId,...) 可定位会话。
  *
- * 直连后端绝对 URL（dev；prod 改为配置）。
- * 注意：/api 代理规则未带 ws:true，故不走 vite 代理。
+ * WS URL 走 VITE_WS_BASE 环境变量：
+ *  - dev：.env.development 设为 http://localhost:8080，直连后端
+ *  - prod：.env.production 留空 → 使用 window.location 同源 /api/ws，由 nginx 反代到 app:8080
  */
 export function connectWs() {
   const u = useUserStore()
   if (!u.accessToken || client) return
   client = new Client({
-    webSocketFactory: () =>
-      new SockJS(`http://localhost:8080/api/ws?token=${encodeURIComponent(u.accessToken)}`),
+    webSocketFactory: () => {
+      const base = import.meta.env.VITE_WS_BASE ?? ''
+      const wsBase = base
+        ? `${base}/api/ws`
+        : `${window.location.protocol === 'https:' ? 'https' : 'http'}://${window.location.host}/api/ws`
+      return new SockJS(`${wsBase}?token=${encodeURIComponent(u.accessToken)}`)
+    },
     reconnectDelay: 5000,
     onConnect: () => {
       client!.subscribe('/user/queue/notifications', (msg) => {
