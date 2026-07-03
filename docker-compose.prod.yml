@@ -1,3 +1,8 @@
+# 顶级 name 固定项目名为 labprod：避免与 dev 的 docker-compose.yml（默认目录项目名）
+# 同名 service(mysql/redis/rabbitmq) 碰撞导致 prod up 误重建 dev 容器。
+# 这样 `docker compose -f docker-compose.prod.yml up -d` 即安全，无需每次带 -p labprod。
+name: labprod
+
 services:
   mysql:
     image: mysql:8.0
