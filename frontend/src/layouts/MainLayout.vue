@@ -6,6 +6,7 @@ import { Bell } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
 import { useNotificationStore } from '@/stores/notification'
+import { connectWs, disconnectWs } from '@/composables/useWebSocket'
 
 const router = useRouter()
 const route = useRoute()
@@ -13,14 +14,16 @@ const userStore = useUserStore()
 const appStore = useAppStore()
 const notifStore = useNotificationStore()
 
-// 通知未读数轮询（S1 兜底，S3 升级为 WebSocket）
+// 通知未读数轮询（S1 兜底）+ S3 STOMP 长连接
 let notifTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   notifStore.loadUnread()
   notifTimer = setInterval(() => notifStore.loadUnread(), 30000)
+  connectWs()
 })
 onUnmounted(() => {
   if (notifTimer) clearInterval(notifTimer)
+  disconnectWs()
 })
 
 interface MenuItem {
@@ -57,6 +60,7 @@ const displayName = computed(
 )
 
 function onLogout() {
+  disconnectWs()
   userStore.logout()
   ElMessage.success('已退出登录')
   router.push('/login')
