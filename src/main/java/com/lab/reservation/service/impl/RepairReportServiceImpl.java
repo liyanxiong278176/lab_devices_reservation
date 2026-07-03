@@ -15,9 +15,9 @@ import com.lab.reservation.exception.BusinessException;
 import com.lab.reservation.mapper.DeviceMapper;
 import com.lab.reservation.mapper.RepairReportMapper;
 import com.lab.reservation.mapper.SysUserMapper;
+import com.lab.reservation.mq.NotificationProducer;
 import com.lab.reservation.security.SecurityUserDetails;
 import com.lab.reservation.service.LabScopeHelper;
-import com.lab.reservation.service.NotificationService;
 import com.lab.reservation.service.RepairReportService;
 import com.lab.reservation.vo.repair.RepairReportVO;
 import lombok.RequiredArgsConstructor;
@@ -54,7 +54,7 @@ public class RepairReportServiceImpl implements RepairReportService {
     private final DeviceMapper deviceMapper;
     private final SysUserMapper sysUserMapper;
     private final LabScopeHelper labScopeHelper;
-    private final NotificationService notificationService;
+    private final NotificationProducer notificationProducer;
 
     // ============ 创建 ============
 
@@ -164,7 +164,7 @@ public class RepairReportServiceImpl implements RepairReportService {
             d.setStatus(DeviceStatus.MAINTENANCE.name());
             deviceMapper.updateById(d);
         }
-        notificationService.notify(r.getReporterId(), "REPAIR", "报修已受理",
+        notificationProducer.notify(r.getReporterId(), "REPAIR", "报修已受理",
                 "报修 " + r.getId() + " 已受理", r.getId(), "REPAIR");
     }
 
@@ -188,7 +188,7 @@ public class RepairReportServiceImpl implements RepairReportService {
             d.setStatus(DeviceStatus.IDLE.name());
             deviceMapper.updateById(d);
         }
-        notificationService.notify(r.getReporterId(), "REPAIR", "报修已解决",
+        notificationProducer.notify(r.getReporterId(), "REPAIR", "报修已解决",
                 dto.getResolutionNote(), r.getId(), "REPAIR");
     }
 
@@ -205,7 +205,7 @@ public class RepairReportServiceImpl implements RepairReportService {
         r.setResolutionNote(dto.getResolutionNote());
         repairReportMapper.updateById(r);
         // 设备状态不变（非真实故障）
-        notificationService.notify(r.getReporterId(), "REPAIR", "报修已驳回",
+        notificationProducer.notify(r.getReporterId(), "REPAIR", "报修已驳回",
                 dto.getResolutionNote(), r.getId(), "REPAIR");
     }
 

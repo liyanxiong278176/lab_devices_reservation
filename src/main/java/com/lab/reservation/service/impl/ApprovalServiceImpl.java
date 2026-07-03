@@ -14,10 +14,10 @@ import com.lab.reservation.mapper.DeviceMapper;
 import com.lab.reservation.mapper.ReservationItemMapper;
 import com.lab.reservation.mapper.ReservationMapper;
 import com.lab.reservation.mapper.SysUserMapper;
+import com.lab.reservation.mq.NotificationProducer;
 import com.lab.reservation.security.SecurityUserDetails;
 import com.lab.reservation.service.ApprovalService;
 import com.lab.reservation.service.LabScopeHelper;
-import com.lab.reservation.service.NotificationService;
 import com.lab.reservation.vo.approval.ApprovalItemVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -44,7 +44,7 @@ import java.util.stream.Collectors;
  * reject 时删除该预约的 reservation_item 以释放槽（与 cancel/markNoShow 同语义）。
  * approve 保留槽（预约生效，进入设备日历占用）。
  *
- * 通知接入：approve/reject 时通知预约所属用户（NotificationService.notify）。
+ * 通知接入：approve/reject 时通知预约所属用户（NotificationProducer.notify，异步经 MQ）。
  */
 @Service
 @RequiredArgsConstructor
@@ -55,7 +55,7 @@ public class ApprovalServiceImpl implements ApprovalService {
     private final DeviceMapper deviceMapper;
     private final SysUserMapper sysUserMapper;
     private final LabScopeHelper labScopeHelper;
-    private final NotificationService notificationService;
+    private final NotificationProducer notificationProducer;
 
     // ============ 列表 ============
 
@@ -129,7 +129,7 @@ public class ApprovalServiceImpl implements ApprovalService {
         r.setApprovedAt(LocalDateTime.now());
         r.setRejectReason(null);
         reservationMapper.updateById(r);
-        notificationService.notify(r.getUserId(), "APPROVAL", "预约已通过",
+        notificationProducer.notify(r.getUserId(), "APPROVAL", "预约已通过",
                 "预约 " + r.getId() + " 已通过审批", r.getId(), "RESERVATION");
     }
 
@@ -151,7 +151,7 @@ public class ApprovalServiceImpl implements ApprovalService {
         // 释放槽：删除该预约占用的所有 reservation_item
         itemMapper.delete(new LambdaQueryWrapper<ReservationItem>()
                 .eq(ReservationItem::getReservationId, id));
-        notificationService.notify(r.getUserId(), "APPROVAL", "预约被拒",
+        notificationProducer.notify(r.getUserId(), "APPROVAL", "预约被拒",
                 "原因：" + reason, r.getId(), "RESERVATION");
     }
 

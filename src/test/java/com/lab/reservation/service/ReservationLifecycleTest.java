@@ -8,6 +8,7 @@ import com.lab.reservation.exception.BusinessException;
 import com.lab.reservation.mapper.DeviceMapper;
 import com.lab.reservation.mapper.ReservationItemMapper;
 import com.lab.reservation.mapper.ReservationMapper;
+import com.lab.reservation.mq.NotificationProducer;
 import com.lab.reservation.security.SecurityUserDetails;
 import com.lab.reservation.service.impl.ReservationServiceImpl;
 import com.lab.reservation.vo.reservation.ReservationVO;
@@ -51,7 +52,7 @@ class ReservationLifecycleTest {
     @Mock private ReservationMapper reservationMapper;
     @Mock private ReservationItemMapper itemMapper;
     @Mock private SlotCalculatorService slotCalculator;
-    @Mock private NotificationService notificationService;
+    @Mock private NotificationProducer notificationProducer;
 
     @InjectMocks
     private ReservationServiceImpl service;

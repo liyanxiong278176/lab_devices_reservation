@@ -13,8 +13,8 @@ import com.lab.reservation.exception.BusinessException;
 import com.lab.reservation.mapper.DeviceMapper;
 import com.lab.reservation.mapper.ReservationItemMapper;
 import com.lab.reservation.mapper.ReservationMapper;
+import com.lab.reservation.mq.NotificationProducer;
 import com.lab.reservation.security.SecurityUserDetails;
-import com.lab.reservation.service.NotificationService;
 import com.lab.reservation.service.ReservationLock;
 import com.lab.reservation.service.ReservationService;
 import com.lab.reservation.service.SlotCalculatorService;
@@ -59,7 +59,7 @@ public class ReservationServiceImpl implements ReservationService {
     private final ReservationMapper reservationMapper;
     private final ReservationItemMapper itemMapper;
     private final SlotCalculatorService slotCalculator;
-    private final NotificationService notificationService;
+    private final NotificationProducer notificationProducer;
     private final ReservationLock reservationLock;
 
     /** 签到宽限分钟（now 早于 startTime − grace 视为未到时间）。默认 0。 */
@@ -125,7 +125,7 @@ public class ReservationServiceImpl implements ReservationService {
         String title = finalStatus == ReservationStatus.APPROVED ? "预约成功" : "预约已提交，待审批";
         String content = "设备：" + (d.getName() == null ? d.getId() : d.getName())
                 + "，时段：" + r.getStartTime() + " ~ " + r.getEndTime();
-        notificationService.notify(currentUserId, "RESERVATION", title, content, r.getId(), "RESERVATION");
+        notificationProducer.notify(currentUserId, "RESERVATION", title, content, r.getId(), "RESERVATION");
         return r.getId();
     }
 
@@ -153,7 +153,7 @@ public class ReservationServiceImpl implements ReservationService {
         // 释放槽：删除该预约占用的所有 reservation_item
         itemMapper.delete(new LambdaQueryWrapper<ReservationItem>()
                 .eq(ReservationItem::getReservationId, id));
-        notificationService.notify(currentUserId, "RESERVATION", "预约已取消",
+        notificationProducer.notify(currentUserId, "RESERVATION", "预约已取消",
                 "预约 " + id + " 已取消", id, "RESERVATION");
     }
 
@@ -181,7 +181,7 @@ public class ReservationServiceImpl implements ReservationService {
             d.setStatus("IN_USE");
             deviceMapper.updateById(d);
         }
-        notificationService.notify(r.getUserId(), "RESERVATION", "已签到",
+        notificationProducer.notify(r.getUserId(), "RESERVATION", "已签到",
                 "预约 " + r.getId() + " 已签到", r.getId(), "RESERVATION");
     }
 
@@ -203,7 +203,7 @@ public class ReservationServiceImpl implements ReservationService {
         // 归还即清理该预约占用的所有槽（含过期未清理的）
         itemMapper.delete(new LambdaQueryWrapper<ReservationItem>()
                 .eq(ReservationItem::getReservationId, id));
-        notificationService.notify(r.getUserId(), "RESERVATION", "已归还，预约完成",
+        notificationProducer.notify(r.getUserId(), "RESERVATION", "已归还，预约完成",
                 "预约 " + r.getId() + " 已归还", r.getId(), "RESERVATION");
     }
 

@@ -8,6 +8,7 @@ import com.lab.reservation.entity.enums.RepairStatus;
 import com.lab.reservation.exception.BusinessException;
 import com.lab.reservation.mapper.DeviceMapper;
 import com.lab.reservation.mapper.RepairReportMapper;
+import com.lab.reservation.mq.NotificationProducer;
 import com.lab.reservation.security.SecurityUserDetails;
 import com.lab.reservation.service.impl.RepairReportServiceImpl;
 import com.lab.reservation.dto.repair.RepairHandleDTO;
@@ -47,7 +48,7 @@ class RepairReportServiceTest {
     @Mock private RepairReportMapper repairReportMapper;
     @Mock private DeviceMapper deviceMapper;
     @Mock private LabScopeHelper labScopeHelper;
-    @Mock private NotificationService notificationService;
+    @Mock private NotificationProducer notificationProducer;
 
     @InjectMocks
     private RepairReportServiceImpl service;
