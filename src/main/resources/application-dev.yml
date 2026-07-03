@@ -21,6 +21,13 @@ spring:
     username: guest
     password: guest
     virtual-host: /
+    listener:
+      simple:
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000ms
 logging:
   level:
     com.lab.reservation: debug
@@ -40,5 +47,4 @@ lab:
   reservation:
     signin-grace-minutes: 30
   mq:
-    retry-max-attempts: 3
     idempotent-ttl-hours: 24
