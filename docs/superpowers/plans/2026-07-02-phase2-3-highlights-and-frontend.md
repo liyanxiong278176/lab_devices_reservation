@@ -821,17 +821,21 @@ public class ReservationLock {
             .map(date -> client.getLock("lock:dev:" + deviceId + ":" + date))
             .toArray(RLock[]::new);
         RLock multi = client.getMultiLock(locks);
+        // ⚠️ tryLock 的 RuntimeException（Redis 不可用）才 fail-open；
+        // !locked 的冲突异常须在 try 块【外】抛出，否则会被 catch(RuntimeException) 误吞
+        // （BusinessException extends RuntimeException）。实现时 TDD 先写失败用例实测发现此坑并修正。
+        boolean locked;
         try {
-            boolean locked = multi.tryLock(waitSeconds, -1, TimeUnit.SECONDS); // -1 触发看门狗
-            if (!locked) throw new BusinessException(ResultCode.RESERVATION_CONFLICT);
-            return new Holder(multi);
+            locked = multi.tryLock(waitSeconds, -1, TimeUnit.SECONDS); // -1 触发看门狗
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException(ResultCode.RESERVATION_CONFLICT);
-        } catch (RuntimeException e) {            // 含 Redis 连接异常
+        } catch (RuntimeException e) {            // Redis 连接异常 → fail-open
             log.warn("Redis unavailable, fail-open to DB unique index", e);
             return null;
         }
+        if (!locked) throw new BusinessException(ResultCode.RESERVATION_CONFLICT);
+        return new Holder(multi);
     }
 
     public static class Holder implements AutoCloseable {
