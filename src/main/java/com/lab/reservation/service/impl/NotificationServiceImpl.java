@@ -11,7 +11,10 @@ import com.lab.reservation.mapper.NotificationMapper;
 import com.lab.reservation.service.NotificationService;
 import com.lab.reservation.vo.notification.NotificationVO;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+
+import java.util.Map;
 
 /**
  * 通知服务实现。规格 §8.7。
@@ -24,6 +27,7 @@ import org.springframework.stereotype.Service;
 public class NotificationServiceImpl implements NotificationService {
 
     private final NotificationMapper notificationMapper;
+    private final SimpMessagingTemplate messagingTemplate;
 
     @Override
     public void notify(Long userId, String type, String title, String content, Long relatedId, String relatedType) {
@@ -36,6 +40,13 @@ public class NotificationServiceImpl implements NotificationService {
         n.setRelatedType(relatedType);
         n.setIsRead(0);
         notificationMapper.insert(n);
+
+        // WebSocket 实时推送（DB 写入后）。前端订阅 /user/queue/notifications 接收。
+        messagingTemplate.convertAndSendToUser(
+                String.valueOf(userId), "/queue/notifications",
+                Map.of(
+                        "id", n.getId(), "type", type, "title", title, "content", content,
+                        "relatedId", relatedId, "relatedType", relatedType, "createdAt", n.getCreatedAt()));
     }
 
     @Override

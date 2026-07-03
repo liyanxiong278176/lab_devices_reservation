@@ -30,4 +30,12 @@ public class JwtUtils {
         try { return Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload(); }
         catch (Exception e){ return null; }
     }
+
+    /** 从 token 中解析 userId（subject 声明）。无效/过期/非数字时返回 null。 */
+    public Long parseUserId(String token){
+        Claims c = parse(token);
+        if (c == null || c.getSubject() == null) return null;
+        try { return Long.valueOf(c.getSubject()); }
+        catch (NumberFormatException e){ return null; }
+    }
 }

@@ -49,6 +49,7 @@ public class SecurityConfig {
                                 "/auth/login",
                                 "/auth/register",
                                 "/auth/refresh",
+                                "/ws/**",
                                 "/doc.html",
                                 "/doc.html/**",
                                 "/webjars/**",
