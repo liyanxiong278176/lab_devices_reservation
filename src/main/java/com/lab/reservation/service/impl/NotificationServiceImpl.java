@@ -11,6 +11,7 @@ import com.lab.reservation.mapper.NotificationMapper;
 import com.lab.reservation.service.NotificationService;
 import com.lab.reservation.vo.notification.NotificationVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +23,7 @@ import java.util.Map;
  * 归属校验：markRead 时必须 notification.user_id == 入参 userId，否则 FORBIDDEN
  * （即便 id 不存在也返回 NOT_FOUND 以避免泄露存在性）。
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class NotificationServiceImpl implements NotificationService {
@@ -42,11 +44,16 @@ public class NotificationServiceImpl implements NotificationService {
         notificationMapper.insert(n);
 
         // WebSocket 实时推送（DB 写入后）。前端订阅 /user/queue/notifications 接收。
-        messagingTemplate.convertAndSendToUser(
-                String.valueOf(userId), "/queue/notifications",
-                Map.of(
-                        "id", n.getId(), "type", type, "title", title, "content", content,
-                        "relatedId", relatedId, "relatedType", relatedType, "createdAt", n.getCreatedAt()));
+        // try/catch 包裹：WS 推送失败不得回滚业务事务（notify 参与调用方的 @Transactional）。
+        try {
+            messagingTemplate.convertAndSendToUser(
+                    String.valueOf(userId), "/queue/notifications",
+                    Map.of(
+                            "id", n.getId(), "type", type, "title", title, "content", content,
+                            "relatedId", relatedId, "relatedType", relatedType, "createdAt", n.getCreatedAt()));
+        } catch (Exception e) {
+            log.warn("WS push failed for user {} (DB row persisted): {}", userId, e.getMessage());
+        }
     }
 
     @Override
