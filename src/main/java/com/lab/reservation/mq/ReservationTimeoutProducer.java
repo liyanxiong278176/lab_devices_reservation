@@ -35,7 +35,7 @@ public class ReservationTimeoutProducer {
     public void sendTimeout(Long reservationId, LocalDateTime startTime) {
         long ttlMillis = Math.max(0,
                 Duration.between(LocalDateTime.now(), startTime).toMillis() + graceMinutes * 60_000);
-        String payload = "timeout:" + reservationId;
+        String payload = String.valueOf(reservationId);
         MessagePostProcessor mpp = msg -> {
             msg.getMessageProperties().setExpiration(String.valueOf(ttlMillis));
             return msg;
@@ -58,6 +58,6 @@ public class ReservationTimeoutProducer {
         // → 路由到同名 timeout.queue。切勿用 4-arg（会把队列名误当 exchange，消息不可路由）。
         // (Object) cast 消除与 convertAndSend(exchange,routingKey,message) 的重载歧义。
         rabbitTemplate.convertAndSend(RabbitMQConfig.TIMEOUT_QUEUE, (Object) payload, mpp);
-        log.info("reservation timeout message sent: id={} ttlMs={}", id, ttlMillis);
+        log.debug("reservation timeout message sent: id={} ttlMs={}", id, ttlMillis);
     }
 }

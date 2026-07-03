@@ -8,6 +8,7 @@ import com.lab.reservation.dto.reservation.ReservationCreateDTO;
 import com.lab.reservation.entity.Device;
 import com.lab.reservation.entity.Reservation;
 import com.lab.reservation.entity.ReservationItem;
+import com.lab.reservation.entity.enums.CancelReason;
 import com.lab.reservation.entity.enums.ReservationStatus;
 import com.lab.reservation.exception.BusinessException;
 import com.lab.reservation.mapper.DeviceMapper;
@@ -149,7 +150,7 @@ public class ReservationServiceImpl implements ReservationService {
         }
 
         r.setStatus(ReservationStatus.CANCELLED.name());
-        r.setCancelReason("USER");
+        r.setCancelReason(CancelReason.USER.name());
         reservationMapper.updateById(r);
         // 释放槽：删除该预约占用的所有 reservation_item
         itemMapper.delete(new LambdaQueryWrapper<ReservationItem>()
@@ -248,7 +249,7 @@ public class ReservationServiceImpl implements ReservationService {
         Reservation r = reservationMapper.selectById(id);
         if (r == null) throw new BusinessException(ResultCode.NOT_FOUND);
         r.setStatus(ReservationStatus.CANCELLED.name());
-        r.setCancelReason("TIMEOUT");
+        r.setCancelReason(CancelReason.TIMEOUT.name());
         reservationMapper.updateById(r);
         // 释放槽：复用现有 itemMapper 字段（ReservationServiceImpl:60，cancel() 同款用法）
         itemMapper.delete(new LambdaQueryWrapper<ReservationItem>()
