@@ -15,6 +15,7 @@ import com.lab.reservation.mapper.ReservationItemMapper;
 import com.lab.reservation.mapper.ReservationMapper;
 import com.lab.reservation.security.SecurityUserDetails;
 import com.lab.reservation.service.NotificationService;
+import com.lab.reservation.service.ReservationLock;
 import com.lab.reservation.service.ReservationService;
 import com.lab.reservation.service.SlotCalculatorService;
 import com.lab.reservation.service.SlotKey;
@@ -26,8 +27,11 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 预约服务实现。
@@ -56,6 +60,7 @@ public class ReservationServiceImpl implements ReservationService {
     private final ReservationItemMapper itemMapper;
     private final SlotCalculatorService slotCalculator;
     private final NotificationService notificationService;
+    private final ReservationLock reservationLock;
 
     /** 签到宽限分钟（now 早于 startTime − grace 视为未到时间）。默认 0。 */
     @Value("${lab.slot.check-in-grace-minutes:0}")
@@ -94,20 +99,25 @@ public class ReservationServiceImpl implements ReservationService {
         r.setStatus(d.getNeedApproval() != null && d.getNeedApproval() == 1
                 ? ReservationStatus.PENDING.name()
                 : ReservationStatus.APPROVED.name());
-        reservationMapper.insert(r);
 
-        try {
-            for (SlotKey s : slots) {
-                ReservationItem it = new ReservationItem();
-                it.setReservationId(r.getId());
-                it.setDeviceId(s.deviceId());
-                it.setDate(s.date());
-                it.setSlotIndex(s.slotIndex());
-                itemMapper.insert(it);
+        // 双层防线：Redis 分布式锁串行化同 (deviceId,date) 的并发预约；
+        // 锁内仍保留 DB 唯一索引兜底（fail-open 或锁异常时仍正确）。
+        Set<LocalDate> dates = slots.stream().map(SlotKey::date).collect(Collectors.toSet());
+        try (var ignored = reservationLock.acquire(dto.getDeviceId(), dates)) {
+            reservationMapper.insert(r);
+            try {
+                for (SlotKey s : slots) {
+                    ReservationItem it = new ReservationItem();
+                    it.setReservationId(r.getId());
+                    it.setDeviceId(s.deviceId());
+                    it.setDate(s.date());
+                    it.setSlotIndex(s.slotIndex());
+                    itemMapper.insert(it);
+                }
+            } catch (DuplicateKeyException e) {
+                // 唯一索引命中：该 slot 已被占用（并发或与既有预约冲突）→ 业务冲突
+                throw new BusinessException(ResultCode.RESERVATION_CONFLICT);
             }
-        } catch (DuplicateKeyException e) {
-            // 唯一索引命中：该 slot 已被占用（并发或与既有预约冲突）→ 业务冲突
-            throw new BusinessException(ResultCode.RESERVATION_CONFLICT);
         }
 
         // 通知：自动审批 → 预约成功；需审批 → 已提交待审批
