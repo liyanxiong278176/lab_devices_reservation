@@ -149,6 +149,7 @@ public class ReservationServiceImpl implements ReservationService {
         }
 
         r.setStatus(ReservationStatus.CANCELLED.name());
+        r.setCancelReason("USER");
         reservationMapper.updateById(r);
         // 释放槽：删除该预约占用的所有 reservation_item
         itemMapper.delete(new LambdaQueryWrapper<ReservationItem>()

@@ -17,6 +17,7 @@ public class Reservation extends BaseEntity {
     private LocalDateTime endTime;
     private Integer slotCount;
     private String status;
+    private String cancelReason;
     private Long approverId;
     private LocalDateTime approvedAt;
     private String rejectReason;
