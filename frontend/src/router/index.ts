@@ -32,6 +32,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '设备详情', hidden: true },
       },
       {
+        path: 'recommendations',
+        name: 'recommendations',
+        component: () => import('@/views/recommendation/Index.vue'),
+        meta: { title: '为你推荐', icon: 'MagicStick', roles: ['STUDENT'] },
+      },
+      {
         path: 'reservations/create',
         name: 'reservation-create',
         component: () => import('@/views/reservation/Create.vue'),
