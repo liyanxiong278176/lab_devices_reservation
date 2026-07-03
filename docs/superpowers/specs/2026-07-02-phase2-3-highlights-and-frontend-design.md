@@ -183,17 +183,17 @@ try {
 - 连接端点 `/ws`（`.setAllowedOriginPatterns("*").withSockJS()`）；用户私有通道 `/user/queue/notifications`。
 - `@EnableWebSocketMessageBroker` + `WebSocketConfig`：`/app` 前缀（client→server），`/user`、`/queue`（Spring 内置 user destination）。
 
-### 7.2 鉴权（STOMP CONNECT 头，非 query）
+### 7.2 鉴权（握手期 query token —— 实现修订）
 
-JWT 放在 STOMP `CONNECT` 帧的 `Authorization: Bearer xxx` 头，由 `AuthChannelInterceptor implements ChannelInterceptor` 拦截 CONNECT → 解析 JWT → 把 `userId` 设为 `StompHeaderAccessor` 的 `Principal`/user。**不放 query 参数**（避免 token 进 URL/日志）。后续 `messagingTemplate.convertAndSendToUser(userId, "/queue/notifications", payload)` 即定向推送。
+> **实现修订（原计划为 STOMP CONNECT 头鉴权，已改）**：实测发现 `convertAndSendToUser(userId)` 依赖的 `SimpUserRegistry` 按**握手期 Principal** 键映射，而浏览器 WebSocket/SockJS **无法在握手 HTTP 请求上加自定义头**，故 CONNECT 帧里设的 Principal 不会注册到 registry（实测 `totalUsers=0` → 推送静默丢弃）。因此改为**握手期鉴权**：token 经 query 传入握手 URL（浏览器 WS 鉴权标准做法），`WsAuthHandshakeInterceptor` 校验 token、`JwtHandshakeHandler`（覆盖 `DefaultHandshakeHandler.determineUser`）把 userId 设为会话 Principal → 注册到 registry → `convertAndSendToUser` 可达。端到端已验证（学生建预约实时收到推送）。token 进 query 是浏览器 WS 的固有限制；如需避免可改 cookie/会话方案，本毕设接受此 trade-off。
 
 ```
 前端                              后端
- │ 连 /ws（不带 token）              │
- │ ──────────────────────────────► │  原始通道建好
- │ STOMP CONNECT 帧                  │
- │   Authorization: Bearer xxx  ──► │  AuthChannelInterceptor → 校验JWT → 标记会话=userId
- │ SUBSCRIBE /user/queue/notif ───► │  之后 convertAndSendToUser(userId) 定向推
+ │ 连 /api/ws?token=<jwt>            │
+ │ ──────────────────────────────► │  WsAuthHandshakeInterceptor 校验token → attributes.wsUserId
+ │                                   │  JwtHandshakeHandler.determineUser → 会话 Principal=userId
+ │ STOMP CONNECT + SUBSCRIBE         │  注册到 SimpUserRegistry
+ │ /user/queue/notifications ──────► │  之后 convertAndSendToUser(userId) 定向推
 ```
 
 ### 7.3 与现有通知的关系（双写，互不依赖）
@@ -385,7 +385,7 @@ history 模式；路由 `meta: { roles: [...], requireAuth: true }`。全局 `be
 4. **Redis**：compose 跑 redis:7；测试用 Testcontainers-redis（Docker 已健康）。
 5. **锁实现**：Redisson `RLock` + `MultiLock(device,date)` + `tryLock(3s,-1)` 看门狗 + fail-open；DB 唯一索引兜底（双层防线）。
 6. **推荐算法**：混合启发式打分（类目/实验室亲和 + 热度 + 标签 − 已用惩罚）+ 可解释理由 + 冷启动热度降级 + Redis 缓存。
-7. **WebSocket**：STOMP+SockJS，CONNECT 帧 `Authorization` 头鉴权（非 query）。
+7. **WebSocket**：STOMP+SockJS，**握手期 query token 鉴权**（`WsAuthHandshakeInterceptor` + `JwtHandshakeHandler` 设会话 Principal → 注册 SimpUserRegistry → `convertAndSendToUser` 可达）。【实现修订：原计划 CONNECT 帧头鉴权因 registry 不注册而改，见 §7.2】
 8. **驾驶舱**：每角色聚合端点（overview/me），vue-echarts，重查询 Redis 缓存。
 9. **前端视觉**：awesome-design-md 的 **Cal.com DESIGN.md** 作为视觉契约，Element Plus 主题映射其 tokens。
 10. **前端栈**：Vite+Vue3+TS+Element Plus+Pinia(持久化)+Vue Router+axios+ECharts+@stomp/stompjs+sockjs-client+dayjs，pnpm。
