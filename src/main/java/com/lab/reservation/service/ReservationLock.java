@@ -36,14 +36,18 @@ public class ReservationLock {
             return null;
         }
         if (!locked) throw new BusinessException(ResultCode.RESERVATION_CONFLICT);
-        return new Holder(multi);
+        // RedissonMultiLock.getName() 抛 UnsupportedOperationException，故自行拼装可读 key 供日志。
+        String name = "dev:" + deviceId + ":" + dates.stream().sorted().toList();
+        return new Holder(multi, name);
     }
 
     public static class Holder implements AutoCloseable {
         private final RLock multi;
-        Holder(RLock multi) { this.multi = multi; }
+        private final String name;
+        Holder(RLock multi, String name) { this.multi = multi; this.name = name; }
         @Override public void close() {
-            try { if (multi.isHeldByCurrentThread()) multi.unlock(); } catch (Exception ignore) {}
+            try { if (multi.isHeldByCurrentThread()) multi.unlock(); }
+            catch (Exception e) { log.debug("unlock failed for {}", name, e); }
         }
     }
 }
