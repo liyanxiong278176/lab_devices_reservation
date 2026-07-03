@@ -15,6 +15,7 @@ import com.lab.reservation.mapper.ReservationItemMapper;
 import com.lab.reservation.mapper.ReservationMapper;
 import com.lab.reservation.mapper.SysUserMapper;
 import com.lab.reservation.mq.NotificationProducer;
+import com.lab.reservation.mq.ReservationTimeoutProducer;
 import com.lab.reservation.security.SecurityUserDetails;
 import com.lab.reservation.service.ApprovalService;
 import com.lab.reservation.service.LabScopeHelper;
@@ -56,6 +57,7 @@ public class ApprovalServiceImpl implements ApprovalService {
     private final SysUserMapper sysUserMapper;
     private final LabScopeHelper labScopeHelper;
     private final NotificationProducer notificationProducer;
+    private final ReservationTimeoutProducer timeoutProducer;
 
     // ============ 列表 ============
 
@@ -131,6 +133,7 @@ public class ApprovalServiceImpl implements ApprovalService {
         reservationMapper.updateById(r);
         notificationProducer.notify(r.getUserId(), "APPROVAL", "预约已通过",
                 "预约 " + r.getId() + " 已通过审批", r.getId(), "RESERVATION");
+        timeoutProducer.sendTimeout(r.getId(), r.getStartTime());
     }
 
     @Override
