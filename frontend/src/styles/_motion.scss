@@ -1,0 +1,127 @@
+// =============================================================================
+// _motion.scss — 动效 token + 通用 keyframes / 工具类
+// 颜色 token 不在此声明(见 theme.dark.scss / theme.scss),仅动效相关变量。
+// 配套:useCountUp / useStagger / v-reduced-motion(命中 reduced-motion 时由指令兜底禁用)。
+// =============================================================================
+
+:root {
+  // 缓动:easeOutExpo 的近似 cubic-bezier,自然减速收敛
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  // 时长档位
+  --d-fast: 150ms;
+  --d-med: 280ms;
+  --d-slow: 500ms;
+}
+
+// =============================================================================
+// keyframes —— 仅 transform / opacity(GPU 合成层,不触发 layout)。
+// 注:shimmer 为骨架扫光,按设计用 background-position(仅 repaint,非 layout),
+//     aurora / page-enter 两条 hero 动画严格只用 transform+opacity。
+// =============================================================================
+
+@keyframes aurora {
+  0% {
+    transform: translate3d(-10%, -5%, 0) scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translate3d(5%, 5%, 0) scale(1.15);
+    opacity: 0.6;
+  }
+  100% {
+    transform: translate3d(-10%, -5%, 0) scale(1);
+    opacity: 0.35;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes page-enter {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+// =============================================================================
+// 路由 / 通用进出过渡类
+// =============================================================================
+
+.page-enter-active,
+.page-leave-active {
+  transition:
+    opacity var(--d-med) var(--ease-out-expo),
+    transform var(--d-med) var(--ease-out-expo);
+}
+
+.page-enter-from,
+.page-leave-to {
+  opacity: 0;
+  transform: translate3d(0, 8px, 0);
+}
+
+// =============================================================================
+// 骨架扫光
+// =============================================================================
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.12) 37%,
+    rgba(255, 255, 255, 0.04) 63%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite linear;
+}
+
+// =============================================================================
+// 极光背景层(fixed 满屏、pointer-events:none、极弱青辉光)
+// 用法:<div class="aurora-bg" aria-hidden="true"></div>
+// =============================================================================
+
+.aurora-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(64, 224, 208, 0.1), transparent 55%),
+    radial-gradient(circle at 80% 70%, rgba(34, 211, 238, 0.08), transparent 50%);
+  animation: aurora 12s var(--ease-out-expo) infinite;
+  will-change: transform, opacity;
+}
+
+// =============================================================================
+// 错峰入场(useStagger 配套)
+// =============================================================================
+
+// 默认:被标记的子元素初始隐藏(透明 + 下沉 8px)
+[data-stagger] {
+  opacity: 0;
+  transform: translate3d(0, 8px, 0);
+  transition:
+    opacity var(--d-med) var(--ease-out-expo),
+    transform var(--d-med) var(--ease-out-expo);
+}
+
+// useStagger 进入视口后给元素加 stagger-in → 显现;
+// transitionDelay 由 useStagger 按 index×delay 动态写入内联 style。
+.stagger-in {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}

@@ -15,9 +15,12 @@ import '@fontsource/space-grotesk/600.css'
 import '@fontsource/jetbrains-mono/400.css'
 // 本项目深色 token(必须在 EP 暗色 css-vars 之后,--el-* 覆盖才生效)
 import './styles/theme.dark.scss'
+// 动效 token + 通用 keyframes/工具类(在颜色 token 之后加载)
+import './styles/_motion.scss'
 import App from './App.vue'
 import router from './router'
 import { vPermission } from './directives/permission'
+import { vReducedMotion } from './directives/reducedMotion'
 import { setupEcharts } from './composables/useEcharts'
 
 // 一次性注册 echarts 按需模块（驾驶舱图表依赖）。
@@ -31,6 +34,8 @@ for (const [k, v] of Object.entries(ElementPlusIconsVue)) {
 }
 // 注册 v-permission 指令（按权限码裁剪元素）
 app.directive('permission', vPermission)
+// 注册 v-reduced-motion 指令（命中 prefers-reduced-motion 时禁用元素动效）
+app.directive('reduced-motion', vReducedMotion)
 app.use(pinia).use(router).use(ElementPlus)
 // 固定全站深色:挂载前给 <html> 加 .dark class(EP 暗色 css-vars 由该 class 激活)
 document.documentElement.classList.add('dark')
