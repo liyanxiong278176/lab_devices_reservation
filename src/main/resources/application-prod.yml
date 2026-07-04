@@ -21,6 +21,13 @@ spring:
     username: ${RABBITMQ_USERNAME}
     password: ${RABBITMQ_PASSWORD}
     virtual-host: /
+    listener:
+      simple:
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000ms
 logging:
   level:
     com.lab.reservation: info
@@ -29,3 +36,5 @@ jwt:
 lab:
   reservation:
     signin-grace-minutes: 30
+  mq:
+    idempotent-ttl-hours: 24
