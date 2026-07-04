@@ -145,9 +145,10 @@ git commit -m "feat(fe): R0深色token全量+EP暗色css-vars+fontsource字体"
 
 `echarts-dark-theme.ts` 导出 ECharts theme object:背景透明、文字色 `--text-secondary`、坐标轴线/分割线 `--border-subtle`、tooltip 深色 `--bg-elevated`、数据色板用青→蓝渐变系(`#22d3ee #3b82f6 #34d399 #fbbf24 #f87171 #a78bfa`)。
 
-- [ ] **Step 2: useEcharts 注册并设默认**
+- [ ] **Step 2: useEcharts 注册主题 + BaseChart 默认用之**
 
-`useEcharts.ts`:在 `setupEcharts()` 里 `echarts.registerTheme('lab-dark', theme)`;导出的 BaseChart composable 默认 `theme='lab-dark'`。
+`useEcharts.ts`:在 `setupEcharts()` 里 `echarts.registerTheme('lab-dark', theme)`(setupEcharts 已被 main.ts 调用,幂等)。
+`frontend/src/components/charts/BaseChart.vue`(组件,非 composable):给 `echarts.init` 调用默认传 `theme='lab-dark'`(当前 BaseChart 零 theme 引用,需新增默认 prop 并透传到 init)。
 
 - [ ] **Step 3: palette.ts 重调**
 
