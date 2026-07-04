@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net">
+  <diagram name="并发预约双重防御时序图">
+    <mxGraphModel dx="1300" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="亮点①  并发预约双重防御时序图  (Redisson MultiLock + DB 唯一索引)" style="text;html=1;align=center;verticalAlign=middle;fontSize=17;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="200" y="10" width="900" height="28" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Lifelines (thin rects) ===== -->
+        <!-- 学生A center=130 -->
+        <mxCell id="ll_a" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;dashed=1;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="125" y="110" width="10" height="640" as="geometry" />
+        </mxCell>
+        <!-- 学生B center=360 -->
+        <mxCell id="ll_b" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;dashed=1;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="355" y="110" width="10" height="640" as="geometry" />
+        </mxCell>
+        <!-- ReservationService center=600 -->
+        <mxCell id="ll_svc" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;dashed=1;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="595" y="110" width="10" height="640" as="geometry" />
+        </mxCell>
+        <!-- ReservationLock(Redisson) center=870 -->
+        <mxCell id="ll_lock" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;dashed=1;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="865" y="110" width="10" height="640" as="geometry" />
+        </mxCell>
+        <!-- MySQL center=1130 -->
+        <mxCell id="ll_db" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="1125" y="110" width="10" height="640" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Participant headers ===== -->
+        <mxCell id="h_a" value="学生 A&#xa;(线程1)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="55" y="65" width="150" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h_b" value="学生 B&#xa;(线程2 · 并发)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="285" y="65" width="150" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h_svc" value="ReservationServiceImpl&#xa;create()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="510" y="65" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h_lock" value="ReservationLock&#xa;(Redisson MultiLock)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="775" y="65" width="190" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h_db" value="MySQL&#xa;reservation_item" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="65" width="160" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Messages ===== -->
+        <!-- 1. A -> Service -->
+        <mxCell id="m1" value="① POST /reservations (设备X · 09-11 时段)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#6c8ebf;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=classic;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="130" y="150" as="sourcePoint" />
+            <mxPoint x="595" y="150" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <!-- 2. B -> Service (concurrent) -->
+        <mxCell id="m2" value="② POST /reservations (同一设备X · 09-11)  ⚡并发" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#6c8ebf;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=classic;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="360" y="185" as="sourcePoint" />
+            <mxPoint x="595" y="185" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- 3. Service -> Lock (for A) -->
+        <mxCell id="m3" value="③ acquire(deviceId, dates)  [try-with-resources]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#82b366;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=classic;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="605" y="235" as="sourcePoint" />
+            <mxPoint x="865" y="235" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <!-- 4. Service -> Lock (for B) -->
+        <mxCell id="m4" value="④ acquire(deviceId, dates)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#82b366;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=classic;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="605" y="270" as="sourcePoint" />
+            <mxPoint x="865" y="270" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- 5. Lock self-call: tryLock MultiLock -->
+        <mxCell id="m5" value="⑤ MultiLock.tryLock(3s wait, -1 watchdog 自动续期)&#xa;lock:dev:{deviceId}:{date}  按日期多 RLock 联合" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=classic;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=1;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="ll_lock" target="ll_lock">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 6. Lock -> Service A : success -->
+        <mxCell id="m6" value="⑥ A: tryLock = true ✅ (获得 Holder, close() 释放)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2d8659;strokeWidth=2;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;endArrow=classic;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="865" y="385" as="sourcePoint" />
+            <mxPoint x="605" y="385" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <!-- 7. Lock -> Service B : fail -->
+        <mxCell id="m7" value="⑦ B: 等待 3s 超时 → tryLock = false ❌ (被 A 持有)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;strokeWidth=2;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;endArrow=classic;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="865" y="430" as="sourcePoint" />
+            <mxPoint x="605" y="430" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- 8. Service -> B : 409 conflict -->
+        <mxCell id="m8" value="⑧ throw BusinessException(RESERVATION_CONFLICT, 409 「该时段已被占用」)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=classic;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="595" y="475" as="sourcePoint" />
+            <mxPoint x="365" y="475" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <!-- B return toast -->
+        <mxCell id="m8b" value="⑨ HTTP 409 → 前端 toast「冲突」" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#6c8ebf;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=classic;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="365" y="510" as="sourcePoint" />
+            <mxPoint x="135" y="510" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- 9. Service A -> MySQL insert -->
+        <mxCell id="m9" value="⑩ INSERT reservation + N×reservation_item" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#d6b656;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=classic;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="605" y="555" as="sourcePoint" />
+            <mxPoint x="1125" y="555" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <!-- 10. MySQL -> Service : OK or DuplicateKey -->
+        <mxCell id="m10" value="⑪ OK  /  DuplicateKeyException (命中 uk_device_date_slot)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#d6b656;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=classic;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1125" y="600" as="sourcePoint" />
+            <mxPoint x="605" y="600" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- 11. Service A -> A : 201 -->
+        <mxCell id="m11" value="⑫ HTTP 201 Created ✅" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2d8659;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;endArrow=classic;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="595" y="685" as="sourcePoint" />
+            <mxPoint x="135" y="685" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Note: dual defense -->
+        <mxCell id="note1" value="⓪ 双重防御说明:&#xa;① Redisson 分布式锁(RLMultiLock)在 Service 层先拦截并发 — 状态: A 获锁成功 / B 等待超时; Redis 异常时 fail-open(返回 null) 不阻塞业务.&#xa;② 若锁因任何原因(fail-open / 主从切换 / TTL 误差)被穿透, MySQL reservation_item.uk_device_date_slot (device_id, date, slot_index) 唯一索引兜底, Service catch DuplicateKeyException → 同样抛 RESERVATION_CONFLICT(409).&#xa;③ Lock key = lock:dev:{deviceId}:{date} — 粒度=设备+日期, 不阻塞其它设备/其它日期的预约." style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#fffbe6;strokeColor=#d6b656;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="740" width="1000" height="90" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

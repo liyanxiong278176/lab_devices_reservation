@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net">
+  <diagram name="预约状态机">
+    <mxGraphModel dx="1450" dy="820" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1450" pageHeight="820" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="预约生命周期状态机  (8 态 · 转移标注 create 锁 / approve MQ / 转移推送)" style="text;html=1;align=center;verticalAlign=middle;fontSize=17;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="200" y="10" width="1050" height="28" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Initial pseudo-state ===== -->
+        <mxCell id="init" value="" style="ellipse;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="60" y="305" width="24" height="24" as="geometry" />
+        </mxCell>
+
+        <!-- ===== States ===== -->
+        <mxCell id="s_pending" value="PENDING&#xa;待审批" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=13;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="150" y="280" width="170" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s_approved" value="APPROVED&#xa;已批准" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=13;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="450" y="280" width="170" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s_inuse" value="IN_USE&#xa;使用中" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=13;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="750" y="280" width="170" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Terminal states: double border -->
+        <mxCell id="s_completed" value="COMPLETED&#xa;已完成 (终态)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=13;double=1;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="280" width="190" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s_rejected" value="REJECTED&#xa;已拒绝 (终态)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=13;double=1;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="450" y="110" width="170" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s_violated" value="VIOLATED&#xa;违规 (终态)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=13;double=1;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="750" y="110" width="170" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s_noshow" value="NO_SHOW&#xa;爽约 (终态)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=13;double=1;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="750" y="470" width="170" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s_cancelled" value="CANCELLED&#xa;已取消 (终态)&#xa;reason=USER / TIMEOUT" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=13;double=1;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="450" y="460" width="170" height="75" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Transitions ===== -->
+        <!-- init -> PENDING -->
+        <mxCell id="t1" value="create(needApproval=1)&#xa;/ acquire Redisson 锁 🔒" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#6c8ebf;strokeWidth=2;endArrow=classic;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="init" target="s_pending">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- init -> APPROVED (auto approve) -->
+        <mxCell id="t2" value="create(needApproval=0)&#xa;免审批直通 / acquire 锁 🔒" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#6c8ebf;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="init" target="s_approved">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- PENDING -> APPROVED -->
+        <mxCell id="t3" value="approve&#xa;/ MQ: sendTimeout ⏰ → 延迟取消队列&#xa;/ STOMP 推送用户 🔔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=11;fontStyle=1;labelBackgroundColor=#fffbe6;" edge="1" parent="1" source="s_pending" target="s_approved">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- PENDING -> REJECTED -->
+        <mxCell id="t4" value="reject&#xa;/ 删除 reservation_item&#xa;/ 推送 🔔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_pending" target="s_rejected">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- PENDING -> CANCELLED -->
+        <mxCell id="t5" value="cancel(用户·startTime 前)&#xa;reason=USER / 推送 🔔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#9673a6;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_pending" target="s_cancelled">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- APPROVED -> IN_USE -->
+        <mxCell id="t6" value="checkIn(宽限窗口内)&#xa;/ device → IN_USE / 推送 🔔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_approved" target="s_inuse">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- APPROVED -> CANCELLED (user) -->
+        <mxCell id="t7" value="cancel(用户)&#xa;reason=USER" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#9673a6;strokeWidth=1.8;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_approved" target="s_cancelled">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- APPROVED -> CANCELLED (MQ timeout) -->
+        <mxCell id="t8" value="MQ 延迟取消 (per-msg TTL 到期)&#xa;guard: status==APPROVED&#xa;→ markTimeoutCancelled reason=TIMEOUT ⏰ / 推送 🔔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=2;endArrow=classic;dashed=1;fontSize=10;fontStyle=1;labelBackgroundColor=#fff2cc;" edge="1" parent="1" source="s_approved" target="s_cancelled">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- APPROVED -> NO_SHOW -->
+        <mxCell id="t9" value="markNoShow&#xa;(过时未签到)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=1.8;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_approved" target="s_noshow">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- IN_USE -> COMPLETED -->
+        <mxCell id="t10" value="checkOut&#xa;/ device → IDLE, 删 items / 推送 🔔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_inuse" target="s_completed">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- IN_USE -> VIOLATED -->
+        <mxCell id="t11" value="markViolated&#xa;(损坏/违规)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=1.8;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_inuse" target="s_violated">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- APPROVED -> VIOLATED -->
+        <mxCell id="t12" value="markViolated" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=1.5;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;dashed=1;" edge="1" parent="1" source="s_approved" target="s_violated">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Legend / notes ===== -->
+        <mxCell id="leg" value="状态约定:  蓝色=初始待审 · 绿色=激活(进行中) · 紫色双框=终态 · 红=异常转移.&#xa;三处横切:  🔒 create 持 Redisson 分布式锁(并发防御①);  ⏰ approve 触发 MQ 延迟取消(per-msg TTL+死信, 自动超时取消);  🔔 每次状态转移经 MQ 异步链路 a 触发 STOMP 实时推送(终态不回滚).&#xa;注: 无独立 TIMEOUT 状态 — 超时取消复用 CANCELLED + cancel_reason=TIMEOUT; NO_SHOW/VIOLATED 由管理员经 REST 手动触发, 无 @Scheduled 定时任务." style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#fffbe6;strokeColor=#d6b656;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="600" width="1380" height="100" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

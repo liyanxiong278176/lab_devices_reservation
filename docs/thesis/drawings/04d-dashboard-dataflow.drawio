@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net">
+  <diagram name="数据看板数据流图">
+    <mxGraphModel dx="1500" dy="950" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="950" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="亮点③  数据看板数据流图  (Mapper 聚合 → Redis 缓存 → REST → vue-echarts 三角色渲染)" style="text;html=1;align=center;verticalAlign=middle;fontSize=17;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="200" y="10" width="1100" height="28" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Layer 1: Data sources ===== -->
+        <mxCell id="L1" value="① 数据源 / Mapper 聚合" style="swimlane;startSize=28;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=13;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="30" y="55" width="320" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="ReservationItemMapper&#xa;selectOccupiedSlotCounts&#xa;→ 利用率 % (按设备 COUNT 占用时槽)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L1">
+          <mxGeometry x="15" y="45" width="290" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="ReservationItemMapper&#xa;selectHeatmap&#xa;→ DAYOFWEEK × 时槽桶 热力图" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L1">
+          <mxGeometry x="15" y="130" width="290" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="ReservationMapper&#xa;selectDailyActiveTrend(Scoped)&#xa;→ 近30天预约趋势" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L1">
+          <mxGeometry x="15" y="215" width="290" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" value="内存聚合 deviceStatusDist&#xa;→ 设备状态分布 IDLE/IN_USE/MAINTENANCE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L1">
+          <mxGeometry x="15" y="300" width="290" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" value="内存聚合 categoryDist&#xa;→ 类目设备数分布" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L1">
+          <mxGeometry x="15" y="385" width="290" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s6" value="RepairReport status 统计&#xa;→ 报修 PENDING/PROCESSING/RESOLVED/REJECTED" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L1">
+          <mxGeometry x="15" y="470" width="290" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s7" value="buildCards&#xa;→ 今日预约 / 待审批 / 本周违规" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L1">
+          <mxGeometry x="15" y="555" width="290" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Layer 2: Service + Redis cache ===== -->
+        <mxCell id="L2" value="② 业务聚合 + Redis 缓存" style="swimlane;startSize=28;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=13;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="400" y="55" width="320" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="svc" value="DashboardServiceImpl&#xa;summary() / overview() / me()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=12;fontStyle=1;" vertex="1" parent="L2">
+          <mxGeometry x="20" y="45" width="280" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="cache_u" value="Redis 缓存  dash:util:{role}:{userId}:{groupBy}:{days}&#xa;利用率聚合 · TTL 5min (lab.dashboard.cache-ttl-minutes)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="L2">
+          <mxGeometry x="20" y="120" width="280" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="cache_h" value="Redis 缓存  dash:heat:{role}:{userId}&#xa;热力图 · TTL 5min" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="L2">
+          <mxGeometry x="20" y="200" width="280" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="scope" value="LabScopeHelper 数据范围隔离&#xa;STUDENT → 仅自己; LAB_ADMIN → 所管实验室; SYS_ADMIN → 全部" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="L2">
+          <mxGeometry x="20" y="275" width="280" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="note2" value="未命中缓存才查 DB&#xa;聚合结果回填 Redis&#xa;5 分钟内同请求直取缓存" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fillColor=#fffbe6;strokeColor=#d6b656;rounded=1;" vertex="1" parent="L2">
+          <mxGeometry x="20" y="355" width="280" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Layer 3: REST ===== -->
+        <mxCell id="L3" value="③ REST 接口" style="swimlane;startSize=28;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=13;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="770" y="55" width="280" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="api1" value="GET /dashboard/summary&#xa;(LAB_ADMIN+SYS_ADMIN)&#xa;→ 顶部 KPI 卡片" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="L3">
+          <mxGeometry x="20" y="45" width="240" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="api2" value="GET /dashboard/overview&#xa;?groupBy&amp;days&#xa;→ 利用率/热力图/类目/报修" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="L3">
+          <mxGeometry x="20" y="130" width="240" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="api3" value="GET /dashboard/me&#xa;(任意已登录用户)&#xa;→ 个人统计" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="L3">
+          <mxGeometry x="20" y="215" width="240" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="ctrl" value="DashboardController&#xa;@PreAuthorize 鉴权" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="L3">
+          <mxGeometry x="20" y="300" width="240" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Layer 4: Frontend ===== -->
+        <mxCell id="L4" value="④ 前端 vue-echarts 渲染" style="swimlane;startSize=28;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;fontSize=13;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="55" width="380" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="disp" value="dashboard/Index.vue 角色分发&#xa;STUDENT → Student.vue   ·   LAB_ADMIN → LabAdmin.vue   ·   SYS_ADMIN → Admin.vue" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;fontStyle=1;" vertex="1" parent="L4">
+          <mxGeometry x="15" y="45" width="350" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="stu" value="Student.vue&#xa;消费 /dashboard/me" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="L4">
+          <mxGeometry x="15" y="120" width="165" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="adm" value="Admin.vue / LabAdmin.vue&#xa;消费 /dashboard/overview" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="L4">
+          <mxGeometry x="195" y="120" width="170" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="w_stat" value="StatCard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="L4">
+          <mxGeometry x="15" y="195" width="105" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="w_pie" value="PieWidget&#xa;(类目/状态)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="L4">
+          <mxGeometry x="130" y="195" width="105" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="w_bar" value="BarWidget&#xa;(利用率)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="L4">
+          <mxGeometry x="245" y="195" width="105" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="w_line" value="LineWidget&#xa;(30天趋势)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="L4">
+          <mxGeometry x="15" y="245" width="105" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="w_heat" value="HeatmapWidget&#xa;(周×时槽)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="L4">
+          <mxGeometry x="130" y="245" width="105" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="w_repair" value="RepairPanel&#xa;(报修统计)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbe6;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="L4">
+          <mxGeometry x="245" y="245" width="105" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="fn_api" value="frontend/src/api/dashboard.ts&#xa;axios 封装" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="L4">
+          <mxGeometry x="15" y="310" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="fn_chart" value="基于 vue-echarts 6.x&#xa;按需引入柱/饼/线/热力图" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="L4">
+          <mxGeometry x="195" y="310" width="170" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Edges between layers ===== -->
+        <mxCell id="e_l1l2" value="聚合结果" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="L1" target="L2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_l2l3" value="JSON 响应" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d6b656;strokeWidth=2;endArrow=classic;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="L2" target="L3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_l3l4" value="HTTP" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#6c8ebf;strokeWidth=2;endArrow=classic;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="L3" target="L4"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- note -->
+        <mxCell id="note" value="数据流要点:  看板所有指标由后端 Mapper 一次聚合, 结果按 角色+用户+维度 缓存到 Redis (TTL 5min), 高频访问免落库; 前端按角色路由到不同视图, 复用同一套 vue-echarts 组件库, 个人页(/me) 与全局页(/overview) 数据范围由 LabScopeHelper 隔离, 避免越权." style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fillColor=#fffbe6;strokeColor=#d6b656;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="780" width="1450" height="50" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net">
+  <diagram name="部署拓扑图">
+    <mxGraphModel dx="1280" dy="920" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1280" pageHeight="920" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="Docker Compose 生产部署拓扑图" style="text;html=1;align=center;verticalAlign=middle;fontSize=20;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="340" y="10" width="600" height="30" as="geometry" />
+        </mxCell>
+        <!-- external user -->
+        <mxCell id="user" value="用户浏览器&#xa;(学生 / 实验管理员 / 系统管理员)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="520" y="60" width="240" height="50" as="geometry" />
+        </mxCell>
+        <!-- Docker host boundary -->
+        <mxCell id="host" value="Docker Host  ·  compose.prod.yml  ·  自定义网络 lab_net (bridge)" style="swimlane;startSize=30;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;fontSize=13;verticalAlign=top;dashed=0;" vertex="1" parent="1">
+          <mxGeometry x="80" y="140" width="1120" height="700" as="geometry" />
+        </mxCell>
+        <!-- frontend container -->
+        <mxCell id="c_fe" value="frontend 容器&#xa;(nginx:1.25-alpine)&#xa;端口映射 80:80" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;fontStyle=1;verticalAlign=top;" vertex="1" parent="host">
+          <mxGeometry x="430" y="60" width="260" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="c_fe_hc" value="✓ healthcheck: wget / → 200" style="text;html=1;align=center;fontSize=10;fillColor=none;strokeColor=none;fontColor=#2d8659;" vertex="1" parent="host">
+          <mxGeometry x="430" y="155" width="260" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="c_fe_cfg" value="nginx.conf:&#xa;  location /api → app:8080&#xa;  location /api/ws → Upgrade WebSocket" style="text;html=1;align=left;fontSize=10;fillColor=#fffbe6;strokeColor=#d6b656;rounded=1;" vertex="1" parent="host">
+          <mxGeometry x="730" y="60" width="250" height="60" as="geometry" />
+        </mxCell>
+        <!-- app container -->
+        <mxCell id="c_app" value="app 容器  (Spring Boot 3.2.5 / Java 17)&#xa;端口映射 8080:8080&#xa;依赖: depends_on (mysql/redis/rabbitmq healthy)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;verticalAlign=top;" vertex="1" parent="host">
+          <mxGeometry x="370" y="220" width="380" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="c_app_hc" value="✓ healthcheck: actuator/health" style="text;html=1;align=center;fontSize=10;fillColor=none;strokeColor=none;fontColor=#2d8659;" vertex="1" parent="host">
+          <mxGeometry x="370" y="315" width="380" height="18" as="geometry" />
+        </mxCell>
+        <!-- three middleware containers -->
+        <mxCell id="c_mysql" value="mysql 容器&#xa;mysql:8.0&#xa;端口 3306&#xa;environment: MYSQL_*" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;verticalAlign=top;" vertex="1" parent="host">
+          <mxGeometry x="110" y="400" width="260" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_mysql_hc" value="✓ healthcheck: mysqladmin ping" style="text;html=1;align=center;fontSize=10;fillColor=none;strokeColor=none;fontColor=#2d8659;" vertex="1" parent="host">
+          <mxGeometry x="110" y="515" width="260" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="c_redis" value="redis 容器&#xa;redis:7-alpine&#xa;端口 6379" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;fontStyle=1;verticalAlign=top;" vertex="1" parent="host">
+          <mxGeometry x="430" y="400" width="260" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_redis_hc" value="✓ healthcheck: redis-cli ping" style="text;html=1;align=center;fontSize=10;fillColor=none;strokeColor=none;fontColor=#2d8659;" vertex="1" parent="host">
+          <mxGeometry x="430" y="515" width="260" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="c_mq" value="rabbitmq 容器&#xa;rabbitmq:3.13-management&#xa;端口 5672 (AMQP) / 15672 (管控台)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontStyle=1;verticalAlign=top;" vertex="1" parent="host">
+          <mxGeometry x="750" y="400" width="260" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_mq_hc" value="✓ healthcheck: rabbitmq-diagnostics ping" style="text;html=1;align=center;fontSize=10;fillColor=none;strokeColor=none;fontColor=#2d8659;" vertex="1" parent="host">
+          <mxGeometry x="750" y="515" width="260" height="18" as="geometry" />
+        </mxCell>
+        <!-- volumes -->
+        <mxCell id="v_mysql" value="volume: mysql_data&#xa;(/var/lib/mysql)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;boundedLbl=1;" vertex="1" parent="host">
+          <mxGeometry x="150" y="570" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="v_redis" value="volume: redis_data&#xa;(/data)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;boundedLbl=1;" vertex="1" parent="host">
+          <mxGeometry x="470" y="570" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="v_mq" value="volume: rabbitmq_data&#xa;(/var/lib/rabbitmq)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;boundedLbl=1;" vertex="1" parent="host">
+          <mxGeometry x="790" y="570" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="v_app_logs" value="volume: app_logs&#xa;(应用日志)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;boundedLbl=1;" vertex="1" parent="host">
+          <mxGeometry x="1030" y="220" width="150" height="70" as="geometry" />
+        </mxCell>
+        <!-- edges -->
+        <mxCell id="eu" value="HTTP :80" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="user" target="c_fe">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="proxy /api → app:8080&#xa;/api/ws → ws upgrade" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d79b00;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c_fe" target="c_app">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="JDBC" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c_app" target="c_mysql">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="Lettuce" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#b85450;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c_app" target="c_redis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="AMQP" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#9673a6;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c_app" target="c_mq">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- volume mounts (dashed) -->
+        <mxCell id="vm1" value="mount" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#666666;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c_mysql" target="v_mysql">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vm2" value="mount" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#666666;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c_redis" target="v_redis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vm3" value="mount" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#666666;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c_mq" target="v_mq">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="vm4" value="mount" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#666666;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c_app" target="v_app_logs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <!-- note -->
+        <mxCell id="note" value="说明:&#xa;• 所有服务接入同一 bridge 网络 lab_net,容器间以服务名解析(app/mysql/redis/rabbitmq)。&#xa;• 仅有前端容器对外暴露 80 端口;app:8080、各中间件端口仅在网内可达。&#xa;• 通过 depends_on + healthcheck 控制启动顺序,避免 app 在中间件就绪前启动。&#xa;• 数据卷持久化 MySQL/Redis/RabbitMQ 与应用日志,容器重建数据不丢失。" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#fffbe6;strokeColor=#d6b656;rounded=1;" vertex="1" parent="host">
+          <mxGeometry x="110" y="680" width="900" height="100" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
