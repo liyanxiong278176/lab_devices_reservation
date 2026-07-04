@@ -1,21 +1,24 @@
-// Cal.com design tokens — source of truth: frontend/DESIGN.md + styles/theme.scss.
-// Black (#111111) is the only primary CTA hue; blue (#3b82f6) is a sparing brand accent.
-// Series use the DESIGN.md badge palette for categorical distinction.
+// Lab 深色主题色板 — source of truth: styles/theme.dark.scss + echarts-dark-theme.ts。
+// R0.3 重调:青→蓝渐变系 + 状态语义色,与深色 token 对齐。
+// 导出名保持不变(Bar/Line/Pie/HeatmapWidget + 状态记录均按名引用),仅替换值。
+//
+// 主强调青色(#22d3ee = --accent)取代旧的黑色 INK,作为热力峰值/已完成状态;
+// 蓝色(#3b82f6)保留为渐变中段;状态色对齐 --status-* token。
 
-export const INK = '#111111'
-export const BLUE = '#3b82f6'
-export const SUCCESS = '#10b981'
-export const WARNING = '#f59e0b'
-export const ERROR = '#ef4444'
-export const VIOLET = '#8b5cf6'
-export const ORANGE = '#fb923c'
-export const MUTED = '#6b7280'
-export const BODY = '#374151'
-export const HAIRLINE = '#e5e7eb'
-export const SURFACE_SOFT = '#f3f4f6'
+export const INK = '#22d3ee' // 主强调青(--accent);热力峰值 / 已完成
+export const BLUE = '#3b82f6' // 渐变中段蓝
+export const SUCCESS = '#34d399' // --status-success
+export const WARNING = '#fbbf24' // --status-warning
+export const ERROR = '#f87171' // --status-danger
+export const VIOLET = '#a78bfa' // 紫色分类色
+export const ORANGE = '#fb923c' // 爽约(NO_SHOW)语义色(保留,不进 SERIES_PALETTE 循环)
+export const MUTED = '#9aa6b2' // --text-secondary(坐标轴标签)
+export const BODY = '#e6edf3' // --text-primary(饼图标签)
+export const HAIRLINE = 'rgba(255, 255, 255, 0.06)' // --border-subtle(轴线/分割线)
+export const SURFACE_SOFT = '#243449' // 深色软底(热力图低值端)
 
-/** 分类循环色板（饼/柱缺省顺序）。 */
-export const SERIES_PALETTE = [INK, BLUE, SUCCESS, WARNING, ERROR, VIOLET, ORANGE]
+/** 分类循环色板(饼/柱缺省顺序):青→蓝 + 状态语义,6 色。 */
+export const SERIES_PALETTE = [INK, BLUE, SUCCESS, WARNING, ERROR, VIOLET]
 
 // ---- 设备状态（deviceStatus）----
 export const DEVICE_STATUS_ORDER = ['IDLE', 'IN_USE', 'MAINTENANCE']
