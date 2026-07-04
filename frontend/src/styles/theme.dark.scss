@@ -1,0 +1,159 @@
+// ============================================================================
+// theme.dark.scss — 科技深色(Linear/Vercel 风)Token 层
+// Token 权威来源: docs/superpowers/specs/2026-07-04-frontend-redesign-design.md §3
+//
+// 本文件职责:
+//   1. 定义全量深色设计 token(:root CSS 变量)。
+//   2. 把 token 桥到 Element Plus(--el-*),让 EP 组件自动继承深色。
+//   3. body/#app 基础底色/字体 + 旧 .lab-card 升级。
+//
+// 顺序契约(main.ts 中):
+//   element-plus/dist/index.css
+//   → element-plus/theme-chalk/dark/css-vars.css   (EP 默认暗色底)
+//   → theme.dark.scss                              (本项目 token 覆盖 EP 默认暗色)
+// ============================================================================
+
+:root {
+  // ---- §3.1 色板 ---------------------------------------------------------
+  // 背景层级(base 最深 → sunken 下沉 → surface 卡片面 → elevated 抬升/hover)
+  --bg-base: #0a0e14;        // 近黑带蓝调,应用底(最深)
+  --bg-surface: #111722;     // 卡片面
+  --bg-elevated: #161d2b;    // 抬升 / hover
+  --bg-sunken: #060a10;      // 下沉(代码/侧栏)
+
+  // 发丝线(border)三档
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  // 文字层级
+  --text-primary: #e6edf3;   // 正文/标题
+  --text-secondary: #9aa6b2; // 次要
+  --text-tertiary: #6b7785;  // 三级
+  --text-on-accent: #04141a; // 强调上文字
+
+  // 主强调(青/电光蓝)
+  --accent: #22d3ee;         // cyan-400 主强调
+  --accent-bright: #67e8f9;  // 强调-亮
+  --accent-deep: #0891b2;    // 强调-深
+  --grad-accent: linear-gradient(135deg, #22d3ee, #3b82f6); // 强调渐变
+  --glow-accent: 0 0 0 1px rgba(34, 211, 238, 0.4), 0 8px 30px rgba(34, 211, 238, 0.18);
+
+  // 状态语义色
+  --status-success: #34d399;
+  --status-warning: #fbbf24;
+  --status-danger: #f87171;
+  --status-info: #60a5fa;
+
+  // ---- §3.2 字体 ---------------------------------------------------------
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Space Grotesk", var(--font-sans);
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  // ---- §3.3 圆角 / 阴影 / 动效 -------------------------------------------
+  // 圆角:控件 8px / 卡片 12px / hero 16px / pill 9999
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-hero: 16px;
+  --radius-pill: 9999px;
+
+  // 深色软阴影(组件抬升感,不抢眼)
+  --shadow-soft: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-soft-light: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-soft-lighter: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 2px 6px rgba(0, 0, 0, 0.25);
+
+  // 动效
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --d-fast: 150ms;
+  --d-med: 280ms;
+  --d-slow: 500ms;
+
+  // ==========================================================================
+  // Element Plus 暗色变量映射(把上面 token 桥到 EP,EP 组件自动跟随)
+  // 文档: https://element-plus.org/en/guide/dark-mode.html
+  // ==========================================================================
+
+  // ---- Primary(主强调 = 青色 accent)----
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-3: #4bdcef;   // accent 与亮色之间
+  --el-color-primary-light-5: #67e8f9;   // = --accent-bright
+  --el-color-primary-light-7: #8deef8;
+  --el-color-primary-light-8: #b3f3fb;
+  --el-color-primary-light-9: #d8f9fd;   // 最浅(用于淡填充)
+  --el-color-primary-dark-2: var(--accent-deep);
+
+  // ---- 状态色 ----
+  --el-color-success: var(--status-success);
+  --el-color-warning: var(--status-warning);
+  --el-color-danger: var(--status-danger);
+  --el-color-error: var(--status-danger);
+
+  // ---- 背景 ----
+  --el-bg-color: var(--bg-surface);
+  --el-bg-color-page: var(--bg-base);
+  --el-bg-color-overlay: var(--bg-elevated);
+
+  // ---- 文字 ----
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-secondary);
+  --el-text-color-secondary: var(--text-tertiary);
+  --el-text-color-placeholder: var(--text-tertiary);
+  --el-text-color-disabled: rgba(154, 166, 178, 0.4);
+
+  // ---- 边框 ----
+  --el-border-color: var(--border-default);
+  --el-border-color-light: var(--border-subtle);
+  --el-border-color-lighter: var(--border-subtle);
+  --el-border-color-extra-light: var(--border-subtle);
+  --el-border-color-dark: var(--border-strong);
+
+  // ---- 填充(fill 多用于 hover/选中底)----
+  --el-fill-color: var(--bg-elevated);
+  --el-fill-color-light: var(--bg-surface);
+  --el-fill-color-lighter: var(--bg-surface);
+  --el-fill-color-blank: var(--bg-surface);
+  --el-fill-color-dark: var(--bg-sunken);
+
+  // ---- 阴影 ----
+  --el-box-shadow: var(--shadow-soft);
+  --el-box-shadow-light: var(--shadow-soft-light);
+  --el-box-shadow-lighter: var(--shadow-soft-lighter);
+
+  // ---- 字体 / 圆角 ----
+  --el-font-family: var(--font-sans);
+  --el-border-radius-base: var(--radius-control);
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: var(--radius-card);
+}
+
+// ============================================================================
+// 基础:html / body / #app
+// ============================================================================
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  // 深色下字体平滑(防粗细发虚)
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+// ============================================================================
+// .lab-card 旧视图仍在用,升级为深色卡(保留类名,避免回归)
+// ============================================================================
+.lab-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-soft);
+}
