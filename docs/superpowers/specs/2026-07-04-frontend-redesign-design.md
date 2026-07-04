@@ -85,18 +85,31 @@ Element Plus 映射示例:`--el-color-primary: var(--accent)`;`--el-bg-color: va
 | 组件 | 职责 | 关键视觉 |
 |---|---|---|
 | `PageHeader` | 页头:展示标题 + 副标题 + 右侧 actions slot + 可选面包屑 | Space Grotesk 标题,底部 hairline |
-| `Panel` / `GlowCard` | 通用卡片壳 | `--bg-surface` + hairline + hover 抬升 -2px + 辉光增强;可选顶部 1px 青色 accent 条 |
+| `Panel` | 基础卡片壳 | `--bg-surface` + hairline + hover 抬升 -2px |
+| `GlowCard` | 强调卡片(继承 Panel) | Panel + hover 辉光增强 + 可选顶部 1px 青色 accent 条 |
 | `StatCard` | 驾驶舱指标卡 | 大数字 count-up + 趋势 delta(绿/红)+ sparkline + 青色 tint 图标 chip |
 | `StatusDot` | 设备/预约状态点 | 脉冲点:IDLE 灰 / IN_USE 青脉冲 / MAINTENANCE 琥珀 / 故障红;附文字 |
 | `GradientButton` | 主 CTA | 青→蓝渐变 + 辉光阴影 + hover 增亮 + press 收缩;替代默认黑按钮 |
-| `GhostButton` / `TextButton` | 次级 | hairline / 纯文字,hover 青色 |
+| `GhostButton` | 次级(hairline 描边) | hairline 边,hover 青色 |
+| `TextButton` | 次级(纯文字链接) | 无背景,hover 青色 |
 | `Skeleton` | 加载占位 | 深色 shimmer(非转圈) |
 | `EmptyState` | 空态 | 图标 + 文案,弱辉光 |
 | `SegmentedControl` | 切换组(筛选/tab) | 选中态 layout 动画滑块(青色 pill 在底槽滑动) |
 | `Timeline` | 预约/报修进度 | 垂直时间轴 + 状态点 + 青色当前节点 |
-| `Tag` / `Badge` | 标签 | 深色调过(semi-fill),状态语义色 |
+| `Tag` | 标签(EP el-tag 深色调过封装) | semi-fill,状态语义色 |
+| `Badge` | 徽章(EP el-badge 深色调过封装) | semi-fill,状态语义色 |
 
-全部走 token,scoped scss,不引 Tailwind。
+**共 14 个组件文件**(上表每行一个独立 `.vue`,无别名合并)。全部走 token,scoped scss,不引 Tailwind。
+
+### 5.1 与既有组件的迁移关系
+
+`frontend/src/components/` 现状:`HelloWorld.vue`(Vite 脚手架残留)、`charts/{BarWidget,BaseChart,HeatmapWidget,LineWidget,PieWidget,StatCard,palette}.vue`(ECharts 封装)。迁移:
+
+- **删** `HelloWorld.vue`(R0,死文件)。
+- `charts/StatCard.vue` **重构并入** `ui/StatCard.vue`(既有的是浅色简版,新版接管 count-up + 趋势 + sparkline)。Dashboard 视图改引 `ui/StatCard`。
+- `charts/{Bar,Line,Pie,Heatmap}Widget.vue` + `BaseChart.vue` **保留**,仅通过"注册自定义深色主题 + 重调 `palette.ts`"变深色,不改组件结构。
+- `charts/palette.ts` **重调**为深色色板(青/蓝/状态色)。
+- 新增 `components/ui/` 为设计系统原语层(本节 14 件),与 `components/charts/`(图表封装层)并存。
 
 ## 6. 动效规范(丰富但克制)
 
@@ -147,8 +160,8 @@ Element Plus 映射示例:`--el-color-primary: var(--accent)`;`--el-bg-color: va
 
 | Slice | 内容 | 验收 |
 |---|---|---|
-| **R0 基建** | `theme.dark.scss` 全量 token + `@fontsource` 字体 + EP 暗色 css-vars + `html.dark` + ECharts 深色主题注册 + 删 style.css + 全局氛围光 + MainLayout 深色重构(§4)+ page transition 基建 + `v-reduced-motion` 指令 | 全站已变深色骨架,vitest 零回归 |
-| **R1 组件库** | §5 全部组件 + §6 动效基建(@vueuse/motion 接入 + count-up composable + shimmer) | 组件可独立渲染,vitest 绿 |
+| **R0 基建** | `theme.dark.scss` 全量 token + `@fontsource` 字体 + EP 暗色 css-vars + `html.dark` + ECharts 深色主题注册 + 重调 `charts/palette.ts` + 删 `style.css`/`HelloWorld.vue` + 全局氛围光 + MainLayout 深色重构(§4)+ page transition 基建 + `v-reduced-motion` 指令 | 全站已变深色骨架(含图表),vitest 零回归 |
+| **R1 组件库** | §5 全部 **14 个组件** + 重构 `charts/StatCard`→`ui/StatCard` + §6 动效基建(@vueuse/motion 接入 + count-up composable + shimmer) | 组件可独立渲染,vitest 绿 |
 | **R2 登录** | 分屏 aurora hero + 玻璃卡 + 入场 | 浏览器实测 |
 | **R3 驾驶舱×4** | StatCard 行(count-up)+ ECharts 深色图 + 热力 + 活动流 + aurora | 3 角色实测 |
 | **R4 设备三件** | Index 网格(stagger)+ Detail sticky + Manage 暗表 | 实测 |
