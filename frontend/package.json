@@ -12,7 +12,12 @@
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/space-grotesk": "^5.2.10",
     "@stomp/stompjs": "^7.3.0",
+    "@vueuse/core": "^14.3.0",
+    "@vueuse/motion": "^3.0.3",
     "axios": "^1.18.1",
     "dayjs": "^1.11.21",
     "echarts": "^6.1.0",
