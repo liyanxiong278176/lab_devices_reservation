@@ -3,9 +3,11 @@ import { computed, onMounted, ref } from 'vue'
 import { dashboardMe, type DashboardMeVO } from '@/api/dashboard'
 import StatCard from '@/components/ui/StatCard.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import GlowCard from '@/components/ui/GlowCard.vue'
 import PieWidget from '@/components/charts/PieWidget.vue'
 import BarWidget from '@/components/charts/BarWidget.vue'
 import LineWidget from '@/components/charts/LineWidget.vue'
+import { useStagger } from '@/composables/useStagger'
 import {
   RESERVATION_STATUS_ORDER,
   RESERVATION_STATUS_LABELS,
@@ -15,6 +17,11 @@ import {
 
 const loading = ref(false)
 const data = ref<DashboardMeVO | null>(null)
+
+// 图表网格错峰入场容器(spec §6.2):首次进入视口时,内部 [data-stagger] 图表卡
+// 按 60ms 错峰 fade+rise;reduced-motion 由 useStagger 内部短路(守铁律 §6.1)。
+const chartGridRef = ref<HTMLElement | null>(null)
+useStagger(chartGridRef, { delay: 60 })
 
 async function load() {
   loading.value = true
@@ -58,22 +65,37 @@ onMounted(load)
       </el-col>
     </el-row>
 
-    <!-- 趋势 + 状态分布 -->
-    <el-row :gutter="16" class="dash__row">
-      <el-col :xs="24" :lg="16">
-        <LineWidget title="近 30 天我的预约趋势" :data="data?.myTrend30d ?? []" />
-      </el-col>
-      <el-col :xs="24" :lg="8">
-        <PieWidget title="我的预约状态分布" :data="statusData" />
-      </el-col>
-    </el-row>
+    <!-- 图表网格:GlowCard 包裹 + 错峰入场(spec §7 dashboard) -->
+    <div class="chart-grid" ref="chartGridRef">
+      <!-- 趋势 + 状态分布 -->
+      <el-row :gutter="16" class="dash__row">
+        <el-col :xs="24" :lg="16">
+          <div class="chart-cell" data-stagger>
+            <GlowCard>
+              <LineWidget title="近 30 天我的预约趋势" :data="data?.myTrend30d ?? []" />
+            </GlowCard>
+          </div>
+        </el-col>
+        <el-col :xs="24" :lg="8">
+          <div class="chart-cell" data-stagger>
+            <GlowCard>
+              <PieWidget title="我的预约状态分布" :data="statusData" />
+            </GlowCard>
+          </div>
+        </el-col>
+      </el-row>
 
-    <!-- 常用品类 -->
-    <el-row :gutter="16" class="dash__row">
-      <el-col :span="24">
-        <BarWidget title="我常用品类" :data="categoryData" :horizontal="true" />
-      </el-col>
-    </el-row>
+      <!-- 常用品类 -->
+      <el-row :gutter="16" class="dash__row">
+        <el-col :span="24">
+          <div class="chart-cell" data-stagger>
+            <GlowCard>
+              <BarWidget title="我常用品类" :data="categoryData" :horizontal="true" />
+            </GlowCard>
+          </div>
+        </el-col>
+      </el-row>
+    </div>
   </div>
 </template>
 
@@ -93,6 +115,39 @@ onMounted(load)
       margin-bottom: 16px;
     }
   }
+}
+
+// 图表网格(错峰入场容器)
+.chart-grid {
+  // 仅作 useStagger 容器(ref);内部 [data-stagger] 由 _motion.scss 兜底初始态。
+}
+
+// 图表单元:撑满 el-col 高度(el-row 默认 align-items:stretch),让同行 GlowCard 等高
+.chart-cell {
+  height: 100%;
+}
+
+// hover 时抬升该 el-col 的 stacking(el-col 默认无 stacking context,DOM 后续的邻居
+// 会盖住当前卡的 cyan glow)。被悬停列置顶,辉光不被同行相邻卡遮挡。
+.chart-grid :deep(.el-col) {
+  position: relative;
+  &:hover {
+    z-index: 1;
+  }
+}
+
+// GlowCard 包裹图表 widget:内层 .lab-card.chart-card 退化为透明(避免双框/双底),
+// 卡片感由 GlowCard 统一提供(bg-surface + hairline + hover glow + padding:20)。
+.chart-cell :deep(.glow-card) {
+  height: 100%;
+}
+
+.chart-cell :deep(.lab-card.chart-card) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0; // GlowCard 已提供 padding:20
 }
 
 // 内容(标题/卡片行/图表)压在局部 aura 之上
