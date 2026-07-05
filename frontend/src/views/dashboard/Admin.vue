@@ -3,7 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { dashboardOverview, type DashboardOverviewVO } from '@/api/dashboard'
-import StatCard from '@/components/charts/StatCard.vue'
+import StatCard from '@/components/ui/StatCard.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 import PieWidget from '@/components/charts/PieWidget.vue'
 import BarWidget from '@/components/charts/BarWidget.vue'
 import LineWidget from '@/components/charts/LineWidget.vue'
@@ -79,36 +80,35 @@ onMounted(load)
 
 <template>
   <div v-loading="loading" class="dash">
-    <div class="dash__head">
-      <div>
-        <h1 class="dash__title">驾驶舱</h1>
-        <p class="dash__subtitle">实验室运营富指标概览（按角色范围自动过滤）</p>
-      </div>
-      <div class="dash__toolbar lab-card">
-        <span class="dash__tool-label">聚合</span>
-        <el-radio-group v-model="groupBy" size="small" @change="load">
-          <el-radio-button value="device">按设备</el-radio-button>
-          <el-radio-button value="category">按分类</el-radio-button>
-        </el-radio-group>
-        <span class="dash__tool-label">周期</span>
-        <el-radio-group v-model.number="days" size="small" @change="load">
-          <el-radio-button :value="7">近 7 天</el-radio-button>
-          <el-radio-button :value="30">近 30 天</el-radio-button>
-        </el-radio-group>
-        <el-button :icon="Refresh" size="small" @click="onRefresh">刷新</el-button>
-      </div>
-    </div>
+    <div class="dashboard-aura" aria-hidden="true" />
+    <PageHeader title="驾驶舱" subtitle="实验室运营富指标概览（按角色范围自动过滤）">
+      <template #actions>
+        <div class="dash__toolbar lab-card">
+          <span class="dash__tool-label">聚合</span>
+          <el-radio-group v-model="groupBy" size="small" @change="load">
+            <el-radio-button value="device">按设备</el-radio-button>
+            <el-radio-button value="category">按分类</el-radio-button>
+          </el-radio-group>
+          <span class="dash__tool-label">周期</span>
+          <el-radio-group v-model.number="days" size="small" @change="load">
+            <el-radio-button :value="7">近 7 天</el-radio-button>
+            <el-radio-button :value="30">近 30 天</el-radio-button>
+          </el-radio-group>
+          <el-button :icon="Refresh" size="small" @click="onRefresh">刷新</el-button>
+        </div>
+      </template>
+    </PageHeader>
 
     <!-- 数字卡片 -->
     <el-row :gutter="16" class="dash__row">
       <el-col :xs="24" :sm="8">
-        <StatCard label="今日预约" :value="cards?.todayReservations ?? 0" />
+        <StatCard label="今日预约" :value="cards?.todayReservations ?? 0" icon="Calendar" />
       </el-col>
       <el-col :xs="24" :sm="8">
-        <StatCard label="待审批" :value="cards?.pendingApprovals ?? 0" />
+        <StatCard label="待审批" :value="cards?.pendingApprovals ?? 0" icon="Clock" />
       </el-col>
       <el-col :xs="24" :sm="8">
-        <StatCard label="近 7 天违规" :value="cards?.weeklyViolations ?? 0" />
+        <StatCard label="近 7 天违规" :value="cards?.weeklyViolations ?? 0" icon="Warning" />
       </el-col>
     </el-row>
 
@@ -151,28 +151,12 @@ onMounted(load)
 
 <style scoped lang="scss">
 .dash {
-  &__head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 16px;
+  position: relative;
+
+  // PageHeader 替代原 .dash__head(标题走 Space Grotesk,自带底 hairline);
+  // toolbar 进 #actions slot,窄屏由 PageHeader 的 flex-wrap 自动折行
+  .page-header {
     margin-bottom: 24px;
-  }
-
-  &__title {
-    margin: 0;
-    font-size: 28px;
-    font-weight: 600;
-    line-height: 1.2;
-    letter-spacing: -0.5px;
-    color: var(--el-text-color-primary);
-  }
-
-  &__subtitle {
-    margin: 8px 0 0;
-    font-size: 14px;
-    color: var(--el-text-color-secondary);
   }
 
   &__toolbar {
@@ -196,12 +180,27 @@ onMounted(load)
       margin-bottom: 16px;
     }
   }
+}
 
-  // 窄屏下 toolbar 折行后与标题对齐
-  @media (max-width: 768px) {
-    &__head {
-      flex-direction: column;
-    }
-  }
+// 内容(标题/toolbar/卡片行/图表)压在局部 aura 之上
+.dash > :not(.dashboard-aura) {
+  position: relative;
+  z-index: 1;
+}
+
+// 局部 aurora hero 带(spec §7 dashboard 氛围):仅在 dashboard 顶部一条,
+// 比 App.vue 全局 .aurora-bg 稍强(alpha 0.07-0.09 vs 全局 0.04-0.05),给驾驶舱
+// 独立氛围感;absolute + pointer-events:none,不抢布局/不挡交互。
+.dashboard-aura {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 240px;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 60% 100% at 20% 0%, rgba(64, 224, 208, 0.09), transparent 70%),
+    radial-gradient(ellipse 50% 100% at 80% 10%, rgba(34, 211, 238, 0.07), transparent 65%);
 }
 </style>

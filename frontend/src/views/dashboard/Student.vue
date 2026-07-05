@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { dashboardMe, type DashboardMeVO } from '@/api/dashboard'
-import StatCard from '@/components/charts/StatCard.vue'
+import StatCard from '@/components/ui/StatCard.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 import PieWidget from '@/components/charts/PieWidget.vue'
 import BarWidget from '@/components/charts/BarWidget.vue'
 import LineWidget from '@/components/charts/LineWidget.vue'
@@ -44,18 +45,16 @@ onMounted(load)
 
 <template>
   <div v-loading="loading" class="dash">
-    <div class="dash__head">
-      <h1 class="dash__title">我的驾驶舱</h1>
-      <p class="dash__subtitle">个人预约与报修概览</p>
-    </div>
+    <div class="dashboard-aura" aria-hidden="true" />
+    <PageHeader title="我的驾驶舱" subtitle="个人预约与报修概览" />
 
     <!-- 数字卡片 -->
     <el-row :gutter="16" class="dash__row">
       <el-col :xs="24" :sm="12">
-        <StatCard label="未读通知" :value="data?.unreadCount ?? 0" />
+        <StatCard label="未读通知" :value="data?.unreadCount ?? 0" icon="Bell" />
       </el-col>
       <el-col :xs="24" :sm="12">
-        <StatCard label="我的报修单" :value="data?.myRepairCount ?? 0" />
+        <StatCard label="我的报修单" :value="data?.myRepairCount ?? 0" icon="Tools" />
       </el-col>
     </el-row>
 
@@ -80,23 +79,11 @@ onMounted(load)
 
 <style scoped lang="scss">
 .dash {
-  &__head {
+  position: relative;
+
+  // PageHeader 替代原 .dash__head(标题走 Space Grotesk,自带底 hairline)
+  .page-header {
     margin-bottom: 24px;
-  }
-
-  &__title {
-    margin: 0;
-    font-size: 28px;
-    font-weight: 600;
-    line-height: 1.2;
-    letter-spacing: -0.5px;
-    color: var(--el-text-color-primary);
-  }
-
-  &__subtitle {
-    margin: 8px 0 0;
-    font-size: 14px;
-    color: var(--el-text-color-secondary);
   }
 
   &__row {
@@ -106,5 +93,27 @@ onMounted(load)
       margin-bottom: 16px;
     }
   }
+}
+
+// 内容(标题/卡片行/图表)压在局部 aura 之上
+.dash > :not(.dashboard-aura) {
+  position: relative;
+  z-index: 1;
+}
+
+// 局部 aurora hero 带(spec §7 dashboard 氛围):仅在 dashboard 顶部一条,
+// 比 App.vue 全局 .aurora-bg 稍强(alpha 0.07-0.09 vs 全局 0.04-0.05),给驾驶舱
+// 独立氛围感;absolute + pointer-events:none,不抢布局/不挡交互。
+.dashboard-aura {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 240px;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 60% 100% at 20% 0%, rgba(64, 224, 208, 0.09), transparent 70%),
+    radial-gradient(ellipse 50% 100% at 80% 10%, rgba(34, 211, 238, 0.07), transparent 65%);
 }
 </style>
