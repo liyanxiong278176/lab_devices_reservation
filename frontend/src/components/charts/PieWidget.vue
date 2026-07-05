@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { EChartsOption } from 'echarts'
 import BaseChart from './BaseChart.vue'
-import { SERIES_PALETTE, BODY, MUTED, type ChartDatum } from './palette'
+import { SERIES_PALETTE, BODY, MUTED, BG_SURFACE, type ChartDatum } from './palette'
 
 const props = withDefaults(
   defineProps<{
@@ -33,7 +33,7 @@ const option = computed<EChartsOption>(() => ({
       radius: props.doughnut ? ['45%', '70%'] : '65%',
       center: ['50%', '46%'],
       avoidLabelOverlap: true,
-      itemStyle: { borderColor: '#fff', borderWidth: 2 },
+      itemStyle: { borderColor: BG_SURFACE, borderWidth: 2 }, // 深底融卡分隔(旧 #fff 在深底是硬白线)
       label: { show: !props.doughnut, color: BODY, fontSize: 12 },
       labelLine: { show: !props.doughnut },
       data: props.data.map((d) =>
@@ -63,7 +63,7 @@ const option = computed<EChartsOption>(() => ({
   &__title {
     font-size: 15px;
     font-weight: 600;
-    color: var(--el-text-color-primary); // #111111
+    color: var(--el-text-color-primary); // 深色 token(--text-primary)
     margin-bottom: 8px;
   }
 
@@ -72,7 +72,7 @@ const option = computed<EChartsOption>(() => ({
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--el-text-color-secondary); // #6b7280
+    color: var(--el-text-color-secondary); // 深色 token(--text-secondary)
     font-size: 14px;
   }
 }

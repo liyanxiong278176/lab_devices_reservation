@@ -16,6 +16,7 @@ export const MUTED = '#9aa6b2' // --text-secondary(坐标轴标签)
 export const BODY = '#e6edf3' // --text-primary(饼图标签)
 export const HAIRLINE = 'rgba(255, 255, 255, 0.06)' // --border-subtle(轴线/分割线)
 export const SURFACE_SOFT = '#243449' // 深色软底(热力图低值端)
+export const BG_SURFACE = '#111722' // --bg-surface(饼图切片分隔色,深底融卡)
 
 /** 分类循环色板(饼/柱缺省顺序):青→蓝 + 状态语义,6 色。 */
 export const SERIES_PALETTE = [INK, BLUE, SUCCESS, WARNING, ERROR, VIOLET]
