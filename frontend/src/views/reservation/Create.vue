@@ -64,6 +64,15 @@ function toIso(d: Date): string {
   return dayjs(d).format('YYYY-MM-DDTHH:mm:ss')
 }
 
+// ---- 时间约束:只禁过去,不卡工作时段(后端一并放宽,见 SlotCalculatorService) ----
+// 小时不限制:用户可选 0-23 任意时。后端 15 分钟对齐仍由 :step 控制。
+const disabledHours = (): number[] => []
+const disabledMinutes = (_hour: number): number[] => []
+// 仅禁"今天之前":可预约当天及以后任意时间
+const disabledDate = (date: Date): boolean => {
+  return dayjs(date).isBefore(dayjs().startOf('day'))
+}
+
 // ---- 实时摘要 computed(纯展示派生,不改逻辑)----------------------------
 const startLabel = computed(() =>
   range.value && range.value[0]
@@ -93,6 +102,25 @@ const pricePerHourNum = computed(() => {
   const n = Number(p)
   return Number.isFinite(n) ? n : 0
 })
+// 设备单次最长预约时长(spec 建预约行 UI 提示)—— 与后端 device.max_reservation_hours 同源
+const maxReservationHoursNum = computed(() => {
+  const v = device.value?.maxReservationHours
+  if (v == null || v === '') return 0
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+})
+const maxReservationLabel = computed(() => {
+  const h = maxReservationHoursNum.value
+  if (!h) return null
+  // 24h/天取整,向上取整(25h = 2 天,贴近用户直觉)
+  const days = h >= 24 ? Math.ceil(h / 24) : 0
+  return days > 0 ? `${days} 天` : `${h} 时`
+})
+// 选了超长时段:UI 即时红字 + 阻断下一步 / 提交
+const overLimit = computed(() => {
+  const max = maxReservationHoursNum.value
+  return max > 0 && durationHours.value > max
+})
 // 费用估算 = 单价 × 时长(spec §7 建预约行:实时摘要费用估算)
 const costEstimate = computed(() => {
   if (!durationHours.value || !pricePerHourNum.value) return null
@@ -106,6 +134,16 @@ function next() {
     // 步 1 → 2:需选时段(等价 onSubmit 中的 range 检查)
     if (!range.value || range.value.length !== 2) {
       ElMessage.warning('请选择预约起止时间')
+      return
+    }
+    // 仅校验起止时间顺序(后端还会再校)
+    if (dayjs(range.value[1]).isBefore(dayjs(range.value[0]))) {
+      ElMessage.warning('结束时间需晚于开始时间')
+      return
+    }
+    // 前置超上限拦截(后端 ReservationServiceImpl EXCEED_MAX_DURATION 兜底)
+    if (overLimit.value) {
+      ElMessage.warning(`该设备单次最长可预约 ${maxReservationLabel.value},当前已超`)
       return
     }
     active.value = 1
@@ -134,6 +172,10 @@ async function onSubmit() {
   if (!formRef.value) return
   if (!range.value || range.value.length !== 2) {
     ElMessage.warning('请选择预约起止时间')
+    return
+  }
+  if (overLimit.value) {
+    ElMessage.warning(`该设备单次最长可预约 ${maxReservationLabel.value},当前已超`)
     return
   }
   if (!deviceId.value) {
@@ -171,6 +213,7 @@ onMounted(loadDevice)
 <template>
   <div class="reserve-create">
     <PageHeader
+      back
       title="新建预约"
       subtitle="选择时段并填写用途,提交后系统将进行冲突检测"
     />
@@ -205,6 +248,7 @@ onMounted(loadDevice)
             {{ device.brand }} {{ device.model }}
             <span v-if="device.labName"> · {{ device.labName }}</span>
             <span> · 单价 ¥{{ device.pricePerHour ?? '—' }}/时</span>
+            <span v-if="maxReservationLabel"> · 单次最大预约使用时间 {{ maxReservationLabel }}</span>
           </p>
         </section>
 
@@ -218,7 +262,7 @@ onMounted(loadDevice)
           <!-- 步 1:选择时段 -->
           <div v-show="active === 0" class="reserve-create__step">
             <el-form-item
-              label="预约时段(15 分钟对齐,工作时段 08:00-22:00)"
+              label="预约时段(现在及以后,15 分钟对齐)"
               required
             >
               <el-date-picker
@@ -230,8 +274,17 @@ onMounted(loadDevice)
                 format="YYYY-MM-DD HH:mm"
                 value-format="x"
                 :step="{ hours: 1, minutes: 15, seconds: 0 }"
+                :disabled-hours="disabledHours"
+                :disabled-minutes="disabledMinutes"
+                :disabled-date="disabledDate"
                 style="width: 100%; max-width: 520px"
               />
+              <p v-if="maxReservationLabel" class="reserve-create__range-hint">
+                本设备单次最大预约使用时间 {{ maxReservationLabel }}
+              </p>
+              <p v-if="overLimit" class="reserve-create__range-warn">
+                已超过本设备单次上限({{ maxReservationLabel }}),请缩短时段
+              </p>
             </el-form-item>
           </div>
 
@@ -304,6 +357,10 @@ onMounted(loadDevice)
             <div class="reserve-create__summary-row">
               <dt>时长</dt>
               <dd>{{ durationLabel }}</dd>
+            </div>
+            <div class="reserve-create__summary-row">
+              <dt>单次上限</dt>
+              <dd>{{ maxReservationLabel ?? '—' }}</dd>
             </div>
             <div class="reserve-create__summary-row reserve-create__summary-row--accent">
               <dt>费用估算</dt>
@@ -479,6 +536,21 @@ onMounted(loadDevice)
   &__confirm-cost {
     color: var(--accent);
     font-weight: 600;
+  }
+
+  // 时段选择提示(灰色常驻),与 danger 红字区别
+  &__range-hint {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-tertiary);
+  }
+  // 起止时间非法(超出工作时段 / 超设备上限)红字提示
+  &__range-warn {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--status-danger);
   }
 
   // ---- 摘要 GlowCard 内部 ------------------------------------------------
