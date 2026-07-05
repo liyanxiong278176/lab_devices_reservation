@@ -97,6 +97,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/user/Index.vue'),
         meta: { title: '用户管理', icon: 'UserFilled', roles: ['SYS_ADMIN'] },
       },
+      {
+        // R1 临时预览页:14 件 UI 组件目检。R6 删。hidden:true → 不进侧边栏菜单。
+        path: 'ui-preview',
+        name: 'dev-ui-preview',
+        component: () => import('@/views/dev/UiPreview.vue'),
+        meta: { title: 'UI预览', hidden: true },
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
