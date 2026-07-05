@@ -95,8 +95,16 @@ function onRowCheck(row: ApprovalItemVO, val: string | number | boolean) {
 // ---- 行内展开(详情 / 驳回表单共用 expandedIds 容器)-----------------------
 function toggleExpand(id: number) {
   const next = new Set(expandedIds.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
+  if (next.has(id)) {
+    next.delete(id)
+    // 收起时同步清该行的驳回态,避免再展开看到残留驳回表单(R5.6 复审 🟡)
+    if (rejectingId.value === id) {
+      rejectingId.value = null
+      rejectReason.value = ''
+    }
+  } else {
+    next.add(id)
+  }
   expandedIds.value = next
 }
 
@@ -123,8 +131,17 @@ function openReject(row: ApprovalItemVO) {
 }
 
 function cancelReject() {
-  rejectingId.value = null
-  rejectReason.value = ''
+  // 取消驳回时,若该卡是 openReject 自动展开的,一并收起(R5.6 复审 🔵)
+  if (rejectingId.value !== null) {
+    const id = rejectingId.value
+    rejectingId.value = null
+    rejectReason.value = ''
+    if (expandedIds.value.has(id)) {
+      const next = new Set(expandedIds.value)
+      next.delete(id)
+      expandedIds.value = next
+    }
+  }
 }
 
 async function onRejectConfirm(row: ApprovalItemVO) {

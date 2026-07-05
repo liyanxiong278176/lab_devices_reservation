@@ -540,6 +540,10 @@ onMounted(loadDevice)
     border: 1px solid var(--border-default);
     border-radius: var(--radius-card);
     box-shadow: var(--shadow-soft-light);
+    // sticky 底部:stepper 每步 CTA 始终可达(R5.6 复审 🔵)
+    position: sticky;
+    bottom: 16px;
+    z-index: 2;
   }
 }
 
