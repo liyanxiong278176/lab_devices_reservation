@@ -23,6 +23,11 @@
         <jjwt.version>0.12.5</jjwt.version>
         <hutool.version>5.8.27</hutool.version>
         <testcontainers.version>1.19.7</testcontainers.version>
+        <!-- 覆盖 Spring Boot 3.2.5 管理的 Lombok 1.18.32:1.18.32 不支持 JDK 25 (官方仅到 JDK 22),
+             导致 @Slf4j / @Data / @Getter 等注解处理失效,@Slf4j log 字段找不到 + @Data VO 类全部
+             进不了 target/classes → Spring 启动 MyBatis 扫 mapper 时反射 ClassNotFoundException。
+             1.18.42 (2025-10) 起官方支持 JDK 25。 -->
+        <lombok.version>1.18.42</lombok.version>
     </properties>
 
     <dependencies>
@@ -85,6 +90,33 @@
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>
                     </includes>
+                </configuration>
+            </plugin>
+            <!--
+              显式声明 Lombok 注解处理器路径。
+
+              必要性:
+                Maven 3.9 + JDK 25 上 maven-compiler-plugin 的"自动从 classpath 探测
+                META-INF/services/javax.annotation.processing.Processor"机制对
+                lombok 的 hider/claimer processor 探测失败(直接 javac 验证 1.18.42 完全可工作),
+                结果是 Lombok 的注解处理器完全不被 javac 加载,@Slf4j/@Setter/@Data 等都不
+                生成方法,目标类整个进不了 target/classes → Spring Boot 启动时反射
+                ClassNotFoundException 雪崩。
+                显式 <annotationProcessorPaths> 绕过自动探测,稳定指认 lombok.launch.AnnotationProcessorHider$AnnotationProcessor。
+              副作用:
+                Spring Boot Maven Plugin 的 <excludes> 会从运行时 fat-jar 移除 lombok,符合预期(lombok 是 build-time-only)。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
         </plugins>
