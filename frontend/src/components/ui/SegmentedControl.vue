@@ -5,7 +5,7 @@
 //   其中 --i = 选中 index;滑块宽 = calc(100% / 列数) 即一格。
 //   jsdom 不做真 layout,--i 写在 inline style 上,测试可断言。
 // reduced-motion:_motion.scss 全局守卫覆盖 transition:none,滑块瞬移。
-import { computed } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 
 type OptValue = string | number
 
@@ -21,6 +21,8 @@ const props = withDefaults(
     modelValue: OptValue
     options: Option[]
     size?: 'sm' | 'md'
+    /** radiogroup 可访问名(屏幕阅读器朗读用,如"设备状态筛选") */
+    label?: string
   }>(),
   { size: 'md' },
 )
@@ -28,6 +30,9 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'update:modelValue', value: OptValue): void
 }>()
+
+// 选项按钮 ref 数组(v-for ref 收集),键盘导航移动后聚焦目标
+const optionEls = ref<HTMLButtonElement[]>([])
 
 // 选中项 index(用于滑块定位与 active 标记)
 const selectedIndex = computed(() => {
@@ -45,13 +50,56 @@ function onSelect(opt: Option) {
   if (opt.value === props.modelValue) return
   emit('update:modelValue', opt.value)
 }
+
+// ---- 键盘导航(WAI-ARIA radiogroup 模式:Left/Up=前,Right/Down=后,Home/End=首尾)----
+// 跳过 disabled,环形回绕;移动即 emit + 聚焦目标(roving tabindex)。
+function nextEnabled(from: number, step: 1 | -1): number {
+  const n = props.options.length
+  for (let k = 1; k <= n; k++) {
+    const idx = (((from + step * k) % n) + n) % n // 回绕
+    if (!props.options[idx].disabled) return idx
+  }
+  return -1
+}
+function firstEnabled(): number {
+  return props.options.findIndex((o) => !o.disabled)
+}
+function lastEnabled(): number {
+  for (let i = props.options.length - 1; i >= 0; i--) {
+    if (!props.options[i].disabled) return i
+  }
+  return -1
+}
+function onKeydown(e: KeyboardEvent, i: number) {
+  let next = -1
+  switch (e.key) {
+    case 'ArrowRight':
+    case 'ArrowDown':
+      next = nextEnabled(i, 1); break
+    case 'ArrowLeft':
+    case 'ArrowUp':
+      next = nextEnabled(i, -1); break
+    case 'Home':
+      next = firstEnabled(); break
+    case 'End':
+      next = lastEnabled(); break
+    default:
+      return
+  }
+  if (next >= 0 && next !== i) {
+    e.preventDefault()
+    emit('update:modelValue', props.options[next].value)
+    void nextTick(() => optionEls.value[next]?.focus())
+  }
+}
 </script>
 
 <template>
   <div
     class="segmented"
     :class="[`segmented--${size}`]"
-    role="tablist"
+    role="radiogroup"
+    :aria-label="label || '选项组'"
   >
     <span
       class="segmented__slider"
@@ -61,15 +109,18 @@ function onSelect(opt: Option) {
     <button
       v-for="(opt, i) in options"
       :key="String(opt.value)"
+      :ref="(el) => { if (el) optionEls[i] = el as HTMLButtonElement }"
       type="button"
-      role="tab"
+      role="radio"
       class="segmented__option"
       :class="{ 'segmented__option--active': i === selectedIndex }"
       :data-active="i === selectedIndex ? 'true' : 'false'"
       :data-value="opt.value"
       :disabled="opt.disabled"
-      :aria-selected="i === selectedIndex"
+      :aria-checked="i === selectedIndex ? 'true' : 'false'"
+      :tabindex="i === selectedIndex && !opt.disabled ? 0 : -1"
       @click="onSelect(opt)"
+      @keydown="onKeydown($event, i)"
     >
       <span v-if="opt.icon" class="segmented__icon" aria-hidden="true">{{ opt.icon }}</span>
       <span v-if="opt.label !== undefined" class="segmented__label">{{ opt.label }}</span>

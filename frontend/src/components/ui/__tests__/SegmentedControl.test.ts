@@ -112,4 +112,58 @@ describe('SegmentedControl', () => {
     })
     expect(wrapper.find('.segmented__icon').exists()).toBe(true)
   })
+
+  // ---- radiogroup 键盘 a11y(WAI-ARIA radiogroup 模式)----
+  it('容器 role=radiogroup + aria-label;选项 role=radio + aria-checked', () => {
+    const wrapper = mount(SegmentedControl, {
+      props: { modelValue: 'a', options: OPTS, label: '状态筛选' },
+    })
+    expect(wrapper.find('[role="radiogroup"]').exists()).toBe(true)
+    expect(wrapper.find('[role="radiogroup"]').attributes('aria-label')).toBe('状态筛选')
+    const radios = wrapper.findAll('[role="radio"]')
+    expect(radios).toHaveLength(3)
+    expect(radios[0].attributes('aria-checked')).toBe('true') // a 选中
+    expect(radios[1].attributes('aria-checked')).toBe('false')
+  })
+
+  it('ArrowRight 在 a → emit b(下一项)', async () => {
+    const wrapper = mount(SegmentedControl, { props: { modelValue: 'a', options: OPTS } })
+    await wrapper.findAll('button')[0].trigger('keydown', { key: 'ArrowRight' })
+    expect(wrapper.emitted('update:modelValue')![0]).toEqual(['b'])
+  })
+
+  it('ArrowLeft 在 a → emit c(回绕到末项)', async () => {
+    const wrapper = mount(SegmentedControl, { props: { modelValue: 'a', options: OPTS } })
+    await wrapper.findAll('button')[0].trigger('keydown', { key: 'ArrowLeft' })
+    expect(wrapper.emitted('update:modelValue')![0]).toEqual(['c'])
+  })
+
+  it('Home/End → emit 首项/末项', async () => {
+    const wEnd = mount(SegmentedControl, { props: { modelValue: 'b', options: OPTS } })
+    await wEnd.findAll('button')[1].trigger('keydown', { key: 'End' })
+    expect(wEnd.emitted('update:modelValue')![0]).toEqual(['c'])
+
+    const wHome = mount(SegmentedControl, { props: { modelValue: 'c', options: OPTS } })
+    await wHome.findAll('button')[2].trigger('keydown', { key: 'Home' })
+    expect(wHome.emitted('update:modelValue')![0]).toEqual(['a'])
+  })
+
+  it('ArrowRight 跳过 disabled 项(b disabled → a 直接到 c)', async () => {
+    const opts = [
+      { value: 'a', label: 'A' },
+      { value: 'b', label: 'B', disabled: true },
+      { value: 'c', label: 'C' },
+    ]
+    const wrapper = mount(SegmentedControl, { props: { modelValue: 'a', options: opts } })
+    await wrapper.findAll('button')[0].trigger('keydown', { key: 'ArrowRight' })
+    expect(wrapper.emitted('update:modelValue')![0]).toEqual(['c'])
+  })
+
+  it('roving tabindex:选中项 tabindex=0,其余 -1', () => {
+    const wrapper = mount(SegmentedControl, { props: { modelValue: 'b', options: OPTS } })
+    const buttons = wrapper.findAll('button')
+    expect(buttons[0].attributes('tabindex')).toBe('-1')
+    expect(buttons[1].attributes('tabindex')).toBe('0') // b 选中
+    expect(buttons[2].attributes('tabindex')).toBe('-1')
+  })
 })
