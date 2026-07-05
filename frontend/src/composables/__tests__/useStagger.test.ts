@@ -92,4 +92,43 @@ describe('useStagger', () => {
     // stop() 内部调用 observer.disconnect(),真实环境下即不再回调
     expect(disconnectSpy).toHaveBeenCalled()
   })
+
+  it('命中 prefers-reduced-motion 时,子元素立即加 stagger-in 并 disconnect(不设 transitionDelay)', async () => {
+    stubIO()
+    // stub matchMedia 命中 reduced-motion
+    vi.stubGlobal(
+      'matchMedia',
+      (query: string) => ({
+        matches: query === '(prefers-reduced-motion: reduce)',
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }),
+    )
+    const container = document.createElement('div')
+    const children = [0, 1, 2].map(() => {
+      const el = document.createElement('div')
+      el.setAttribute('data-stagger', '')
+      container.appendChild(el)
+      return el
+    })
+    document.body.appendChild(container)
+
+    useStagger(ref(container), { delay: 60 })
+    await nextTick()
+    // 不论是否 intersecting,reduced-motion 短路都立即显现
+    ioCallback!([{ isIntersecting: false, target: container }])
+    await nextTick()
+
+    // 子元素立即拿 stagger-in(不错峰)
+    expect(children.every((el) => el.classList.contains('stagger-in'))).toBe(true)
+    expect(children[0].style.transitionDelay).toBe('')
+    expect(children[1].style.transitionDelay).toBe('')
+    // observer disconnect 停止观察
+    expect(disconnectSpy).toHaveBeenCalled()
+  })
 })

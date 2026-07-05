@@ -17,6 +17,12 @@ export interface UseStaggerOptions {
   delay?: number
 }
 
+// reduced-motion 命中判定(模式与 useCountUp 一致;SSR/无 matchMedia 环境返回 false)
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
 export function useStagger(
   containerRef: Ref<HTMLElement | null>,
   opts: UseStaggerOptions = {},
@@ -26,6 +32,17 @@ export function useStagger(
   const { stop } = useIntersectionObserver(
     containerRef,
     (entries) => {
+      // reduced-motion 短路:命中则所有 [data-stagger] 子元素立即显现,停止观察(不错峰)
+      if (prefersReducedMotion()) {
+        const container = containerRef.value
+        if (container) {
+          container
+            .querySelectorAll<HTMLElement>('[data-stagger]')
+            .forEach((el) => el.classList.add('stagger-in'))
+        }
+        stop()
+        return
+      }
       const entry = entries[0]
       if (!entry?.isIntersecting) return
       const container = containerRef.value

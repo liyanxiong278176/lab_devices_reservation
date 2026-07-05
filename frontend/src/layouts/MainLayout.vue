@@ -356,10 +356,10 @@ function onLogout() {
   }
 }
 
-// ---- 主区:bg-base + 24px 内边距(保留) -----------------------------------
+// ---- 主区:透明(让 App.vue 全局 .aurora-bg 极光透出;底色由 body var(--bg-base) 兜底)
 .layout__main {
   padding: 24px;
-  background: var(--bg-base);
+  background: transparent;
   color: var(--text-primary);
 }
 
