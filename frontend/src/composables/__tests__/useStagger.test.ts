@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
-import { nextTick, ref } from 'vue'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { effectScope, nextTick, ref, type EffectScope } from 'vue'
 import { useStagger } from '../useStagger'
 
 /**
@@ -30,12 +30,23 @@ function stubIO() {
   )
 }
 
-describe('useStagger', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    ioCallback = null
-  })
+// useStagger 内部用 onScopeDispose 注册 cleanup,必须在活跃 effect scope 内调用,
+// 否则 Vue 发 "onScopeDispose() is called when there is no active effect scope" 警告
+// 且 cleanup(MO disconnect / IO stop)永不执行。每个测试裹独立 scope,afterEach 停掉。
+let scope: EffectScope | null = null
 
+beforeEach(() => {
+  scope = effectScope()
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  ioCallback = null
+  scope?.stop()
+  scope = null
+})
+
+describe('useStagger', () => {
   it('容器进入视口时,子元素按 index×delay 设置 transitionDelay 并加 stagger-in class', async () => {
     stubIO()
     const container = document.createElement('div')
@@ -47,7 +58,7 @@ describe('useStagger', () => {
     })
     document.body.appendChild(container)
 
-    useStagger(ref(container), { delay: 60 })
+    scope!.run(() => useStagger(ref(container), { delay: 60 }))
     await nextTick()
     // 模拟进入视口
     ioCallback!([{ isIntersecting: true, target: container }])
@@ -68,7 +79,7 @@ describe('useStagger', () => {
     container.appendChild(el)
     document.body.appendChild(container)
 
-    useStagger(ref(container), { delay: 60 })
+    scope!.run(() => useStagger(ref(container), { delay: 60 }))
     await nextTick()
     ioCallback!([{ isIntersecting: false, target: container }])
     await nextTick()
@@ -84,7 +95,7 @@ describe('useStagger', () => {
     el.setAttribute('data-stagger', '')
     container.appendChild(el)
 
-    useStagger(ref(container), { delay: 60 })
+    scope!.run(() => useStagger(ref(container), { delay: 60 }))
     await nextTick()
     expect(disconnectSpy).not.toHaveBeenCalled()
     ioCallback!([{ isIntersecting: true, target: container }])
@@ -118,7 +129,7 @@ describe('useStagger', () => {
     })
     document.body.appendChild(container)
 
-    useStagger(ref(container), { delay: 60 })
+    scope!.run(() => useStagger(ref(container), { delay: 60 }))
     await nextTick()
     // 不论是否 intersecting,reduced-motion 短路都立即显现
     ioCallback!([{ isIntersecting: false, target: container }])

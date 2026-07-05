@@ -229,15 +229,12 @@ function onLogout() {
   }
 }
 
-// active 项:左侧 2px 青色指示条(box-shadow inset) + 抬升面 + 青色图标
-// (覆盖 EP 默认底部 border 指示,改为科技风左条)
+// active 项:抬升面 + 青色字/图标(覆盖 EP 默认底部 border 指示)。
+// 左侧青色竖条已按反馈移除——选中态由底色+青字足够区分,竖条被嫌无用。
 :deep(.el-menu-item.is-active) {
   position: relative;
   background: var(--bg-elevated);
   color: var(--accent);
-
-  // 左侧青色指示条(inset box-shadow 不占布局、不触发 layout)
-  box-shadow: inset 2px 0 0 var(--accent);
 
   .el-icon {
     color: var(--accent);

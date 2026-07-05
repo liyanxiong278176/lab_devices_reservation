@@ -40,8 +40,7 @@ const rejecting = ref(false)
 
 // 卡片错峰容器(同 R4 设备网格 / R5.2 我的预约):首次进入视口 60ms 错峰 fade+rise
 const listRef = ref<HTMLElement | null>(null)
-useStagger(listRef, { delay: 60 })
-let firstLoad = true
+const { reveal } = useStagger(listRef, { delay: 60 })
 
 async function load() {
   loading.value = true
@@ -61,15 +60,8 @@ async function load() {
   } finally {
     loading.value = false
   }
-  if (firstLoad) {
-    firstLoad = false
-    return
-  }
-  // 筛选/翻页后 stagger observer 已 stop,补显新渲染卡片(不错峰,避免卡初始态)
   await nextTick()
-  listRef.value
-    ?.querySelectorAll<HTMLElement>('[data-stagger]:not(.stagger-in)')
-    .forEach((el) => el.classList.add('stagger-in'))
+  reveal()
 }
 
 function onPageChange(p: number) {

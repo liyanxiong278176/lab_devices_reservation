@@ -42,11 +42,7 @@ const statusOptions: { label: string; value: DeviceStatus | '' }[] = [
 // 网格错峰容器(spec §6.2 / 同 R3 dashboard):首次进入视口时,内部 [data-stagger]
 // 卡片按 60ms 错峰 fade+rise;reduced-motion 由 useStagger 内部短路。
 const gridRef = ref<HTMLElement | null>(null)
-useStagger(gridRef, { delay: 60 })
-
-// 首屏错峰交给 useStagger 的 IntersectionObserver;后续筛选/翻页后 observer 已 stop,
-// 新渲染的 [data-stagger] 卡片缺 stagger-in 会卡在初始态,这里立即补显(不错峰)。
-let firstLoad = true
+const { reveal } = useStagger(gridRef, { delay: 60 })
 
 const subtitle = computed(() => `共 ${page.value.total} 台设备`)
 
@@ -59,14 +55,8 @@ async function load() {
   } finally {
     loading.value = false
   }
-  if (firstLoad) {
-    firstLoad = false
-    return
-  }
   await nextTick()
-  gridRef.value
-    ?.querySelectorAll<HTMLElement>('[data-stagger]:not(.stagger-in)')
-    .forEach((el) => el.classList.add('stagger-in'))
+  reveal()
 }
 
 function onSearch() {

@@ -35,11 +35,7 @@ const filterValue = computed<'all' | 'unread'>(() => (onlyUnread.value ? 'unread
 
 // 列表错峰容器:首次进入视口时各行按 50ms 错峰 fade+rise(R3/R4 同款)。
 const listRef = ref<HTMLElement | null>(null)
-useStagger(listRef, { delay: 50 })
-
-// 首屏错峰交给 useStagger 的 IntersectionObserver;筛选/翻页后 observer 已 stop,
-// 新渲染的 [data-stagger] 行缺 stagger-in 会卡在初始态,这里立即补显(不错峰)。
-let firstLoad = true
+const { reveal } = useStagger(listRef, { delay: 50 })
 
 async function load() {
   loading.value = true
@@ -54,14 +50,8 @@ async function load() {
   } finally {
     loading.value = false
   }
-  if (firstLoad) {
-    firstLoad = false
-    return
-  }
   await nextTick()
-  listRef.value
-    ?.querySelectorAll<HTMLElement>('[data-stagger]:not(.stagger-in)')
-    .forEach((el) => el.classList.add('stagger-in'))
+  reveal()
 }
 
 function onFilterChange() {

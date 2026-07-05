@@ -297,7 +297,7 @@ onMounted(load)
 <template>
   <div v-loading="loading" class="rsv-detail">
     <!-- hero:PageHeader 标题 + 副标题(设备名 + 创建时间)+ 状态 Tag -->
-    <PageHeader title="预约详情" :subtitle="subtitle">
+    <PageHeader back title="预约详情" :subtitle="subtitle">
       <template v-if="reservation" #actions>
         <Tag
           :variant="statusVariant(reservation.status)"

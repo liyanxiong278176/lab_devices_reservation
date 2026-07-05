@@ -136,7 +136,7 @@ onMounted(async () => {
 <template>
   <div v-loading="loading" class="device-detail">
     <!-- hero 头:展示名 + 副标题 + StatusDot -->
-    <PageHeader :title="device?.name ?? '—'" :subtitle="subtitle">
+    <PageHeader back :title="device?.name ?? '—'" :subtitle="subtitle">
       <template #actions>
         <StatusDot v-if="device" :status="device.status" :label="true" />
       </template>
