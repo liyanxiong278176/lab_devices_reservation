@@ -141,6 +141,8 @@
   --el-table-border-color: var(--border-subtle);
   --el-table-border: 1px solid var(--border-subtle);
   --el-table-fixed-box-shadow: -8px 0 12px rgba(0, 0, 0, 0.32);
+  --el-table-footer-bg-color: var(--bg-sunken);        // show-summary 合计行(R5+ 表会用)
+  --el-table-expanded-cell-bg-color: var(--bg-elevated); // type=expand 展开行底(R5+ 表会用)
 
   // ==========================================================================
   // el-pagination 暗色桥接(默认 EP 暗色按钮底偏灰、文字偏暗,补青色 hover)

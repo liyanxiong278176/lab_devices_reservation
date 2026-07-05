@@ -21,6 +21,16 @@ const router = useRouter()
 const device = ref<DeviceVO | null>(null)
 const loading = ref(false)
 
+// 状态枚举 → 中文标签(sticky 操作栏展示用,避免裸露 IN_USE/IDLE/MAINTENANCE)
+const STATUS_LABELS: Record<string, string> = {
+  IDLE: '空闲',
+  IN_USE: '使用中',
+  MAINTENANCE: '维护中',
+}
+const statusLabelText = computed(() => {
+  const s = device.value?.status
+  return s ? STATUS_LABELS[s] ?? s : ''
+})
 const selectedDate = ref<Date>(new Date())
 const activeTab = ref<'specs' | 'calendar'>('specs')
 
@@ -143,7 +153,7 @@ onMounted(async () => {
     <!-- sticky 操作栏:吸顶毛玻璃 + 预约 / 报修 -->
     <div v-if="device" class="device-detail__actionbar">
       <span class="device-detail__actionbar-hint">
-        当前状态:<strong>{{ device.status }}</strong>
+        当前状态:<strong>{{ statusLabelText }}</strong>
       </span>
       <div class="device-detail__actionbar-btns">
         <GradientButton :disabled="device.status !== 'IDLE'" @click="goReserve">

@@ -56,11 +56,11 @@ const rules: FormRules = {
   labId: [{ required: true, message: '请选择实验室', trigger: 'change' }],
 }
 
-// 修改状态快捷下拉(type 字段保留供 dropdown item 图标语义;Tag variant 走 statusVariant)
-const statusOptions: { label: string; value: DeviceStatus; type: 'success' | 'warning' | 'info' }[] = [
-  { label: '空闲', value: 'IDLE', type: 'success' },
-  { label: '使用中', value: 'IN_USE', type: 'warning' },
-  { label: '维护中', value: 'MAINTENANCE', type: 'info' },
+// 修改状态快捷下拉(只取 label/value;Tag variant 由 statusVariant 决定,不在此冗余)
+const statusOptions: { label: string; value: DeviceStatus }[] = [
+  { label: '空闲', value: 'IDLE' },
+  { label: '使用中', value: 'IN_USE' },
+  { label: '维护中', value: 'MAINTENANCE' },
 ]
 
 function statusMeta(s: DeviceStatus) {
