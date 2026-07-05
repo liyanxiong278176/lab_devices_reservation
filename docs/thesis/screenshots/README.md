@@ -1,44 +1,33 @@
-# 系统截图（占位）
+# 系统运行截图
 
-本目录用于存放毕业论文所需的系统运行截图。截图**手动通过浏览器采集**（不走自动化），以保证画面真实、分辨率统一（建议 1920×1080，PNG 格式），用于论文「系统实现/运行效果」章节的实证展示。
+前端「科技深色(Linear/Vercel 风)」重设计(R0–R6)后的运行截图,用于论文「系统实现 / 运行效果」章节实证。采集自 `pnpm dev` + 后端 8080 实跑环境,Playwright 1440×900 PNG。
 
-截图需在**论文定稿前补齐**，按下表三大角色梳理典型操作场景，每个场景 1–3 张关键画面（登录后首页/列表页、关键操作中、操作结果/弹窗）。建议统一命名（如 `01-admin-dashboard.png`、`02-labadmin-approval.png`），并在论文正文按编号引用。
+## 已采集(7 张,SYS_ADMIN 视角)
 
-## 待采集清单
+| 编号 | 文件 | 页面 | 设计要点 |
+|---|---|---|---|
+| 01 | `01-login.png` | 登录 `/login` | 分屏 hero:左极光渐变 + Space Grotesk 品牌名 + 漂浮设备卡碎片;右毛玻璃登录卡 + 青渐变按钮 + 入场错峰 |
+| 02 | `02-admin-dashboard.png` | 驾驶舱 `/dashboard`(SYS_ADMIN) | StatCard 行(count-up)+ ECharts 深色图表网格(30 天趋势折线/设备状态饼图,青蓝系)+ 顶部极光 + 错峰入场 |
+| 03 | `03-device-browse.png` | 设备浏览 `/devices` | SegmentedControl 筛选 + GlowCard 设备网格(StatusDot + 品牌/型号 + 青价格)+ 错峰 + 分页(24/48/96) |
+| 04 | `04-device-detail.png` | 设备详情 `/devices/:id` | hero(展示名 + StatusDot + spec chips)+ sticky 毛玻璃操作栏(预约/报修)+ 深色 tabs(规格/预约日历,青 active) |
+| 05 | `05-device-manage.png` | 设备管理 `/devices/manage` | 全局深色 el-table(表头 sunken / 行 surface / 青行 hover)+ 状态 Tag + 青渐变"新增设备" |
+| 06 | `06-user-manage.png` | 用户管理 `/users` | 暗表 + 角色 Tag(5 角色色调)+ 状态 Tag + 搜索 + 深色 el-drawer 抽屉 |
+| 07 | `07-notifications.png` | 通知中心 `/notifications` | 未读左侧 2px 青条 + 类型 Tag + 已读弱化过渡 + EmptyState |
 
-### 一、SYS_ADMIN（系统管理员）
+## 待补(STUDENT / LAB_ADMIN 视角)
 
-- 系统管理驾驶舱首页（`/dashboard`，含设备状态饼图、30 天趋势、热力图、利用率柱图等 ECharts 组件）
-- 用户管理（用户列表、新增/编辑用户、角色分配）
-- 全局设备/实验室/类目维护
-- 报修全量查看与处理
-- 操作日志审计页
+`it_stu_*` 是集成测试建的账号(密码未知),`UserController.create` 在当前环境建演示账号触发底层异常(疑似 dept 约束)。STUDENT/LAB_ADMIN 视角页面(建预约 stepper / 审批队列 / 推荐 / 我的预约 Timeline / 报修)**已全部完成 + 通过设计复审 + build 绿**,视觉与上述 SYS_ADMIN 页同一套深色设计系统(token / GlowCard / Timeline / Tag / 暗表)。论文定稿前按下面方式补齐:
 
-### 二、LAB_ADMIN（实验室管理员）
+1. 经已验证的「用户管理 → 新增用户」UI(R6.2,`06-user-manage.png` 可见入口)建演示 STUDENT / LAB_ADMIN 账号(已知密码)。
+2. 用该账号登录,按下表补截图,命名 `08-stu-*.png` / `09-lab-*.png`:
 
-- 实验室管理驾驶舱（数据范围收敛到本室）
-- 预约审批列表（待审批 PENDING 列表）
-- 审批通过 / 驳回操作（含驳回原因填写弹窗）
-- 本室设备状态查看与在用监控
-- 本室报修受理 / 解决 / 驳回
+   - **STUDENT**:学生驾驶舱(`/dashboard`)/ 设备浏览 / **建预约 stepper**(`/reservations/create`)/ **智能推荐**(`/recommendations`,理由 Tag chips)/ 我的预约 Timeline / 通知
+   - **LAB_ADMIN**:实验室驾驶舱 / **待审批队列**(`/approvals`,行内通过/驳回)/ 报修处理暗表
 
-### 三、STUDENT（学生）
+## 采集参数
 
-- 学生个人视图（`/dashboard/me`，我的预约状态分布、个人趋势、未读消息）
-- 设备浏览（按实验室/类目/标签筛选、查看设备详情）
-- 创建预约（选时段、填用途、提交后的防超约冲突提示，必要时抓 409 冲突画面）
-- 智能推荐页（`/recommendations`，展示推荐设备 + 可解释理由「因你常约…」）
-- 我的预约（PENDING/APPROVED/IN_USE/COMPLETED/CANCELLED 各状态卡片）
-- 签到 / 归还操作（状态流转）
-- 实时通知（WebSocket 推送到达的右上角弹窗/小红点）
-- 报修提交（含图片上传）
-
-## 采集注意事项
-
-- 浏览器：Chrome / Edge 最新稳定版，分辨率 1920×1080，关闭书签栏保证画面干净。
-- 数据：采集前用 seed 脚本灌入有代表性的演示数据（多台设备、多条历史预约、若干报修），避免空列表影响观感。
-- 隐私：截图前确认无真实个人隐私信息（手机号/邮箱可打码）。
-- 实时推送：截图时手动触发一次审批/取消，抓取右上角通知弹窗，佐证 WebSocket 推送链路。
-- 冲突场景：可手动构造「同一时段已被占用」的二次预约，抓取 `RESERVATION_CONFLICT` 的前端提示，作为防超约的运行级佐证（与压测数据 1成功/49冲突 形成完整证据链）。
-
-> 截图补齐后，在本 README 末尾追加「已采集」清单与对应论文章节号映射，便于答辩时快速定位。
+- 浏览器:Chromium(Playwright 自带),1440×900,PNG。
+- 环境:`pnpm dev`(5173)+ 后端 `mvn spring-boot:run`(8080,profile dev),中间件 docker compose(mysql/redis/rabbitmq)。
+- 数据:V5 种子(12 实验室 / 32 类别 / ~270 设备)+ Phase1 seed 用户。
+- 实时推送:通知页右上角铃铛未读数 = WebSocket STOMP 链路实证。
+- 防超约:可手动构造同时段二次预约,抓 `RESERVATION_CONFLICT` 前端提示(与 JMeter 1成功/49冲突 压测数据互证)。
