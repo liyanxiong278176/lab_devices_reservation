@@ -44,11 +44,13 @@ withDefaults(
 
   &--text {
     height: 14px;
+    // 4px 不在 token 圆角尺度:文本骨架比控件更紧致,模拟行高留白,非 --radius-control(8px)
     border-radius: 4px;
   }
 
   &--rect {
     height: 100%;
+    // 64px 不在 token 尺度:rect 块骨架的默认可读块高(卡片/面板占位最小可视高),无对应 spacing token
     min-height: 64px;
     border-radius: var(--radius-control);
   }

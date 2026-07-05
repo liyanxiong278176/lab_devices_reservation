@@ -76,6 +76,11 @@ const trendSign = computed(() => (props.trend?.dir === 'down' ? '-' : '+'))
         <span class="stat-card__trend-arrow">{{ trend.dir === 'up' ? '↑' : '↓' }}</span>
         <span class="stat-card__trend-delta">{{ trendSign }}{{ trend.delta }}</span>
       </div>
+      <!-- #chart 具名 slot:R3 dashboard 注入小 sparkline(SVG / echarts-mini)。
+           无内容时 $slots.chart 为 undefined → 整块不渲染,不留空隙。 -->
+      <div v-if="$slots.chart" class="stat-card__chart">
+        <slot name="chart" />
+      </div>
     </div>
   </div>
 </template>
@@ -175,6 +180,12 @@ const trendSign = computed(() => (props.trend?.dir === 'down' ? '-' : '+'))
   &__trend-arrow {
     font-size: 14px;
     line-height: 1;
+  }
+
+  // #chart slot 区:在数字/trend 行下方,与上方留 12px 间隔。
+  // 无 slot 内容时 v-if 不渲染,无空隙。sparkline 由父页注入,组件不预设高度。
+  &__chart {
+    margin-top: 12px;
   }
 }
 </style>

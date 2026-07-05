@@ -9,6 +9,8 @@
 type Status = 'done' | 'current' | 'todo'
 
 interface Item {
+  /** 稳定唯一键,items 重排/插入时复用 DOM;缺省回退到 index */
+  id?: string | number
   title: string
   desc?: string
   time?: string
@@ -24,7 +26,7 @@ defineProps<{
   <ol class="timeline" role="list">
     <li
       v-for="(item, i) in items"
-      :key="i"
+      :key="item.id ?? i"
       class="timeline__item"
       :class="`timeline__item--${item.status}`"
       :data-status="item.status"

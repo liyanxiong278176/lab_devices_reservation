@@ -21,7 +21,8 @@ defineOptions({ inheritAttrs: false })
 </template>
 
 <style scoped lang="scss">
-// 基础:重置 EP tag 默认色,统一深色 semi-fill 基线
+// 基础:重置 EP tag 默认色,统一深色 semi-fill 基线。
+// 同时承载 default variant —— 元素恒带 .lab-tag,.lab-tag--default 无需重复声明同一组 --el-tag-*。
 .lab-tag {
   --el-tag-bg-color: var(--bg-elevated);
   --el-tag-border-color: var(--border-default);
@@ -32,13 +33,6 @@ defineOptions({ inheritAttrs: false })
 }
 
 // variant → 状态色 rgba(.12) 底 + 状态色字 + rgba(.3) 边
-.lab-tag.lab-tag--default {
-  --el-tag-bg-color: var(--bg-elevated);
-  --el-tag-border-color: var(--border-default);
-  --el-tag-text-color: var(--text-secondary);
-  --el-tag-hover-color: var(--text-primary);
-}
-
 .lab-tag.lab-tag--success {
   --el-tag-bg-color: rgba(52, 211, 153, 0.12);
   --el-tag-border-color: rgba(52, 211, 153, 0.3);

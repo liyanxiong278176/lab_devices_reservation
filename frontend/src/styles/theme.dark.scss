@@ -129,14 +129,14 @@
 // ============================================================================
 // Element Plus 主按钮文字色(spec §3.4):青底压白字不及格 WCAG,
 // 改用 --text-on-accent(#04141a 深字压青底,对比足)。仅 primary,default/secondary 不动。
+// 注意:--el-button-*-text-color 只作用 .el-button--primary,不挂 :root ——
+//   挂 :root 会污染 EP 默认按钮(非 primary),遗留视图 raw <el-button> 会渲染
+//   深字 #04141a 压深底 --bg-surface #111722,不可读。
 // ============================================================================
-:root {
+.el-button--primary {
   --el-button-text-color: var(--text-on-accent);
   --el-button-hover-text-color: var(--text-on-accent);
   --el-button-active-text-color: var(--text-on-accent);
-  --el-button-disabled-text-color: var(--el-disabled-text-color);
-}
-.el-button--primary {
   color: var(--text-on-accent) !important;
 }
 

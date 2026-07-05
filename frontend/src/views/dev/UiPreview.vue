@@ -137,6 +137,23 @@ const seg = ref('a')
           <div class="ui-preview__badge-host" />
         </Badge>
       </div>
+      <div class="ui-preview__row">
+        <Badge :value="9" variant="accent">
+          <div class="ui-preview__badge-host" />
+        </Badge>
+        <Badge :value="9" variant="success">
+          <div class="ui-preview__badge-host" />
+        </Badge>
+        <Badge :value="9" variant="warning">
+          <div class="ui-preview__badge-host" />
+        </Badge>
+        <Badge :value="9" variant="danger">
+          <div class="ui-preview__badge-host" />
+        </Badge>
+        <Badge :value="9" variant="info">
+          <div class="ui-preview__badge-host" />
+        </Badge>
+      </div>
     </section>
 
     <!-- 11 StatusDot ---------------------------------------------------------- -->
@@ -169,7 +186,26 @@ const seg = ref('a')
           :trend="{ delta: 2, dir: 'down' }"
           icon="Warning"
         />
-        <StatCard :value="98" label="使用率" unit="%" :decimals="0" icon="DataLine" />
+        <StatCard :value="98" label="使用率" unit="%" :decimals="0" icon="DataLine">
+          <template #chart>
+            <!-- 内联 SVG sparkline:验证 #chart 具名 slot 通,R3 dashboard 会替换为 echarts-mini -->
+            <svg
+              class="ui-preview__sparkline"
+              viewBox="0 0 120 32"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <polyline
+                points="0,24 20,18 40,22 60,10 80,14 100,6 120,12"
+                fill="none"
+                stroke="var(--accent)"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </template>
+        </StatCard>
       </div>
     </section>
 
@@ -258,6 +294,13 @@ const seg = ref('a')
     background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-control);
+  }
+
+  // StatCard #chart slot 内联 sparkline 占位:宽度撑满 body,高度紧凑(32px)
+  &__sparkline {
+    display: block;
+    width: 100%;
+    height: 32px;
   }
 
   &__caption {
