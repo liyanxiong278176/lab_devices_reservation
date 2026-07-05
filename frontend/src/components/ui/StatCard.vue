@@ -116,7 +116,7 @@ const trendSign = computed(() => (props.trend?.dir === 'down' ? '-' : '+'))
     flex: 0 0 36px;
     border-radius: var(--radius-control);
     color: var(--accent);
-    background: rgba(34, 211, 238, 0.12); // --accent @ .12(spec §5 青色 tint)
+    background: color-mix(in srgb, var(--accent) 12%, transparent); // --accent @ .12(spec §5 青色 tint)
     font-size: 18px;
   }
 

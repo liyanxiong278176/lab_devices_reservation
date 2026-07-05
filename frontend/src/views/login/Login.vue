@@ -169,7 +169,7 @@ useStagger(rootRef, { delay: 80 })
   padding: 64px;
   color: var(--text-primary);
   // hero 区独立底色渐变(青/蓝调,深色基底)
-  background: linear-gradient(135deg, rgba(10, 14, 20, 0.4), rgba(17, 23, 34, 0.75));
+  background: linear-gradient(135deg, rgba(10, 14, 20, 0.4), color-mix(in srgb, var(--bg-surface) 75%, transparent));
   // 隔离堆叠上下文:防止 backdrop-filter 跨层失效
   isolation: isolate;
 
@@ -187,7 +187,7 @@ useStagger(rootRef, { delay: 80 })
       height: 520px;
       top: -120px;
       left: -100px;
-      background: radial-gradient(circle, rgba(34, 211, 238, 0.28), transparent 65%);
+      background: radial-gradient(circle, color-mix(in srgb, var(--accent) 28%, transparent), transparent 65%);
       animation: login-aura 18s var(--ease-out-expo) infinite;
     }
 
@@ -196,7 +196,7 @@ useStagger(rootRef, { delay: 80 })
       height: 480px;
       bottom: -120px;
       right: -80px;
-      background: radial-gradient(circle, rgba(59, 130, 246, 0.22), transparent 65%);
+      background: radial-gradient(circle, color-mix(in srgb, var(--accent-blue) 22%, transparent), transparent 65%);
       animation: login-aura 22s var(--ease-out-expo) infinite reverse;
     }
 
@@ -238,8 +238,8 @@ useStagger(rootRef, { delay: 80 })
     gap: 10px;
     padding: 6px 14px 6px 12px;
     border-radius: var(--radius-pill);
-    background: rgba(34, 211, 238, 0.08);
-    border: 1px solid rgba(34, 211, 238, 0.25);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
     color: var(--accent-bright);
     font-family: var(--font-display);
     font-size: 14px;
@@ -252,7 +252,7 @@ useStagger(rootRef, { delay: 80 })
     height: 8px;
     border-radius: 50%;
     background: var(--accent);
-    box-shadow: 0 0 12px rgba(34, 211, 238, 0.7);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 70%, transparent);
   }
 
   &__title {
@@ -288,7 +288,7 @@ useStagger(rootRef, { delay: 80 })
     padding: 14px 18px;
     min-width: 220px;
     // 毛玻璃小卡(登录卡同款材质,弱化版)
-    background: rgba(17, 23, 34, 0.55);
+    background: color-mix(in srgb, var(--bg-surface) 55%, transparent);
     backdrop-filter: blur(14px) saturate(140%);
     -webkit-backdrop-filter: blur(14px) saturate(140%);
     border: 1px solid var(--border-default);
@@ -326,12 +326,12 @@ useStagger(rootRef, { delay: 80 })
 
     &--free {
       background: var(--status-success);
-      box-shadow: 0 0 10px rgba(52, 211, 153, 0.6);
+      box-shadow: 0 0 10px color-mix(in srgb, var(--status-success) 60%, transparent);
     }
 
     &--busy {
       background: var(--status-warning);
-      box-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+      box-shadow: 0 0 10px color-mix(in srgb, var(--status-warning) 50%, transparent);
     }
   }
 
@@ -398,7 +398,7 @@ useStagger(rootRef, { delay: 80 })
   max-width: 420px;
   padding: 40px 36px;
   // 毛玻璃(spec §7:blur(20px) saturate(140%) + 半透明底)
-  background: rgba(17, 23, 34, 0.6);
+  background: color-mix(in srgb, var(--bg-surface) 60%, transparent);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid var(--border-default);
@@ -472,7 +472,7 @@ useStagger(rootRef, { delay: 80 })
   .login-form-wrap {
     min-height: 100vh;
     background:
-      radial-gradient(circle at 50% 25%, rgba(34, 211, 238, 0.08), transparent 60%),
+      radial-gradient(circle at 50% 25%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%),
       var(--bg-base);
   }
 }

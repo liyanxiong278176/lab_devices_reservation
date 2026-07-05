@@ -267,7 +267,7 @@ onMounted(load)
   pointer-events: none;
   z-index: 0;
   background:
-    radial-gradient(ellipse 60% 100% at 20% 0%, rgba(59, 130, 246, 0.09), transparent 70%),
-    radial-gradient(ellipse 50% 100% at 80% 10%, rgba(34, 211, 238, 0.07), transparent 65%);
+    radial-gradient(ellipse 60% 100% at 20% 0%, color-mix(in srgb, var(--accent-blue) 9%, transparent), transparent 70%),
+    radial-gradient(ellipse 50% 100% at 80% 10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 65%);
 }
 </style>

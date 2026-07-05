@@ -257,7 +257,7 @@ onMounted(async () => {
     flex-wrap: wrap;
     padding: 10px 16px;
     // 半透明底 + 毛玻璃:透出底层氛围光
-    background: rgba(17, 23, 34, 0.72); // --bg-surface 透明化
+    background: color-mix(in srgb, var(--bg-surface) 72%, transparent); // --bg-surface 透明化
     backdrop-filter: blur(12px) saturate(140%);
     -webkit-backdrop-filter: blur(12px) saturate(140%);
     border: 1px solid var(--border-default);
@@ -359,7 +359,7 @@ onMounted(async () => {
 
   &:hover {
     border-color: var(--border-strong);
-    background: rgba(34, 211, 238, 0.06);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
   }
 
   &__label {

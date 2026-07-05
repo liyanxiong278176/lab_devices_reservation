@@ -461,11 +461,11 @@ onMounted(load)
   // 取消按钮:danger 描边(局部覆盖 GhostButton hover 青色)
   &__cancel {
     color: var(--status-danger) !important;
-    border-color: rgba(248, 113, 113, 0.4) !important;
+    border-color: color-mix(in srgb, var(--status-danger) 40%, transparent) !important;
 
     &:hover,
     &:focus {
-      background: rgba(248, 113, 113, 0.08) !important;
+      background: color-mix(in srgb, var(--status-danger) 8%, transparent) !important;
       color: var(--status-danger) !important;
       border-color: var(--status-danger) !important;
     }

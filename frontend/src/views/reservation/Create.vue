@@ -518,14 +518,14 @@ onMounted(loadDevice)
 
     &.is-ok {
       color: var(--status-success);
-      background: rgba(52, 211, 153, 0.1);
-      border: 1px solid rgba(52, 211, 153, 0.3);
+      background: color-mix(in srgb, var(--status-success) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--status-success) 30%, transparent);
     }
 
     &.is-warn {
       color: var(--status-warning);
-      background: rgba(251, 191, 36, 0.1);
-      border: 1px solid rgba(251, 191, 36, 0.3);
+      background: color-mix(in srgb, var(--status-warning) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--status-warning) 30%, transparent);
     }
   }
 

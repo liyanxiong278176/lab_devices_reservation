@@ -388,13 +388,13 @@ onMounted(load)
     background: var(--bg-elevated);
 
     &--resolved {
-      background: rgba(52, 211, 153, 0.06);
-      border-color: rgba(52, 211, 153, 0.2);
+      background: color-mix(in srgb, var(--status-success) 6%, transparent);
+      border-color: color-mix(in srgb, var(--status-success) 20%, transparent);
     }
 
     &--rejected {
-      background: rgba(248, 113, 113, 0.06);
-      border-color: rgba(248, 113, 113, 0.2);
+      background: color-mix(in srgb, var(--status-danger) 6%, transparent);
+      border-color: color-mix(in srgb, var(--status-danger) 20%, transparent);
     }
   }
 

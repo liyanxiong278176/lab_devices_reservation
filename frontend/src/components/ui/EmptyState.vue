@@ -45,10 +45,10 @@ defineProps<{
     place-items: center;
     border-radius: 50%;
     color: var(--text-tertiary);
-    background: rgba(34, 211, 238, 0.06);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
     box-shadow:
-      inset 0 0 0 1px rgba(34, 211, 238, 0.14),
-      0 0 24px rgba(34, 211, 238, 0.08);
+      inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent),
+      0 0 24px color-mix(in srgb, var(--accent) 8%, transparent);
   }
 
   &__title {

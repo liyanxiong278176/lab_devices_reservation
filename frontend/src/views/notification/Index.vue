@@ -281,7 +281,7 @@ onMounted(load)
     bottom: 0;
     width: 2px;
     background: var(--accent);
-    box-shadow: 0 0 8px rgba(34, 211, 238, 0.45);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
   }
 
   // 未读项 hover/焦点:抬升面 + 青边轻微强化(可点信号)
@@ -291,7 +291,7 @@ onMounted(load)
     &:hover,
     &:focus-visible {
       background: var(--bg-elevated);
-      border-color: rgba(34, 211, 238, 0.35);
+      border-color: color-mix(in srgb, var(--accent) 35%, transparent);
       outline: none;
     }
   }

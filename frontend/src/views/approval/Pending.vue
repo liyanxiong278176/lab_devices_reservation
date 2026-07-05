@@ -448,14 +448,14 @@ onMounted(load)
     border-radius: 50%;
     display: grid;
     place-items: center;
-    background: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(59, 130, 246, 0.18));
-    border: 1px solid rgba(34, 211, 238, 0.35);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent-blue) 18%, transparent));
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
     color: var(--accent-bright);
     font-family: var(--font-display);
     font-size: 15px;
     font-weight: 600;
     text-transform: uppercase;
-    box-shadow: 0 0 12px rgba(34, 211, 238, 0.18);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 18%, transparent);
   }
 
   &__applicant-info {
@@ -517,7 +517,7 @@ onMounted(load)
 
     &--start {
       background: var(--accent);
-      box-shadow: 0 0 8px rgba(34, 211, 238, 0.45);
+      box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
     }
 
     &--end {
@@ -551,8 +551,8 @@ onMounted(load)
     display: inline-flex;
     align-items: center;
     padding: 3px 10px;
-    background: rgba(34, 211, 238, 0.08);
-    border: 1px solid rgba(34, 211, 238, 0.2);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
     border-radius: var(--radius-pill);
     font-family: var(--font-mono);
     font-size: 12px;
@@ -662,11 +662,11 @@ onMounted(load)
   // 驳回按钮:hover 转 danger 描边(覆盖 GhostButton 默认青色 hover)
   &__reject-btn {
     color: var(--status-danger) !important;
-    border-color: rgba(248, 113, 113, 0.4) !important;
+    border-color: color-mix(in srgb, var(--status-danger) 40%, transparent) !important;
 
     &:hover,
     &:focus {
-      background: rgba(248, 113, 113, 0.08) !important;
+      background: color-mix(in srgb, var(--status-danger) 8%, transparent) !important;
       color: var(--status-danger) !important;
       border-color: var(--status-danger) !important;
     }

@@ -34,22 +34,22 @@ defineOptions({ inheritAttrs: false })
 
 // variant → 状态色 rgba(.12) 底 + 状态色字 + rgba(.3) 边
 .lab-tag.lab-tag--success {
-  --el-tag-bg-color: rgba(52, 211, 153, 0.12);
-  --el-tag-border-color: rgba(52, 211, 153, 0.3);
+  --el-tag-bg-color: color-mix(in srgb, var(--status-success) 12%, transparent);
+  --el-tag-border-color: color-mix(in srgb, var(--status-success) 30%, transparent);
   --el-tag-text-color: var(--status-success);
   --el-tag-hover-color: var(--status-success);
 }
 
 .lab-tag.lab-tag--warning {
-  --el-tag-bg-color: rgba(251, 191, 36, 0.12);
-  --el-tag-border-color: rgba(251, 191, 36, 0.3);
+  --el-tag-bg-color: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  --el-tag-border-color: color-mix(in srgb, var(--status-warning) 30%, transparent);
   --el-tag-text-color: var(--status-warning);
   --el-tag-hover-color: var(--status-warning);
 }
 
 .lab-tag.lab-tag--danger {
-  --el-tag-bg-color: rgba(248, 113, 113, 0.12);
-  --el-tag-border-color: rgba(248, 113, 113, 0.3);
+  --el-tag-bg-color: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  --el-tag-border-color: color-mix(in srgb, var(--status-danger) 30%, transparent);
   --el-tag-text-color: var(--status-danger);
   --el-tag-hover-color: var(--status-danger);
 }
@@ -62,8 +62,8 @@ defineOptions({ inheritAttrs: false })
 }
 
 .lab-tag.lab-tag--accent {
-  --el-tag-bg-color: rgba(34, 211, 238, 0.12);
-  --el-tag-border-color: rgba(34, 211, 238, 0.3);
+  --el-tag-bg-color: color-mix(in srgb, var(--accent) 12%, transparent);
+  --el-tag-border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   --el-tag-text-color: var(--accent);
   --el-tag-hover-color: var(--accent-bright);
 }

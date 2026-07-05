@@ -100,7 +100,7 @@ function onSelect(opt: Option) {
     width: calc((100% - 8px) / var(--n, 1));
     height: calc(100% - 8px);
     background: var(--bg-elevated);
-    border: 1px solid rgba(34, 211, 238, 0.35);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
     border-radius: var(--radius-pill);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     transform: translateX(calc(var(--i, 0) * 100%));

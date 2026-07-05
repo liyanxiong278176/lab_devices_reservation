@@ -132,15 +132,15 @@ function onLogout() {
 // 品牌脉冲点(logo 替代):青色 + CSS 脉冲动画(GPU only:opacity/scale)
 @keyframes layout-pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.55);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
     transform: scale(1);
   }
   70% {
-    box-shadow: 0 0 0 6px rgba(34, 211, 238, 0);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent);
     transform: scale(1.08);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
     transform: scale(1);
   }
 }
@@ -263,7 +263,7 @@ function onLogout() {
   justify-content: space-between;
   padding: 0 24px;
   // 半透明底 + 毛玻璃:透出底层氛围光
-  background: rgba(17, 23, 34, 0.72); // --bg-surface 透明化
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent); // --bg-surface 透明化
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
   border-bottom: 1px solid var(--border-default);
@@ -342,7 +342,7 @@ function onLogout() {
     height: 8px;
     border-radius: var(--radius-pill);
     background: var(--accent);
-    box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.25);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
   }
 }
 

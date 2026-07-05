@@ -257,7 +257,7 @@ onMounted(loadDevices)
         height: 6px;
         border-radius: 50%;
         background: var(--accent);
-        box-shadow: 0 0 8px rgba(34, 211, 238, 0.45);
+        box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
       }
     }
   }

@@ -180,8 +180,8 @@ onMounted(load)
   font-size: 13px;
   line-height: 1.5;
   color: var(--accent);
-  background: rgba(34, 211, 238, 0.06);
-  border: 1px solid rgba(34, 211, 238, 0.18);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
   border-radius: var(--radius-card);
 }
 

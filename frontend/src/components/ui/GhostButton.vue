@@ -24,13 +24,13 @@ defineOptions({ inheritAttrs: false })
 
   &:hover,
   &:focus {
-    background: rgba(34, 211, 238, 0.06) !important;
+    background: color-mix(in srgb, var(--accent) 6%, transparent) !important;
     color: var(--accent) !important;
     border-color: var(--accent) !important;
   }
 
   &:active {
-    background: rgba(34, 211, 238, 0.1) !important;
+    background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
   }
 
   &.is-disabled,

@@ -18,7 +18,7 @@ defineOptions({ inheritAttrs: false })
   border: none !important;
   border-radius: var(--radius-control);
   font-weight: 600;
-  box-shadow: 0 4px 14px rgba(34, 211, 238, 0.25);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 25%, transparent);
   transition:
     filter var(--d-fast) var(--ease-out-expo),
     transform var(--d-fast) var(--ease-out-expo),
@@ -29,7 +29,7 @@ defineOptions({ inheritAttrs: false })
     background: var(--grad-accent) !important;
     color: var(--text-on-accent) !important;
     filter: brightness(1.08);
-    box-shadow: 0 6px 20px rgba(34, 211, 238, 0.35);
+    box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 35%, transparent);
   }
 
   &:active {
