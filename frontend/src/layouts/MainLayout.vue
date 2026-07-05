@@ -69,7 +69,6 @@ function onLogout() {
 
 <template>
   <el-container class="layout">
-    <div class="layout__aura" aria-hidden="true"></div>
     <el-aside :width="appStore.sidebarCollapsed ? '64px' : '220px'" class="layout__aside">
       <div class="layout__brand">
         <span class="layout__pulse-dot" aria-hidden="true"></span>
@@ -149,19 +148,8 @@ function onLogout() {
 .layout {
   height: 100vh;
   position: relative;
-  // 给氛围光层一个独立栈,保证 sticky 顶栏 backdrop-filter 能透出底层辉光
+  // 独立栈:sticky 顶栏 backdrop-filter 在此栈内透出 App.vue 全局 .aurora-bg 辉光
   z-index: 0;
-}
-
-// ---- 全局氛围光(spec §4):fixed、极弱青色径向、所有页面底层共氛围 ----
-.layout__aura {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background:
-    radial-gradient(circle at 12% 8%, rgba(34, 211, 238, 0.06), transparent 45%),
-    radial-gradient(circle at 88% 92%, rgba(59, 130, 246, 0.04), transparent 50%);
 }
 
 // ---- 侧栏:比主区更深的 sunken 底 + 右侧 hairline ----------------------------
