@@ -15,6 +15,11 @@ import { listLabs } from '@/api/lab'
 import type { DeviceCategoryNodeVO, DeviceQuery, DeviceStatus, DeviceVO } from '@/types/device'
 import type { Lab } from '@/types/lab'
 import type { Page } from '@/types/common'
+import PageHeader from '@/components/ui/PageHeader.vue'
+import GradientButton from '@/components/ui/GradientButton.vue'
+import GhostButton from '@/components/ui/GhostButton.vue'
+import TextButton from '@/components/ui/TextButton.vue'
+import Tag from '@/components/ui/Tag.vue'
 
 const loading = ref(false)
 const page = ref<Page<DeviceVO>>({ records: [], total: 0, size: 10, current: 1 })
@@ -51,7 +56,7 @@ const rules: FormRules = {
   labId: [{ required: true, message: '请选择实验室', trigger: 'change' }],
 }
 
-// 修改状态快捷下拉
+// 修改状态快捷下拉(type 字段保留供 dropdown item 图标语义;Tag variant 走 statusVariant)
 const statusOptions: { label: string; value: DeviceStatus; type: 'success' | 'warning' | 'info' }[] = [
   { label: '空闲', value: 'IDLE', type: 'success' },
   { label: '使用中', value: 'IN_USE', type: 'warning' },
@@ -60,6 +65,13 @@ const statusOptions: { label: string; value: DeviceStatus; type: 'success' | 'wa
 
 function statusMeta(s: DeviceStatus) {
   return statusOptions.find((o) => o.value === s) || statusOptions[0]
+}
+
+// 状态 → Tag variant 语义色(IDLE 中性 / IN_USE 青色 / MAINTENANCE 琥珀)
+function statusVariant(s: DeviceStatus): 'default' | 'accent' | 'warning' {
+  if (s === 'IN_USE') return 'accent'
+  if (s === 'MAINTENANCE') return 'warning'
+  return 'default'
 }
 
 async function load() {
@@ -234,42 +246,43 @@ onMounted(() => {
 
 <template>
   <div class="dmanage">
-    <div class="dmanage__head">
-      <h1 class="dmanage__title">设备管理</h1>
-      <p class="dmanage__subtitle">维护设备档案、状态与预约策略</p>
-    </div>
+    <PageHeader title="设备管理" subtitle="维护设备档案、状态与预约策略">
+      <template #actions>
+        <GradientButton v-permission="'device:manage'" @click="openCreate">
+          新增设备
+        </GradientButton>
+      </template>
+    </PageHeader>
 
-    <div class="lab-card dmanage__toolbar">
+    <div class="dmanage__toolbar">
       <el-input
         v-model="query.keyword"
-        placeholder="按名称/品牌/型号检索"
+        placeholder="按名称 / 品牌 / 型号检索"
         clearable
-        style="width: 280px"
+        class="dmanage__search"
         @keyup.enter="onSearch"
         @clear="onSearch"
       />
-      <el-button type="primary" @click="onSearch">查询</el-button>
-      <div class="dmanage__spacer" />
-      <el-button v-permission="'device:manage'" type="primary" @click="openCreate">新增设备</el-button>
+      <GhostButton @click="onSearch">查询</GhostButton>
     </div>
 
-    <div class="lab-card dmanage__table">
+    <div class="dmanage__table">
       <el-table v-loading="loading" :data="page.records" stripe row-key="id">
         <el-table-column prop="id" label="编号" width="80" />
         <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
         <el-table-column prop="categoryName" label="分类" width="110" show-overflow-tooltip />
         <el-table-column prop="labName" label="实验室" width="120" show-overflow-tooltip />
-        <el-table-column label="状态" width="130">
+        <el-table-column label="状态" width="140">
           <template #default="{ row }">
             <el-dropdown
               v-permission="'device:manage'"
               trigger="click"
               @command="(cmd: DeviceStatus) => onChangeStatus(row, cmd)"
             >
-              <el-tag :type="statusMeta(row.status).type" effect="light" round class="dmanage__status">
+              <Tag :variant="statusVariant(row.status)" class="dmanage__status">
                 {{ statusMeta(row.status).label }}
                 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-              </el-tag>
+              </Tag>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item
@@ -286,7 +299,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="需审批" width="90" align="center">
           <template #default="{ row }">
-            <el-tag v-if="row.needApproval === 1" type="warning" effect="plain" round>是</el-tag>
+            <Tag v-if="row.needApproval === 1" variant="warning">是</Tag>
             <span v-else class="dmanage__muted">否</span>
           </template>
         </el-table-column>
@@ -296,10 +309,16 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
-            <el-button v-permission="'device:manage'" link type="primary" @click="openEdit(row)">
+            <TextButton v-permission="'device:manage'" @click="openEdit(row)">
               编辑
-            </el-button>
-            <el-button v-permission="'device:manage'" link type="danger" @click="onDelete(row)">
+            </TextButton>
+            <el-button
+              v-permission="'device:manage'"
+              link
+              type="danger"
+              class="dmanage__delete"
+              @click="onDelete(row)"
+            >
               删除
             </el-button>
           </template>
@@ -385,47 +404,48 @@ onMounted(() => {
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="onSubmit">保存</el-button>
+        <GhostButton @click="dialogVisible = false">取消</GhostButton>
+        <GradientButton :loading="submitting" @click="onSubmit">保存</GradientButton>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <style scoped lang="scss">
+// ============================================================================
+// Device Manage 暗表(spec §7 设备管理行)
+// 表底/表头/hover/stripe 全由 theme.dark.scss 全局 --el-table-* 桥接接管,
+// 此处仅做页面级布局(toolbar / table 容器 / pager 间距 / 操作列微调)。
+// ============================================================================
+
 .dmanage {
-  &__head {
-    margin-bottom: 24px;
-  }
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 
-  &__title {
-    margin: 0;
-    font-size: 28px;
-    font-weight: 600;
-    letter-spacing: -0.5px;
-    color: var(--el-text-color-primary);
-  }
-
-  &__subtitle {
-    margin: 8px 0 0;
-    font-size: 14px;
-    color: var(--el-text-color-secondary);
-  }
-
+  // ---- 工具栏:sunken 面 + hairline(同 R4.1 device/Index 筛选区模式)----------
   &__toolbar {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 16px 20px;
-    margin-bottom: 16px;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-card);
   }
 
-  &__spacer {
-    flex: 1;
+  &__search {
+    width: 280px;
   }
 
+  // ---- 表格容器:surface 卡面 + hairline(替代旧 .lab-card,与 R4 风格对齐)----
   &__table {
     padding: 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-soft);
   }
 
   &__status {
@@ -433,17 +453,29 @@ onMounted(() => {
   }
 
   &__muted {
-    color: var(--el-text-color-secondary);
+    color: var(--text-tertiary);
+  }
+
+  // 操作列:删除按钮 danger 红(保留语义,TextButton 默认 hover→青色不宜表删除)
+  &__delete {
+    font-weight: 500;
   }
 
   &__pager {
     display: flex;
     justify-content: flex-end;
-    padding: 16px;
+    padding: 14px 16px 16px;
   }
 
   &__empty {
-    color: var(--el-text-color-secondary);
+    color: var(--text-secondary);
   }
+}
+
+// 对话框 footer:GhostButton / GradientButton 间距微调
+:deep(.el-dialog__footer) {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 </style>

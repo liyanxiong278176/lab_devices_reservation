@@ -124,6 +124,61 @@
   --el-border-radius-base: var(--radius-control);
   --el-border-radius-small: 6px;
   --el-border-radius-round: var(--radius-card);
+
+  // ==========================================================================
+  // el-table 暗色桥接(spec §7 设备管理行 + 全局共享)
+  // 所有暗表(Device Manage / User Index / Approval / Repair 等)共用此桥,
+  // 无需逐表 scoped 桥接。表行 surface / 表头 sunken(更深)/ hover elevated
+  // + 极弱青 tint 体现"青行 hover"(spec §7)。
+  // ==========================================================================
+  --el-table-bg-color: var(--bg-surface);              // 表行底
+  --el-table-tr-bg-color: var(--bg-surface);           // 行底
+  --el-table-row-hover-bg-color: rgba(34, 211, 238, 0.04); // 青行 hover(极弱 tint)
+  --el-table-current-row-bg-color: var(--bg-elevated); // current-row 抬升面
+  --el-table-header-bg-color: var(--bg-sunken);        // 表头更深
+  --el-table-header-text-color: var(--text-secondary);
+  --el-table-text-color: var(--text-primary);
+  --el-table-border-color: var(--border-subtle);
+  --el-table-border: 1px solid var(--border-subtle);
+  --el-table-fixed-box-shadow: -8px 0 12px rgba(0, 0, 0, 0.32);
+
+  // ==========================================================================
+  // el-pagination 暗色桥接(默认 EP 暗色按钮底偏灰、文字偏暗,补青色 hover)
+  // ==========================================================================
+  --el-pagination-bg-color: transparent;
+  --el-pagination-button-bg-color: transparent;
+  --el-pagination-hover-color: var(--accent);
+  // pagination 文字色直接走 --el-text-color-regular(已桥到 --text-secondary)
+}
+
+// ============================================================================
+// el-table 局部覆盖:stripe 斑马纹底 + 表头字号
+// 不动全局 --el-fill-color-light(避免污染 select / cascader 等其它组件),
+// 仅在 .el-table 作用域内把 stripe 底抬升至 --bg-elevated,与行底 --bg-surface 区分。
+// ============================================================================
+.el-table {
+  // stripe 行底(EP 用 --el-fill-color-light 给 striped td 上底)
+  --el-fill-color-light: var(--bg-elevated);
+  --el-fill-color-lighter: var(--bg-elevated);
+
+  // 表头:小号大写字 + 更深底(再压一层,与 sunken 区分出"压顶"层次)
+  th.el-table__cell {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    background: var(--bg-sunken);
+  }
+
+  // hover 行文字保持 primary(防止 hover 底变化导致文字对比掉)
+  .el-table__body tr:hover > td.el-table__cell {
+    color: var(--text-primary);
+  }
+
+  // 行/单元格底色用 transparent,让 --el-table-tr-bg-color 接管(防 EP 内部残留浅底)
+  .el-table__cell,
+  .el-table__row {
+    background: transparent;
+  }
 }
 
 // ============================================================================

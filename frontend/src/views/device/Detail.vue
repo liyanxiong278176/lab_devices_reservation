@@ -461,34 +461,8 @@ onMounted(async () => {
   overflow: visible;
 }
 
-// ============================================================================
-// el-table 深色调(日历占用表)
-// ============================================================================
-:deep(.device-detail__cal-table) {
-  --el-table-border-color: var(--border-subtle);
-  --el-table-header-bg-color: var(--bg-elevated);
-  --el-table-header-text-color: var(--text-secondary);
-  --el-table-row-hover-bg-color: var(--bg-elevated);
-  --el-table-bg-color: transparent;
-  --el-table-tr-bg-color: transparent;
-  --el-table-text-color: var(--text-secondary);
-
-  background: transparent;
-
-  // 表头单元格:小号大写字 + 更深底
-  th.el-table__cell {
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    background: var(--bg-elevated);
-  }
-
-  // 单元格文字稍亮以便在深底可读
-  .el-table__cell {
-    color: var(--text-primary);
-    border-bottom-color: var(--border-subtle);
-  }
-}
+// 注:日历占用表的 el-table 深色桥接已上移到 theme.dark.scss 全局 --el-table-* 块,
+// 所有暗表(Device Manage / User Index / 此处日历表 等)共享,无需 scoped 重复。
 
 // ============================================================================
 // prefers-reduced-motion 兜底(spec §6.1 铁律)
