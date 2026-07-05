@@ -41,7 +41,9 @@ useIntersectionObserver(rootEl, ([entry]) => {
 })
 
 // 数字动画;active=inView(进入视口才激活;命中 reduced-motion 时 useCountUp 内部直跳)
-const display = useCountUp(toRef(props, 'value'), { active: inView })
+// holdWhenInactive=true:卡片未滚入视口前 hold 在初值 0,滚入后才 count-up,
+// 否则一挂载就跳 target,等 inView 翻 true 时 from===to 不会有入场滚动。
+const display = useCountUp(toRef(props, 'value'), { active: inView, holdWhenInactive: true })
 
 const formatted = computed(() => display.value.toFixed(props.decimals))
 

@@ -4,16 +4,22 @@ import { onScopeDispose, ref, watch, type Ref } from 'vue'
  * useCountUp:数字滚动动画。
  *
  * 监听 target,当 target 变化(或首次激活)时,用 requestAnimationFrame + easeOutExpo
- * 从当前 display 值平滑插值到 target.value。命中 prefers-reduced-motion 或 active=false
- * 时直跳目标(无动画)。返回 display ref,模板里直接渲染。
+ * 从当前 display 值平滑插值到 target.value。命中 prefers-reduced-motion 时直跳目标(无障碍)。
+ * active=false 时的行为由 holdWhenInactive 决定:默认跳 target(向后兼容);
+ * 传 holdWhenInactive=true 则保持当前 display 不变(配合 IntersectionObserver 做
+ * "滚入视口才 count-up" 入场动效——未进入视口前 hold 在初值 0,避免一上来就跳终点
+ * 导致激活时 from===to 无动画可播)。返回 display ref,模板里直接渲染。
  *
  * @param target 目标数值 ref
  * @param opts.duration 动画时长(ms),默认 1000
  * @param opts.active 是否激活(激活才动画),默认 ref(true)
+ * @param opts.holdWhenInactive active=false 时是否保持当前 display(默认 false=直跳 target)
  */
 export interface UseCountUpOptions {
   duration?: number
   active?: Ref<boolean>
+  /** active=false 时保持当前 display 不跳 target(默认 false,向后兼容)。StatCard 入场用 true。 */
+  holdWhenInactive?: boolean
 }
 
 // easeOutExpo:快速冲近终点后减速收敛,数字滚动观感最自然。
@@ -27,6 +33,7 @@ function prefersReducedMotion(): boolean {
 export function useCountUp(target: Ref<number>, opts: UseCountUpOptions = {}): Ref<number> {
   const duration = opts.duration ?? 1000
   const active = opts.active ?? ref(true)
+  const holdWhenInactive = opts.holdWhenInactive ?? false
   const display = ref(0)
   let rafId: number | null = null
 
@@ -39,9 +46,17 @@ export function useCountUp(target: Ref<number>, opts: UseCountUpOptions = {}): R
 
   const run = () => {
     cancel()
-    // reduced-motion 命中 或 active=false:直跳目标,不动画(无障碍/省电)
-    if (!active.value || prefersReducedMotion()) {
+    // reduced-motion 命中(无障碍):永远直跳 target,优先级最高
+    if (prefersReducedMotion()) {
       display.value = target.value
+      return
+    }
+    // 未激活:默认直跳 target(向后兼容);holdWhenInactive=true 则保持当前 display
+    // (StatCard 入场:未滚入视口前 hold 在 0,滚入后 active=true 才走 count-up)
+    if (!active.value) {
+      if (!holdWhenInactive) {
+        display.value = target.value
+      }
       return
     }
     const from = display.value
