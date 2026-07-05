@@ -29,8 +29,11 @@ const days = ref(30)
 
 // 图表网格错峰入场容器(spec §6.2):首次进入视口时,内部 [data-stagger] 图表卡
 // 按 60ms 错峰 fade+rise;reduced-motion 由 useStagger 内部短路(守铁律 §6.1)。
+// 解构 reveal() —— 本页 chart-cell DOM 是静态模板,load() 重新执行不会生成新
+// data-stagger 节点,所以目前不需要调用;保留 reveal 是为了和同模式视图对齐,
+// 后续若引入动态卡片网格(筛选/排序结果不同),直接 reveal() 即可。
 const chartGridRef = ref<HTMLElement | null>(null)
-useStagger(chartGridRef, { delay: 60 })
+const { reveal: _chartReveal } = useStagger(chartGridRef, { delay: 60 })
 
 async function load() {
   loading.value = true
@@ -88,7 +91,7 @@ onMounted(load)
 <template>
   <div v-loading="loading" class="dash">
     <div class="dashboard-aura" aria-hidden="true" />
-    <PageHeader title="驾驶舱" subtitle="实验室运营富指标概览（按角色范围自动过滤）">
+    <PageHeader title="仪表盘" subtitle="实验室运营富指标概览（按角色范围自动过滤）">
       <template #actions>
         <div class="dash__toolbar lab-card">
           <span class="dash__tool-label">聚合</span>

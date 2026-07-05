@@ -17,7 +17,7 @@ const routes: RouteRecordRaw[] = [
         path: 'dashboard',
         name: 'dashboard',
         component: () => import('@/views/dashboard/Index.vue'),
-        meta: { title: '驾驶舱', icon: 'Odometer' },
+        meta: { title: '仪表盘', icon: 'Odometer' },
       },
       {
         path: 'devices',
@@ -108,5 +108,31 @@ const router = createRouter({
 })
 
 router.beforeEach(guard)
+
+/**
+ * 应用内导航深度计数(sessionStorage 持久化,刷新也保留):
+ *   - 直达 URL / 外部来源点进:router.isReady() 后才有 nav,计数为 0,
+ *     点击"返回"应回首页而非 history.go(-1) 跳到外部页(否则把用户推出 SPA)。
+ *   - 应用内 push/replace:n>=1,点击"返回"应 router.back()。
+ * 仅在 appReady 之后累加:避免"isReady 后的初始路由解析"误把直达计入一次。
+ * 用 sessionStorage(非 localStorage)保留跨刷新的 SPA 内深度,但同会话结束即丢。
+ */
+const SPA_DEPTH_KEY = 'lab-spa-depth'
+let _appReady = false
+router.isReady().then(() => {
+  _appReady = true
+})
+router.afterEach(() => {
+  if (!_appReady) return
+  const cur = Number(sessionStorage.getItem(SPA_DEPTH_KEY) ?? '0')
+  sessionStorage.setItem(SPA_DEPTH_KEY, String(cur + 1))
+})
+
+export function readSpaDepth(): number {
+  return Number(sessionStorage.getItem(SPA_DEPTH_KEY) ?? '0')
+}
+export function resetSpaDepth(): void {
+  sessionStorage.removeItem(SPA_DEPTH_KEY)
+}
 
 export default router

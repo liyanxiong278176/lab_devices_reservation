@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 智能推荐页(R5.5 重构):GlowCard 推荐网格 + 理由 Tag chips + Score + 冷启动提示 + 错峰入场。
 // 推荐数据来源(/recommendations,含冷启动降级)、reason 字段、跳详情——逻辑零改,仅换展示层。
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getRecommendations, type RecommendationItem } from '@/api/recommendation'
 import { useStagger } from '@/composables/useStagger'
@@ -37,31 +37,23 @@ const subtitle = computed(() =>
 
 // 网格错峰容器(spec §6.2 / 同 R3 dashboard / R4 browse):首入视口时 [data-stagger]
 // 卡片按 60ms 错峰 fade+rise;reduced-motion 由 useStagger 内部短路。
+// 返回的 reveal() 在 load() 末尾调用,使后续渲染(刷新/重试)的新卡片即时显现——
+// 第一屏入场完成后 IO/MO 已 stop/disconnect,无 reveal() 则新节点会卡在 opacity:0。
 const gridRef = ref<HTMLElement | null>(null)
-useStagger(gridRef, { delay: 60 })
-
-// 首屏错峰交给 useStagger 的 IntersectionObserver;后续若需重渲染(observer 已 stop),
-// 新出现的 [data-stagger] 卡片缺 stagger-in 会卡初始态,这里立即补显(不错峰)。当前推荐页
-// 一次性加载、无翻页/筛选,分支保留以与 R3/R4 模式一致,防御未来扩展。
-let firstLoad = true
+const { reveal } = useStagger(gridRef, { delay: 60 })
 
 async function load() {
   loading.value = true
   try {
     items.value = await getRecommendations(10)
+    // 新增/重置的 [data-stagger] 卡片即时加 stagger-in(错峰延迟已对首屏适用过,
+    // 后续 reveal 是即时、不带错峰——翻页/刷新场景要快)
+    reveal()
   } catch {
     // 拦截器已提示
   } finally {
     loading.value = false
   }
-  if (firstLoad) {
-    firstLoad = false
-    return
-  }
-  await nextTick()
-  gridRef.value
-    ?.querySelectorAll<HTMLElement>('[data-stagger]:not(.stagger-in)')
-    .forEach((el) => el.classList.add('stagger-in'))
 }
 
 /** score 为 0~1;> 0 才展示(冷启动某些设备热门度归一后仍可能为 0)。 */

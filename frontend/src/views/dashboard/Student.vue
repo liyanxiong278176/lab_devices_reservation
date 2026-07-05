@@ -20,8 +20,9 @@ const data = ref<DashboardMeVO | null>(null)
 
 // 图表网格错峰入场容器(spec §6.2):首次进入视口时,内部 [data-stagger] 图表卡
 // 按 60ms 错峰 fade+rise;reduced-motion 由 useStagger 内部短路(守铁律 §6.1)。
+// 解构 reveal() —— 静态模板下当前不需要调用,保留以便未来动态网格时直接 reveal()。
 const chartGridRef = ref<HTMLElement | null>(null)
-useStagger(chartGridRef, { delay: 60 })
+const { reveal: _chartReveal } = useStagger(chartGridRef, { delay: 60 })
 
 async function load() {
   loading.value = true
@@ -53,7 +54,7 @@ onMounted(load)
 <template>
   <div v-loading="loading" class="dash">
     <div class="dashboard-aura" aria-hidden="true" />
-    <PageHeader title="我的驾驶舱" subtitle="个人预约与报修概览" />
+    <PageHeader title="我的仪表盘" subtitle="个人预约与报修概览" />
 
     <!-- 数字卡片 -->
     <el-row :gutter="16" class="dash__row">

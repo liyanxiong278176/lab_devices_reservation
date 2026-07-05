@@ -42,8 +42,10 @@ async function onSubmit() {
 }
 
 // 入场错峰容器(spec §6.2 stagger 机制;reduced-motion 由 useStagger 内部短路)
+// 解构 reveal() 以与同模式对齐,即使 Login 当前没有 reload 触发点(数据一次性取),后续
+// 若加刷新按钮,直接 reveal() 即可,免得现发现调 useStagger 时再补这一行。
 const rootRef = ref<HTMLElement | null>(null)
-useStagger(rootRef, { delay: 80 })
+const { reveal: _loginReveal } = useStagger(rootRef, { delay: 80 })
 </script>
 
 <template>
