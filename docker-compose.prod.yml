@@ -1,43 +1,66 @@
 # 顶级 name 固定项目名为 labprod：避免与 dev 的 docker-compose.yml（默认目录项目名）
-# 同名 service(mysql/redis/rabbitmq) 碰撞导致 prod up 误重建 dev 容器。
+# 同名 service(mysql/redis) 碰撞导致 prod up 误重建 dev 容器。
 # 这样 `docker compose -f docker-compose.prod.yml up -d` 即安全，无需每次带 -p labprod。
+#
+# ============================================================
+# 默认值策略：所有 ${VAR} 都有 :-default 兜底
+#   - 不写 .env 也能起来（适合"先跑起来再说"）
+#   - 想要强密码：在项目根写 .env 文件覆盖即可
+#   - 4G 机器内存分配：mysql 512M / redis 128M / app 768M / frontend 64M
+# ============================================================
 name: labprod
 
 services:
   mysql:
     image: mysql:8.0
     container_name: lab-mysql-prod
+    restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-LabSecurePwd2026}
       MYSQL_DATABASE: lab_reservation
       TZ: Asia/Shanghai
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
     volumes: ["mysql_data:/var/lib/mysql"]
+    mem_limit: 512m
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD:-LabSecurePwd2026}"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+      start_period: 30s
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
     volumes: ["redis_data:/data"]
+    mem_limit: 128m
   app:
     build: .
+    restart: unless-stopped
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
     environment:
-      DB_PASSWORD: ${DB_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
+      DB_PASSWORD: ${DB_PASSWORD:-LabSecurePwd2026}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-prod-this-must-be-at-least-32-bytes-long}
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/actuator/health 2>/dev/null | grep -q '\"status\":\"UP\"' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
   frontend:
     build: ./frontend
+    restart: unless-stopped
     ports: ["80:80"]
-    depends_on: [app]
+    depends_on:
+      app: { condition: service_healthy }
+    mem_limit: 64m
 volumes:
   mysql_data:
   redis_data:
