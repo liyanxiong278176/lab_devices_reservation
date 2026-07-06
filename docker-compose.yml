@@ -24,15 +24,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-  rabbitmq:
-    image: rabbitmq:3.13-management
-    container_name: lab-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-    ports: ["5672:5672", "15672:15672"]
-    volumes: ["rabbitmq_data:/var/lib/rabbitmq"]
 volumes:
   mysql_data:
   redis_data:
-  rabbitmq_data:

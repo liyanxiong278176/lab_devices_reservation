@@ -15,19 +15,6 @@ spring:
       port: 6379
       database: 0
       password:
-  rabbitmq:
-    host: rabbitmq
-    port: 5672
-    username: ${RABBITMQ_USERNAME}
-    password: ${RABBITMQ_PASSWORD}
-    virtual-host: /
-    listener:
-      simple:
-        default-requeue-rejected: false
-        retry:
-          enabled: true
-          max-attempts: 3
-          initial-interval: 1000ms
 logging:
   level:
     com.lab.reservation: info
@@ -36,5 +23,9 @@ jwt:
 lab:
   reservation:
     signin-grace-minutes: 30
-  mq:
-    idempotent-ttl-hours: 24
+  task:
+    notify:
+      idempotent-ttl-hours: 24
+    timeout:
+      scan-interval-ms: 5000
+      batch-size: 100
