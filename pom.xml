@@ -61,10 +61,6 @@
         </dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-websocket</artifactId></dependency>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-amqp</artifactId>
-        </dependency>
-        <dependency>
             <groupId>org.redisson</groupId>
             <artifactId>redisson-spring-boot-starter</artifactId>
             <version>3.31.0</version>
@@ -90,6 +86,13 @@
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>
                     </includes>
+                    <!--
+                      JDK 25 + Mockito 5.x + Byte Buddy 老版本组合下，Mockito inline mock
+                      会抛 "Java 25 (69) is not supported ... officially supports Java 22 (66)"。
+                      设 experimental=true 让 Byte Buddy 接受新 class file 版本。
+                      JDK 17 环境下该 flag 无副作用。
+                    -->
+                    <argLine>-Dnet.bytebuddy.experimental=true</argLine>
                 </configuration>
             </plugin>
             <!--
