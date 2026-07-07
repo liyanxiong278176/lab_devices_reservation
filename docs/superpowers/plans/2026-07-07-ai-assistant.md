@@ -136,7 +136,7 @@
 - Create: `src/main/java/com/lab/reservation/ai/HelloWorldController.java`(临时冒烟用)
 - Modify: `docker-compose.yml`
 
-- [ ] **Step 1.1: 加 Spring AI 依赖到 pom.xml**
+- [ ] **Step 1.1: 加 Spring AI 依赖到 pom.xml(B3 修复:含 `spring-ai-advisors-vector-store`)**
 
 在 `pom.xml` 的 `<dependencyManagement>` 段加 BOM(版本管理):
 
@@ -154,7 +154,7 @@
 </dependencyManagement>
 ```
 
-在 `<dependencies>` 段加 3 个 starter + Bucket4j + Resilience4j:
+在 `<dependencies>` 段加 4 个 starter + Bucket4j + Resilience4j(**注意加 `spring-ai-advisors-vector-store`,没有它 `QuestionAnswerAdvisor` import 失败**):
 
 ```xml
 <dependency>
@@ -164,6 +164,10 @@
 <dependency>
     <groupId>org.springframework.ai</groupId>
     <artifactId>spring-ai-starter-vector-store-chroma</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-advisors-vector-store</artifactId>
 </dependency>
 <dependency>
     <groupId>com.bucket4j</groupId>
@@ -184,7 +188,9 @@ cd D:/agent_learning/lab_devices_reservation
 mvn dependency:resolve -DincludeScope=runtime 2>&1 | tail -20
 ```
 
-Expected: 看到 `spring-ai-starter-model-openai`, `spring-ai-starter-vector-store-chroma`, `bucket4j_jdk17-redis` 三个新依赖已解析,无错误。
+Expected: 看到 `spring-ai-starter-model-openai`, `spring-ai-starter-vector-store-chroma`, `spring-ai-advisors-vector-store`, `bucket4j_jdk17-redis` 四个新依赖已解析,无错误。
+
+**若 `spring-ai-bom:2.0.0` 解析失败(M9 修复)**:降级到 `1.0.6`(已 GA,功能相同,版本号稳定)。
 
 - [ ] **Step 1.3: 提交 pom.xml 改动**
 
@@ -858,7 +864,7 @@ public class ToolArgumentValidator {
 }
 ```
 
-- [ ] **Step 3.3: 写 ToolPermissionFilter(测试)**
+- [ ] **Step 3.3: 写 ToolPermissionFilter(测试)(B1 修复:7 参构造)**
 
 `src/test/java/com/lab/reservation/ai/ToolPermissionFilterTest.java`:
 
@@ -868,7 +874,6 @@ package com.lab.reservation.ai;
 import com.lab.reservation.ai.service.ToolRegistry;
 import com.lab.reservation.security.SecurityUserDetails;
 import org.junit.jupiter.api.Test;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 import java.util.List;
 
@@ -884,21 +889,44 @@ class ToolPermissionFilterTest {
         assertThat(reg.availableFor(student)).isEmpty();  // 空注册表,空结果
     }
 
+    /** 实际 SecurityUserDetails 构造器是 7 参(Long userId, String username, String password, boolean enabled, String realName, List&lt;String&gt; roles, List&lt;String&gt; perms) */
     private SecurityUserDetails mockStudent() {
         return new SecurityUserDetails(
-                1L, "student1", "password", List.of(new SimpleGrantedAuthority("ROLE_STUDENT"))
+                1L, "student1", "password",
+                true, "学生1",
+                List.of("STUDENT"),     // roles
+                List.of()                 // perms
         );
     }
 }
 ```
 
-- [ ] **Step 3.4: 写 ToolRegistry 骨架**
+- [ ] **Step 3.4: 创建 `@ConfirmRequired` 注解(B4 修复,否则确认机制是死代码)**
+
+`src/main/java/com/lab/reservation/ai/tool/ConfirmRequired.java`:
+
+```java
+package com.lab.reservation.ai.tool;
+
+import java.lang.annotation.*;
+
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface ConfirmRequired {
+    String reason() default "该操作将产生持久影响";
+    String riskSummary() default "";
+    String estimatedImpact() default "";
+}
+```
+
+- [ ] **Step 3.5: 写 ToolRegistry 骨架(B4 + M4 修复:从 @ConfirmRequired 读确认,只扫 ai.tool 包,只 declared methods)**
 
 `src/main/java/com/lab/reservation/ai/service/ToolRegistry.java`:
 
 ```java
 package com.lab.reservation.ai.service;
 
+import com.lab.reservation.ai.tool.ConfirmRequired;
 import com.lab.reservation.ai.tool.ToolArgumentValidator;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -907,6 +935,7 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.context.ApplicationContext;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
 import java.util.*;
@@ -923,29 +952,38 @@ public class ToolRegistry {
 
     @PostConstruct
     public void scan() {
-        Map<String, Object> beans = ctx.getBeansWithAnnotation(org.springframework.stereotype.Component.class);
+        // M4 修复:只扫 com.lab.reservation.ai.tool 包,避免扫到所有 @Component
+        Map<String, Object> beans = ctx.getBeansOfType(Object.class);
         for (Object bean : beans.values()) {
-            for (Method m : bean.getClass().getMethods()) {
+            if (!bean.getClass().getPackageName().startsWith("com.lab.reservation.ai.tool")) continue;
+            for (Method m : bean.getClass().getDeclaredMethods()) {  // M4 修复:只 declared,避免 Object.equals 等
                 Tool t = m.getAnnotation(Tool.class);
                 if (t == null) continue;
+                ConfirmRequired cr = m.getAnnotation(ConfirmRequired.class);
                 String id = bean.getClass().getSimpleName() + "." + m.getName();
                 ToolDefinition def = new ToolDefinition(
                     id, bean, m, t.name(), t.description(),
-                    parseRoles(t),  // 从 @Tool.description 后缀(约定)解析角色
-                    false  // confirmRequired:shim 内部判断
+                    parseRoles(t),  // 从 @Tool.description 后缀 "{roles:...}" 解析
+                    cr != null,
+                    cr == null ? null : cr.reason(),
+                    cr == null ? null : cr.riskSummary(),
+                    cr == null ? null : cr.estimatedImpact()
                 );
                 tools.put(id, def);
                 validator.register(id, m);
             }
         }
-        log.info("scanned {} AI tools", tools.size());
+        log.info("scanned {} AI tools ({} require confirmation)",
+                tools.size(), tools.values().stream().filter(ToolDefinition::confirmRequired).count());
     }
 
-    /** 工具定义 */
+    /** 工具定义(B4 修复:confirmRequired 来自 @ConfirmRequired 注解,不是硬编码) */
     public record ToolDefinition(
         String id, Object bean, Method method,
         String name, String description,
-        Set<String> roles, boolean confirmRequired
+        Set<String> roles,
+        boolean confirmRequired,
+        String confirmReason, String confirmRisk, String confirmImpact
     ) {}
 
     public List<ToolDefinition> availableFor(SecurityUserDetails user) {
@@ -961,7 +999,6 @@ public class ToolRegistry {
     public Collection<ToolDefinition> all() { return tools.values(); }
 
     private Set<String> parseRoles(Tool t) {
-        // 约定:从 description 末尾 "{roles:STUDENT,LAB_ADMIN}" 解析
         String d = t.description();
         if (d == null || !d.contains("{roles:")) return Set.of();
         int start = d.indexOf("{roles:") + 7;
@@ -972,7 +1009,7 @@ public class ToolRegistry {
 }
 ```
 
-- [ ] **Step 3.5: 跑测试**
+- [ ] **Step 3.6: 跑测试**
 
 ```bash
 mvn test -Dtest=ToolPermissionFilterTest
@@ -980,46 +1017,106 @@ mvn test -Dtest=ToolPermissionFilterTest
 
 Expected: 1 test passed
 
-- [ ] **Step 3.6: 提交骨架 + 校验器 + 权限过滤**
+- [ ] **Step 3.7: 提交骨架 + 校验器 + 权限过滤 + @ConfirmRequired**
 
 ```bash
-git add src/main/java/com/lab/reservation/ai/tool/ToolArgumentValidator.java \
+git add src/main/java/com/lab/reservation/ai/tool/ConfirmRequired.java \
+        src/main/java/com/lab/reservation/ai/tool/ToolArgumentValidator.java \
         src/main/java/com/lab/reservation/ai/exception/ToolArgumentException.java \
         src/main/java/com/lab/reservation/ai/service/ToolRegistry.java \
         src/test/java/com/lab/reservation/ai/ToolPermissionFilterTest.java
-git commit -m "feat(ai-assistant): ToolRegistry + Validator + permission filter skeleton"
+git commit -m "feat(ai-assistant): ToolRegistry + @ConfirmRequired + permission filter"
 ```
 
-- [ ] **Step 3.7-3.16: 写 10 个工具(每个 ~80-150 行 shim + test)**
+- [ ] **Step 3.8-3.17: 10 个工具的 shim + test(B6 修复:每个工具独立 TDD 步骤)**
 
-参考 spec §5.4 详细定义。每个工具结构:
+每个工具的结构如下(M5 修复:用 SecurityContextHolder,不依赖 @AuthenticationPrincipal):
 
 ```java
 @Component
 public class XxxTool {
     private final XxxService service;
-    private final SecurityUserDetails currentUser;  // 通过 @AuthenticationPrincipal 注入
+    private final ToolArgumentValidator validator;
+
+    public XxxTool(XxxService service, ToolArgumentValidator validator) {
+        this.service = service;
+        this.validator = validator;
+    }
 
     @Tool(description = "工具描述 {roles:STUDENT,LAB_ADMIN}")
-    public ToolExecutionResult methodName(@ToolParam(...) ...args) {
-        // 1. 调 Validator.validate(methodId, args)
+    public ToolExecutionResult methodName(
+            @ToolParam(...) Long deviceId,
+            @ToolParam(...) String startTime,
+            ...) {
+        // M5 修复:SecurityContextHolder 取当前用户,不依赖 @AuthenticationPrincipal(Spring AI 反射调用绕过)
+        Long currentUserId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        // (或更稳:从 Authentication.getDetails() 取 userId,见 AuthContextUtil)
+
+        // 1. 调 Validator
+        Map<String, Object> args = Map.of("deviceId", deviceId, "startTime", startTime, ...);
+        validator.validate("XxxTool.methodName", args);
         // 2. 翻译 args 到 DTO
-        // 3. 调 service,捕获 BusinessException
+        // 3. 调 service,try/catch BusinessException
         // 4. 返回 ToolExecutionResult
     }
 }
 ```
 
-10 个工具的实现文件路径见"文件结构"表。
+**10 个工具的 TDD 步骤(B6 修复:每个独立)**:
 
-- [ ] **Step 3.17: 提交所有 10 个工具**
+- [ ] **Step 3.8: 实现 `DeviceTool.searchDevices`(2 步)**
+  - 3.8.1 写 `DeviceToolTest.testSearchByKeyword_returns_devices`
+  - 3.8.2 跑测试 FAIL
+  - 3.8.3 写 `searchDevices(keyword, timeRange, category, topN)` shim(翻译 category→categoryId, 调 `search()` + `calendar()` 二次过滤)
+  - 3.8.4 跑测试 PASS
+  - 3.8.5 commit `feat(ai-assistant): DeviceTool.searchDevices shim`
+
+- [ ] **Step 3.9: 实现 `DeviceTool.getDeviceDetails`(2 步)**
+  - 3.9.1 写 `DeviceToolTest.testGetById_returns_vo`
+  - 3.9.2 跑测试 FAIL,实现 `getDeviceDetails(deviceId)`,跑 PASS,commit
+
+- [ ] **Step 3.10: 实现 `ReservationTool.searchMyReservations`(无,调现有 `myReservations`)**
+  - 3.10.1 写测试,实现,跑 PASS,commit
+
+- [ ] **Step 3.11: 实现 `RecommendTool.recommendDevices`(无 purpose,B-new-1)**
+  - 3.11.1 写测试,实现(直接 `recommendationService.recommend(userId, topN)`,无 purpose),跑 PASS,commit
+
+- [ ] **Step 3.12: 实现 `ReservationTool.createReservation`(写工具,需 @ConfirmRequired)**
+  - 3.12.1 写 `createReservation(deviceId, startTime, endTime, purpose)` shim
+  - 3.12.2 加 `@ConfirmRequired(reason="将创建预约", riskSummary="该时段已占则失败")`
+  - 3.12.3 写测试(参数校验 + 调 service + 异常映射)
+  - 3.12.4 跑 PASS,commit
+
+- [ ] **Step 3.13: 实现 `ReservationTool.cancelReservation`(写工具,B-new-1:无 reason)**
+  - 3.13.1 写 `cancelReservation(reservationId)`,加 `@ConfirmRequired`,写测试
+  - 3.13.2 跑 PASS,commit
+
+- [ ] **Step 3.14: 实现 `RepairTool.submitRepairTicket`(写工具,B-new-1:无 severity,有 title)**
+  - 3.14.1 写 `submitRepairTicket(deviceId, title, description)`,加 `@ConfirmRequired`,写测试
+  - 3.14.2 跑 PASS,commit
+
+- [ ] **Step 3.15: 实现 `RagManualTool.searchDeviceManuals`(无确认,转调 `RagSearchService.search`)**
+  - 3.15.1 写测试,实现,跑 PASS,commit
+
+- [ ] **Step 3.16: 实现 `AdminTool.queryLabReservations`(写工具,需 `@PreAuthorize`)**
+  - 3.16.1 写测试(需要 `ReservationService.queryByLab` —— 提前在 `ReservationService` 接口加这个方法)
+  - 3.16.2 实现 `queryLabReservations(labId, status, days)`,加 `@ConfirmRequired` 不需要(纯读),但内部用 `labScopeHelper.managedLabIds(ud).contains(labId)` 校验
+  - 3.16.3 跑 PASS,commit
+
+- [ ] **Step 3.17: 实现 `RepairTool.takeRepairTicket`(写工具,B-new-1:无 handler_id)**
+  - 3.17.1 写 `takeRepairTicket(ticketId)`,加 `@ConfirmRequired`
+  - 3.17.2 写测试(handler 自动从 SecurityContextHolder 取)
+  - 3.17.3 跑 PASS,commit
+
+- [ ] **Step 3.18: 跑全部工具测试 + commit**
 
 ```bash
+mvn test -Dtest='*ToolTest'
 git add src/main/java/com/lab/reservation/ai/tool/
-git commit -m "feat(ai-assistant): 10 tool shims (reservation/device/recommend/repair/admin/rag)"
+git commit -m "feat(ai-assistant): 10 tool shims (device/reservation/recommend/repair/admin/rag)"
 ```
 
-✅ **Task 3 完成**:工具层就绪。
+✅ **Task 3 完成**:工具层就绪(含确认机制)。
 
 ---
 
@@ -1264,7 +1361,202 @@ public class AiActionTimeoutScheduler {
 
 类似结构,`@Scheduled(cron = "0 0 3 * * ?")` 每天 3 点扫 90 天前的 ai_conversation/ai_message/ai_ws_frame 删除。
 
-- [ ] **Step 4.15: 提交确认 + 审计 + 调度器**
+- [ ] **Step 4.15: 写 `AuditService`(M2 修复:不依赖 `RequestContextHolder`)**
+
+`src/main/java/com/lab/reservation/ai/service/AuditService.java`:
+
+```java
+package com.lab.reservation.ai.service;
+
+import com.lab.reservation.entity.AiToolExecution;
+import com.lab.reservation.mapper.AiToolExecutionMapper;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+
+@Service
+@RequiredArgsConstructor
+public class AuditService {
+
+    private final AiToolExecutionMapper mapper;
+
+    public Long log(Long convId, Long messageId, String toolName, Object args) {
+        AiToolExecution e = new AiToolExecution();
+        e.setConversationId(convId);
+        e.setMessageId(messageId);
+        e.setToolName(toolName);
+        e.setArguments(toJson(args));
+        e.setStatus("pending");
+        e.setCreatedAt(LocalDateTime.now());
+        mapper.insert(e);
+        return e.getId();
+    }
+
+    public void updateStatus(Long id, String status, Object result, String errorMsg) {
+        AiToolExecution e = mapper.selectById(id);
+        if (e == null) return;
+        e.setStatus(status);
+        if (result != null) e.setResult(toJson(result));
+        if (errorMsg != null) e.setErrorMessage(errorMsg);
+        e.setExecutedAt(LocalDateTime.now());
+        mapper.updateById(e);
+    }
+
+    private String toJson(Object o) {
+        try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(o); }
+        catch (Exception e) { return "{}"; }
+    }
+}
+```
+
+- [ ] **Step 4.16: 写 `AiFrameService`(M2 修复:Redis INCR seq + ai_ws_frame 持久化)**
+
+`src/main/java/com/lab/reservation/ai/service/AiFrameService.java`:
+
+```java
+package com.lab.reservation.ai.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lab.reservation.entity.AiWsFrame;
+import com.lab.reservation.mapper.AiWsFrameMapper;
+import com.lab.reservation.security.SecurityUserDetails;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AiFrameService {
+
+    private final AiWsFrameMapper mapper;
+    private final SimpMessagingTemplate ws;
+    private final StringRedisTemplate redis;
+    private final ObjectMapper objectMapper;
+
+    /** 分配 seq + 持久化 + 推送 */
+    public void push(Long convId, SecurityUserDetails user, String type, Map<String, Object> payload) {
+        Long seq = redis.opsForValue().increment("ai:ws:seq:" + convId);
+        payload.put("seq", seq);
+        payload.put("conv_id", convId);
+        // 持久化(用于 resync replay)
+        AiWsFrame f = new AiWsFrame();
+        f.setConversationId(convId);
+        f.setUserId(user.getUserId());
+        f.setFrameSeq(seq);
+        f.setFrameType(type);
+        f.setPayload(toJson(payload));
+        f.setCreatedAt(LocalDateTime.now());
+        mapper.insert(f);
+        // 推送
+        ws.convertAndSendToUser(String.valueOf(user.getUserId()), "/queue/assistant-stream", payload);
+    }
+
+    /** resync:从 DB 读 last_seq 之后的全部 frame 重推 */
+    public void resync(SecurityUserDetails user, Long convId, Long lastSeq) {
+        List<AiWsFrame> frames = mapper.selectList(
+            new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AiWsFrame>()
+                .eq("conversation_id", convId)
+                .gt("frame_seq", lastSeq)
+                .orderByAsc("frame_seq")
+        );
+        frames.forEach(f ->
+            ws.convertAndSendToUser(String.valueOf(user.getUserId()), "/queue/assistant-stream", fromJson(f.getPayload()))
+        );
+    }
+
+    private String toJson(Object o) {
+        try { return objectMapper.writeValueAsString(o); }
+        catch (Exception e) { return "{}"; }
+    }
+
+    private Map<String, Object> fromJson(String s) {
+        try { return objectMapper.readValue(s, Map.class); }
+        catch (Exception e) { return Map.of(); }
+    }
+}
+```
+
+- [ ] **Step 4.17: 写 `ConversationService`(M2 修复:buildPrompt + 90 天滚动)**
+
+`src/main/java/com/lab/reservation/ai/service/ConversationService.java`:
+
+```java
+package com.lab.reservation.ai.service;
+
+import com.lab.reservation.ai.config.AiProperties;
+import com.lab.reservation.entity.AiConversation;
+import com.lab.reservation.entity.AiMessage;
+import com.lab.reservation.mapper.AiConversationMapper;
+import com.lab.reservation.mapper.AiMessageMapper;
+import com.lab.reservation.security.SecurityUserDetails;
+import lombok.RequiredArgsConstructor;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class ConversationService {
+
+    private final AiConversationMapper convMapper;
+    private final AiMessageMapper msgMapper;
+    private final AiProperties props;
+
+    public AiConversation create(Long userId) {
+        AiConversation c = new AiConversation();
+        c.setUserId(userId);
+        c.setCreatedAt(LocalDateTime.now());
+        c.setUpdatedAt(LocalDateTime.now());
+        convMapper.insert(c);
+        return c;
+    }
+
+    public void appendMessage(Long convId, String role, String content, String toolCallsJson, int tokenCount) {
+        AiMessage m = new AiMessage();
+        m.setConversationId(convId);
+        m.setRole(role);
+        m.setContent(content);
+        m.setToolCalls(toolCallsJson);
+        m.setTokenCount(tokenCount);
+        m.setCreatedAt(LocalDateTime.now());
+        msgMapper.insert(m);
+    }
+
+    /** 构造 ChatClient prompt 消息列表(滑动窗口 + token 估算) */
+    public List<Message> buildPrompt(Long convId, String currentText, java.util.Collection<? extends org.springframework.security.core.GrantedAuthority> roles) {
+        // 简化版:加载最近 20 条 + 当前 user
+        List<AiMessage> recent = msgMapper.selectList(
+            new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AiMessage>()
+                .eq("conversation_id", convId)
+                .orderByDesc("created_at")
+                .last("LIMIT 20")
+        );
+        java.util.Collections.reverse(recent);
+        List<Message> out = new java.util.ArrayList<>();
+        // System prompt 由 AiAssistantService 注入(需要 roles 信息)
+        for (AiMessage m : recent) {
+            if ("user".equals(m.getRole())) out.add(new UserMessage(m.getContent()));
+            // assistant/tool 暂不显式重建(简化)
+        }
+        out.add(new UserMessage(currentText));
+        return out;
+    }
+}
+```
+
+- [ ] **Step 4.18: 提交确认 + 审计 + 调度器 + 4 services(M2 修复)**
 
 ```bash
 git add src/main/resources/db/migration/ \
@@ -1273,12 +1565,13 @@ git add src/main/resources/db/migration/ \
         src/main/java/com/lab/reservation/ai/service/ConfirmationService.java \
         src/main/java/com/lab/reservation/ai/service/AuditService.java \
         src/main/java/com/lab/reservation/ai/service/AiFrameService.java \
+        src/main/java/com/lab/reservation/ai/service/ConversationService.java \
         src/main/java/com/lab/reservation/ai/task/ \
         src/test/java/com/lab/reservation/ai/ConfirmationServiceTest.java
-git commit -m "feat(ai-assistant): 4 tables + entities + mappers + confirmation state machine + schedulers"
+git commit -m "feat(ai-assistant): 4 tables + entities + mappers + 4 services + schedulers"
 ```
 
-✅ **Task 4 完成**:持久层 + 状态机 + 调度器就绪。
+✅ **Task 4 完成**:持久层 + 状态机 + 调度器 + 4 个 service 就绪。
 
 ---
 
@@ -1481,7 +1774,97 @@ public class AiAssistantService {
 
 (实际实现会更复杂:处理 tool_call 链、step_update 推送、confirmation_required 推送、suggestions 推送。本 Task 包含完整 while-loop + step_update 触发。)
 
-- [ ] **Step 5.5: 写 AiAssistantController(STOMP 入口)**
+- [ ] **Step 5.5: 写 `RateLimitService`(B5 修复:Bucket4j 实际使用)**
+
+`src/main/java/com/lab/reservation/ai/service/RateLimitService.java`:
+
+```java
+package com.lab.reservation.ai.service;
+
+import com.lab.reservation.ai.config.AiProperties;
+import io.github.bucket4j.Bandwidth;
+import io.github.bucket4j.Bucket;
+import io.github.bucket4j.ConsumptionProbe;
+import io.github.bucket4j.Refill;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.time.Duration;
+import java.util.concurrent.ConcurrentHashMap;
+
+@Service
+@RequiredArgsConstructor
+public class RateLimitService {
+
+    private final AiProperties props;
+    private final ConcurrentHashMap<Long, Bucket> buckets = new ConcurrentHashMap<>();
+
+    /** true=允许;false=被限流 */
+    public boolean tryConsume(Long userId) {
+        Bucket bucket = buckets.computeIfAbsent(userId, this::newBucket);
+        return bucket.tryConsume(1);
+    }
+
+    private Bucket newBucket(Long userId) {
+        Bandwidth limit = Bandwidth.classic(props.getRatelimit().getCapacity(),
+                Refill.intervally(props.getRatelimit().getRefillPerMinute(), Duration.ofMinutes(1)));
+        return Bucket.builder().addLimit(limit).build();
+    }
+}
+```
+
+- [ ] **Step 5.6: 加 `@CircuitBreaker` 到 `ChatClientConfig`(B5 修复:Resilience4j 实际使用)**
+
+修改 `ChatClientConfig`,在硅基流动出口加 `@CircuitBreaker`:
+
+```java
+@Bean
+@io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker(name = "siliconflow", fallbackMethod = "fallbackChat")
+public ChatClient chatClient(ChatClient.Builder builder) { ... }
+
+// fallback 方法签名要匹配
+public ChatClient fallbackChat(ChatClient.Builder builder, Throwable t) {
+    log.warn("SiliconFlow circuit breaker fallback triggered", t);
+    throw new RuntimeException("AI 助手暂时不可用,请稍后再试");
+}
+```
+
+并在 `application-siliconflow.yml` 加:
+
+```yaml
+resilience4j:
+  circuitbreaker:
+    instances:
+      siliconflow:
+        failure-rate-threshold: 50
+        sliding-window-size: 10
+        wait-duration-in-open-state: 60s
+        permitted-number-of-calls-in-half-open-state: 3
+```
+
+- [ ] **Step 5.7: 修改 `JwtHandshakeHandler`,把 Principal 设为完整 `SecurityUserDetails`(B2 修复)**
+
+修改 `src/main/java/com/lab/reservation/config/JwtHandshakeHandler.java`:
+
+```java
+@Component
+public class JwtHandshakeHandler extends DefaultHandshakeHandler {
+    private final UserService userService;  // 新注入
+
+    @Override
+    protected Principal determineUser(HandshakeRequest request, Map<String, Object> attributes) {
+        String userId = (String) attributes.get(WS_USER_ID);
+        if (userId == null) return null;
+        // 查 SecurityUserDetails,设为 Principal
+        SecurityUserDetails user = userService.loadSecurityUserById(Long.parseLong(userId));
+        return user;
+    }
+}
+```
+
+(在 `UserService` 加 `loadSecurityUserById(Long)` 方法,返回 SecurityUserDetails。若已存在类似方法,直接复用。)
+
+- [ ] **Step 5.8: 修改 `AiAssistantController`,Principal 直接是 SecurityUserDetails(B2 修复,移除 @AuthenticationPrincipal)**
 
 `src/main/java/com/lab/reservation/ai/controller/AiAssistantController.java`:
 
@@ -1492,13 +1875,13 @@ import com.lab.reservation.ai.dto.WsClientMsg;
 import com.lab.reservation.ai.service.AiAssistantService;
 import com.lab.reservation.security.SecurityUserDetails;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.handler.annotation.SendTo;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.stereotype.Controller;
-import org.springframework.stereotype.Controller;
-import org.springframework.messaging.simp.annotation.SendToUser;
 
+import java.security.Principal;
+
+@Slf4j
 @Controller
 @RequiredArgsConstructor
 public class AiAssistantController {
@@ -1506,50 +1889,228 @@ public class AiAssistantController {
     private final AiAssistantService service;
 
     @MessageMapping("/app/assistant/send")
-    public void handleSend(WsClientMsg.UserMessage msg,
-                          @AuthenticationPrincipal SecurityUserDetails user) {
-        service.handleUserMessage(user, msg.conv_id(), msg.text());
+    public void handleSend(WsClientMsg.UserMessage msg, Principal principal) {
+        service.handleUserMessage(toUser(principal), msg.conv_id(), msg.text());
     }
 
     @MessageMapping("/app/assistant/confirm")
-    public void handleConfirm(WsClientMsg.ConfirmAction msg,
-                              @AuthenticationPrincipal SecurityUserDetails user) {
-        service.handleConfirm(user, msg.action_id());
+    public void handleConfirm(WsClientMsg.ConfirmAction msg, Principal principal) {
+        service.handleConfirm(toUser(principal), msg.action_id());
     }
 
     @MessageMapping("/app/assistant/cancel")
-    public void handleCancel(WsClientMsg.CancelAction msg,
-                             @AuthenticationPrincipal SecurityUserDetails user) {
-        service.handleCancel(user, msg.action_id());
+    public void handleCancel(WsClientMsg.CancelAction msg, Principal principal) {
+        service.handleCancel(toUser(principal), msg.action_id());
     }
 
     @MessageMapping("/app/assistant/resync")
-    public void handleResync(WsClientMsg.Resync msg,
-                            @AuthenticationPrincipal SecurityUserDetails user) {
-        service.handleResync(user, msg.conv_id(), msg.last_seq());
+    public void handleResync(WsClientMsg.Resync msg, Principal principal) {
+        service.handleResync(toUser(principal), msg.conv_id(), msg.last_seq());
+    }
+
+    @MessageMapping("/app/assistant/cancel_session")
+    public void handleCancelSession(WsClientMsg.CancelSession msg, Principal principal) {
+        service.handleCancelSession(toUser(principal), msg.conv_id());
+    }
+
+    private SecurityUserDetails toUser(Principal p) {
+        return (SecurityUserDetails) p;  // JwtHandshakeHandler 已保证类型
     }
 }
 ```
 
-- [ ] **Step 5.6: 写 AiAssistantServiceTest(mock ChatClient)**
+- [ ] **Step 5.9: 重写 `AiAssistantService` 的 while-loop(M1 修复:用 ToolCallback[] 真正调工具)**
 
-简化版 smoke test,验证 happy path 推一帧 assistant_done。
+`src/main/java/com/lab/reservation/ai/service/AiAssistantService.java`:
 
-- [ ] **Step 5.7: 跑测试 + 提交后端 WebSocket + while-loop**
+```java
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AiAssistantService {
+
+    private static final int MAX_TURNS = 10;
+
+    private final ChatClient chatClient;
+    private final ToolRegistry toolRegistry;
+    private final ConversationService conversationService;
+    private final ConfirmationService confirmationService;
+    private final AuditService auditService;
+    private final AiFrameService frameService;
+    private final RateLimitService rateLimitService;
+    private final SystemPromptBuilder promptBuilder;
+    private final AiProperties props;
+
+    // M8 修复:per-conversation 取消标志
+    private final ConcurrentHashMap<Long, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
+
+    public void handleUserMessage(SecurityUserDetails user, Long convId, String text) {
+        // 1. 限流检查
+        if (!rateLimitService.tryConsume(user.getUserId())) {
+            frameService.push(convId, user, "error",
+                Map.of("code", "RATE_LIMIT", "msg", "操作过于频繁"));
+            return;
+        }
+
+        if (convId == null) {
+            AiConversation conv = conversationService.create(user.getUserId());
+            convId = conv.getId();
+        }
+
+        // 2. 取工具集(按角色过滤)
+        List<ToolDefinition> tools = toolRegistry.availableFor(user);
+        ToolCallback[] toolCallbacks = tools.stream()
+                .map(t -> MethodToolCallback.builder()
+                    .toolDefinition(ToolDefinition.builder()
+                        .name(t.name())
+                        .description(t.description())
+                        .inputSchema(...)  // 从 validator schema 生成
+                        .build())
+                    .toolMethod(t.method())
+                    .toolObject(t.bean())
+                    .build())
+                .toArray(ToolCallback[]::new);
+
+        // 3. 推 step_update (started):用户消息接收
+        frameService.push(convId, user, "step_update",
+            Map.of("step_id", 0, "status", "started", "text", "正在处理您的请求"));
+
+        // 4. 持久化 user message
+        conversationService.appendMessage(convId, "user", text, null, estimateTokens(text));
+
+        // 5. while-loop 多步
+        AtomicBoolean cancelled = cancelFlags.computeIfAbsent(convId, k -> new AtomicBoolean(false));
+        cancelled.set(false);
+
+        for (int turn = 0; turn < MAX_TURNS; turn++) {
+            if (cancelled.get()) {
+                frameService.push(convId, user, "step_update",
+                    Map.of("step_id", -1, "status", "failed", "text", "已取消"));
+                break;
+            }
+
+            List<Message> history = conversationService.buildPrompt(convId, text, user.getAuthorities());
+
+            // 用 ToolCallingAdvisor 让 Spring AI 自动 loop(单次 call 内可多次 tool_call)
+            ChatClient.RequestSpec spec = chatClient.prompt()
+                    .system(promptBuilder.build(extractRole(user)))
+                    .messages(history)
+                    .toolCallbacks(toolCallbacks);
+
+            // 流式收集 + step_update 推送
+            StringBuilder reply = new StringBuilder();
+            spec.stream().content().handle((chunk, err) -> {
+                if (chunk != null) {
+                    reply.append(chunk);
+                    frameService.push(convId, user, "delta",
+                        Map.of("text", chunk));
+                }
+                return null;
+            }).blockLast();
+
+            String finalReply = reply.toString();
+            if (finalReply.isBlank()) break;  // AI 沉默,结束
+
+            // 持久化 assistant message
+            conversationService.appendMessage(convId, "assistant", finalReply, null, estimateTokens(finalReply));
+
+            // 推 step_update (completed)
+            frameService.push(convId, user, "step_update",
+                Map.of("step_id", turn, "status", "completed", "text", "本轮处理完成",
+                       "duration_ms", 0));
+
+            // 推 assistant_done
+            frameService.push(convId, user, "assistant_done",
+                Map.of("text", finalReply, "tool_calls", List.of()));
+
+            // 检查 LLM 输出中是否有写工具的 confirmation_required
+            // (实际由 Spring AI ToolCallingAdvisor 自动处理;但 confirmation 流程需要我们自己拦截)
+            // 简化:这里假设 Spring AI 调完所有 tool 后,LLM 生成 final answer
+            // confirmation 拦截在更底层(自定义 ToolCallback 包装,见 Step 5.10)
+            break;  // 单轮 Spring AI 已处理完所有 tool
+        }
+
+        // 6. 推 suggestions(从 finalReply 提取)
+        // (简化:生产用 LLM 输出 JSON 解析)
+    }
+
+    public void handleCancelSession(SecurityUserDetails user, Long convId) {
+        cancelFlags.computeIfAbsent(convId, k -> new AtomicBoolean(false)).set(true);
+        log.info("user {} cancelled session {}", user.getUserId(), convId);
+    }
+
+    public void handleConfirm(SecurityUserDetails user, Long actionId) {
+        confirmationService.confirm(actionId);
+        // 触发对应工具执行(简化:由前端再发 send 消息,或单独 trigger 端点)
+    }
+
+    public void handleCancel(SecurityUserDetails user, Long actionId) {
+        confirmationService.cancel(actionId);
+    }
+
+    public void handleResync(SecurityUserDetails user, Long convId, Long lastSeq) {
+        frameService.resync(user, convId, lastSeq);
+    }
+
+    private String extractRole(SecurityUserDetails user) {
+        return user.getAuthorities().stream()
+                .findFirst()
+                .map(a -> a.getAuthority().replace("ROLE_", ""))
+                .orElse("STUDENT");
+    }
+
+    private int estimateTokens(String s) {
+        return s == null ? 0 : Math.max(1, s.length() / 2);
+    }
+}
+```
+
+- [ ] **Step 5.10: 写自定义 ToolCallback 包装,拦截 @ConfirmRequired 工具(B4 配套)**
+
+`src/main/java/com/lab/reservation/ai/tool/ConfirmingToolCallback.java`:
+
+```java
+@Component
+public class ConfirmingToolCallback implements ToolCallback {
+    private final ToolDefinition def;
+    private final Object bean;
+    private final Method method;
+    private final ConfirmationService confirmationService;
+    private final AuditService auditService;
+    private final AiFrameService frameService;
+    private final SecurityUserDetails currentUser;
+    private final Long conversationId;
+    private final Long messageId;
+
+    @Override
+    public String call(String arguments) {
+        if (method.isAnnotationPresent(ConfirmRequired.class)) {
+            // 解析 args
+            Map<String, Object> args = new ObjectMapper().readValue(arguments, Map.class);
+            Long actionId = confirmationService.create(conversationId, messageId, def.name(), args);
+            // 推 confirmation_required 帧(实际 push 由 AiAssistantService 处理)
+            return ToolExecutionResult.fail("CONFIRM_REQUIRED",
+                "需要用户确认:actionId=" + actionId).toString();
+        }
+        // 普通读工具,直接调
+        return method.invoke(bean, /* args */).toString();
+    }
+}
+```
+
+(实际生产用 `MethodToolCallback` + `ToolCallingManager` 拦截,这只是示意。完整实现要处理:args 反序列化、调用 bean.method、BusinessException 捕获、返回 ToolExecutionResult JSON。)
+
+- [ ] **Step 5.11: 跑测试 + 提交后端 WebSocket + while-loop + STOMP 修复**
 
 ```bash
 mvn test -Dtest=AiAssistantServiceTest
-git add src/main/java/com/lab/reservation/ai/controller/ \
-        src/main/java/com/lab/reservation/ai/service/AiAssistantService.java \
-        src/main/java/com/lab/reservation/ai/service/ConversationService.java \
-        src/main/java/com/lab/reservation/ai/service/SystemPromptBuilder.java \
-        src/main/java/com/lab/reservation/ai/config/ChatClientConfig.java \
-        src/main/java/com/lab/reservation/ai/dto/ \
-        src/test/java/com/lab/reservation/ai/AiAssistantServiceTest.java
-git commit -m "feat(ai-assistant): STOMP controller + ChatClient while-loop + step_update/suggestions frames"
+git add src/main/java/com/lab/reservation/ai/ \
+        src/main/java/com/lab/reservation/config/JwtHandshakeHandler.java \
+        src/main/java/com/lab/reservation/service/UserService.java
+git commit -m "feat(ai-assistant): STOMP controller + while-loop + Principal fix + CircuitBreaker + RateLimit"
 ```
 
-✅ **Task 5 完成**:后端 AI 编排就绪,可以通过 STOMP 收发消息。
+✅ **Task 5 完成**:后端 AI 编排就绪,可以通过 STOMP 收发消息,认证 + 限流 + 熔断齐备。
 
 ---
 
