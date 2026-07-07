@@ -1894,20 +1894,18 @@ import java.util.Objects;
 
 /** STOMP Principal 包装:让 getName() 返回 userId(而非 username),不破坏现有通知通道 */
 public class WsUserPrincipal implements Principal {
-    private final Long userId;
     private final SecurityUserDetails user;
 
     public WsUserPrincipal(SecurityUserDetails user) {
         this.user = user;
-        this.userId = user.getUserId();
     }
 
     @Override
     public String getName() {
-        return String.valueOf(userId);  // 关键:与现有 NotificationServiceImpl.notify 一致
+        return String.valueOf(user.getUserId());  // 关键:与现有 NotificationServiceImpl.notify 一致
     }
 
-    public Long getUserId() { return userId; }
+    public Long getUserId() { return user.getUserId(); }
     public SecurityUserDetails getUser() { return user; }
 
     @Override
@@ -1916,35 +1914,48 @@ public class WsUserPrincipal implements Principal {
     }
 
     @Override
-    public int hashCode() { return Objects.hash(userId); }
+    public int hashCode() { return Objects.hash(user.getUserId()); }
 }
 ```
+
+**关键依赖添加**:`CustomUserDetailsService` 加 `loadSecurityUserById(Long userId)` 方法(MAJOR #1 修复):
+
+`src/main/java/com/lab/reservation/security/CustomUserDetailsService.java`(修改,加方法):
+
+```java
+public SecurityUserDetails loadSecurityUserById(Long userId) {
+    SysUser user = sysUserMapper.selectById(userId);
+    if (user == null) throw new UsernameNotFoundException("user not found: " + userId);
+    return (SecurityUserDetails) loadUserByUsername(user.getUsername());
+}
+```
+
+(需要在 `CustomUserDetailsService` 注入 `SysUserMapper`。`sysUserMapper` 字段 + `@Autowired` 构造函数。)
 
 修改 `src/main/java/com/lab/reservation/config/JwtHandshakeHandler.java`:
 
 ```java
 @Component
 public class JwtHandshakeHandler extends DefaultHandshakeHandler {
-    private final CustomUserDetailsService userDetailsService;  // B-NEW-5 修复:用 UserDetailsService 不是 UserService
+    private final CustomUserDetailsService userDetailsService;
+
+    public JwtHandshakeHandler(CustomUserDetailsService userDetailsService) {
+        this.userDetailsService = userDetailsService;
+    }
 
     @Override
     protected Principal determineUser(ServerHttpRequest request, WebSocketHandler wsHandler, Map<String, Object> attributes) {
-        // B-NEW-6 修复:Long 不是 String
         Object uid = attributes.get(WS_USER_ID);
         if (!(uid instanceof Long userId)) return null;
-        // 用 username 加载 SecurityUserDetails(现有 CustomUserDetailsService.loadUserByUsername 已知)
-        // 实际需要 userId→username 映射,这里简化为 SysUserMapper 查 username
-        SysUser sysUser = sysUserMapper.selectById(userId);
-        if (sysUser == null) return null;
-        SecurityUserDetails user = (SecurityUserDetails) userDetailsService.loadUserByUsername(sysUser.getUsername());
+        SecurityUserDetails user = userDetailsService.loadSecurityUserById(userId);
         return new WsUserPrincipal(user);
     }
 }
 ```
 
-**依赖**:`CustomUserDetailsService` 已存在(在 `security/` 包);`SysUserMapper` 已存在(在 `mapper/` 包);`WsUserPrincipal` 新建在 `security/ws/` 包(与 `WsAuthHandshakeInterceptor` 同目录)。
+(去掉原 `extends DefaultHandshakeHandler` 里的 no-arg 构造器,Spring 通过构造函数注入 `userDetailsService`。)
 
-- [ ] **Step 5.8: 修改 `AiAssistantController`,Principal 直接是 SecurityUserDetails(B2 修复,移除 @AuthenticationPrincipal)**
+- [ ] **Step 5.8: 修改 `AiAssistantController`,Principal 是 WsUserPrincipal(BLOCKING #2 修复:`getUser()` 不是 cast)**
 
 `src/main/java/com/lab/reservation/ai/controller/AiAssistantController.java`:
 
@@ -1954,6 +1965,7 @@ package com.lab.reservation.ai.controller;
 import com.lab.reservation.ai.dto.WsClientMsg;
 import com.lab.reservation.ai.service.AiAssistantService;
 import com.lab.reservation.security.SecurityUserDetails;
+import com.lab.reservation.security.ws.WsUserPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -1993,11 +2005,98 @@ public class AiAssistantController {
         service.handleCancelSession(toUser(principal), msg.conv_id());
     }
 
+    /** BLOCKING #2 修复:JwtHandshakeHandler 返回 WsUserPrincipal,从 .getUser() 取 SecurityUserDetails */
     private SecurityUserDetails toUser(Principal p) {
-        return (SecurityUserDetails) p;  // JwtHandshakeHandler 已保证类型
+        return ((WsUserPrincipal) p).getUser();
     }
 }
 ```
+
+- [ ] **Step 5.7b: 修改 `WebSocketConfig`,用 Spring autowire 注入 `JwtHandshakeHandler`(BLOCKING #3 修复:双实例)**
+
+修改 `src/main/java/com/lab/reservation/config/WebSocketConfig.java`:
+
+```java
+@Configuration
+@EnableWebSocketMessageBroker
+public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
+
+    private final JwtHandshakeHandler handshakeHandler;  // Spring 注入,不是 new
+
+    public WebSocketConfig(JwtHandshakeHandler handshakeHandler) {
+        this.handshakeHandler = handshakeHandler;
+    }
+
+    @Override
+    public void registerStompEndpoints(StompEndpointRegistry registry) {
+        registry.addEndpoint("/ws")
+                .setAllowedOrigins("*")
+                .setHandshakeHandler(handshakeHandler)  // 用注入的 bean(有 userDetailsService)
+                .addInterceptors(new WsAuthHandshakeInterceptor())
+                .withSockJS();
+    }
+
+    // configureMessageBroker 不变
+}
+```
+
+(原 `new JwtHandshakeHandler()` 改成 Spring 注入的字段,确保 `userDetailsService` 字段非 null。)
+
+- [ ] **Step 5.7c: 修改 `AiAssistantService`,改用 `SiliconFlowClient`(BLOCKING #1 修复:`@CircuitBreaker` 实际触发)**
+
+修改 `AiAssistantService` 构造函数 + 字段 + while-loop:
+
+```java
+@Service
+@RequiredArgsConstructor
+public class AiAssistantService {
+    // ... 其他字段 ...
+    private final SiliconFlowClient siliconFlowClient;  // 新增,代替 chatClient 用于 LLM 调用
+    // 删除:private final ChatClient chatClient;
+
+    public void handleUserMessage(...) {
+        // ...
+        try {
+            for (int turn = 0; turn < MAX_TURNS; turn++) {
+                // ...
+                List<Message> history = conversationService.buildPrompt(convId, text, user.getAuthorities());
+
+                // BLOCKING #1 修复:走 siliconFlowClient,@CircuitBreaker 实际触发
+                StringBuilder reply = new StringBuilder();
+                siliconFlowClient.stream(
+                        promptBuilder.build(extractRole(user)),
+                        history,
+                        toolCallbacks  // Object[] 兼容(tools() 接受)
+                ).doOnNext(chunk -> {
+                    reply.append(chunk);
+                    frameService.push(convId, user, "delta", Map.of("text", chunk));
+                })
+                .onErrorResume(err -> {
+                    // CircuitBreaker 触发或网络错误,统一报错
+                    log.warn("SiliconFlow call failed", err);
+                    frameService.push(convId, user, "error",
+                        Map.of("code", "AI_UNAVAILABLE", "msg", "AI 助手暂时不可用"));
+                    return Flux.empty();
+                })
+                .blockLast();
+                // ... (后续 reply 处理不变)
+                break;
+            }
+        } finally {
+            cancelFlags.remove(convId);
+        }
+    }
+}
+```
+
+**SiliconFlowClient.stream() 签名调整**(适配 siliconFlowClient 直接接 tools):
+
+```java
+@CircuitBreaker(name = "siliconflow", fallbackMethod = "streamFallback")
+public Flux<String> stream(String systemPrompt, List<Message> history, Object... tools) { ... }
+```
+
+(Object... 兼容 `ToolCallback[]` —— 内部强转成 `ChatClient` 能接受的 tools 参数即可。简化:直接转 `tools` 到 `ChatClient.prompt().tools(tools)`,ChatClient 重载自动识别。)
 
 - [ ] **Step 5.9: 重写 `AiAssistantService` 的 while-loop(M1 修复:用 ToolCallback[] 真正调工具)**
 
