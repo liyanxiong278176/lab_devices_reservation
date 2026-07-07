@@ -49,7 +49,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-prod-this-must-be-at-least-32-bytes-long}
     mem_limit: 768m
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/actuator/health 2>/dev/null | grep -q '\"status\":\"UP\"' || exit 1"]
+      test: ["CMD-SHELL", "curl -s http://localhost:8080/api/actuator/health 2>/dev/null | grep -q '\"status\":\"UP\"' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
