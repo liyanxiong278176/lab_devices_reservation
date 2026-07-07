@@ -62,7 +62,7 @@
 - ❌ 批量操作(批量审批 / 批量导入)
 - ❌ 用户管理(增删改查用户)— v2
 - ❌ 模型 fallback / 多模型路由
-- ❌ 现有 `RecommendServiceImpl` 升级(亮点三保留,AI 通过 tool-call 调用)
+- ❌ 现有 `RecommendationServiceImpl` 升级(亮点三保留,AI 通过 tool-call 调用)
 
 ---
 
@@ -111,7 +111,7 @@
 │                       │ 调现有 service(零侵入)              │
 │                       ▼                                     │
 │  现有 11 个 Service:ReservationService / DeviceService /     │
-│  RepairReportService / ApprovalService / RecommendService /  │
+│  RepairReportService / ApprovalService / RecommendationService /  │
 │  UserService / LabService / NotificationService / ...       │
 │                                                              │
 │  持久化(新增 3 张表):ai_conversation / ai_message /          │
@@ -141,7 +141,7 @@
 
 | 文件 | 职责 | 行数预估 |
 |---|---|---|
-| `AiAssistantController` | WebSocket `/api/ws/assistant` 端点 + 鉴权 + 消息分发 | ~150 |
+| `AiAssistantController` | **STOMP `@MessageMapping` 处理器**,路径 `/app/assistant/{send,confirm,cancel,resync}` — 复用现有 STOMP 端点 `/api/ws`(共用 `JwtHandshakeHandler`),**不**新增端点(B-new-3 修复) | ~150 |
 | `AiAssistantService` | ChatClient 编排、流式、上下文管理 | ~300 |
 | `ToolRegistry` | 启动时扫描所有 `@Tool` 注解,构建工具表 | ~100 |
 | `ToolPermissionFilter` | 根据用户角色过滤可用工具集 | ~80 |
@@ -213,7 +213,7 @@ curl -sS https://api.siliconflow.cn/v1/models \
 
 ```yaml
 chroma:
-  image: chromadb/chroma:0.5.20
+  image: chromadb/chroma:1.0.0   # 1.x(m-new-1 修复:与 Spring AI 2.0 starter 兼容)
   container_name: lab-chroma
   restart: unless-stopped
   volumes:
@@ -224,22 +224,27 @@ chroma:
     - IS_PERSISTENT=TRUE
     - PERSIST_DIRECTORY=/chroma/chroma
     - ANONYMIZED_TELEMETRY=FALSE
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
 ```
 
 ---
 
 ## 5. 工具清单(v1 共 10 个)
 
-### 5.1 学生可用工具(6 个)
+### 5.1 学生可用工具(8 个)
 
 | # | 工具名 | 类型 | 角色 | 确认 | 后端调用 |
 |---|---|---|---|---|---|
-| 1 | `search_devices` | 读 | 学生+管理员 | 无 | `DeviceService` 列表查询 |
-| 2 | `get_device_details` | 读 | 学生+管理员 | 无 | `DeviceService` 详情 |
-| 3 | `get_my_reservations` | 读 | 学生 | 无 | `ReservationService` 按用户过滤 |
-| 4 | `recommend_devices` | 读 | 学生 | 无 | **复用现有** `RecommendServiceImpl` |
+| 1 | `search_devices` | 读 | 学生+管理员 | 无 | `DeviceService.search` + `calendar` 二次过滤 |
+| 2 | `get_device_details` | 读 | 学生+管理员 | 无 | `DeviceService.getById` |
+| 3 | `get_my_reservations` | 读 | 学生 | 无 | `ReservationService.myReservations` |
+| 4 | `recommend_devices` | 读 | 学生 | 无 | **复用现有** `RecommendationService.recommend` |
 | 5 | `create_reservation` | 写 | 学生 | **必须** | `ReservationService.create` |
-| 6 | `cancel_reservation` | 写 | 学生(自己的) | **必须** | `ReservationService.cancel` |
+| 6 | `cancel_reservation` | 写 | **学生(本人)** | **必须** | `ReservationService.cancel` |
 | 7 | `submit_repair_ticket` | 写 | 学生 | **必须** | `RepairReportService.create` |
 | 8 | `search_device_manuals` | 读 RAG | 学生+管理员 | 无 | Chroma `lab_manuals` 集合 |
 
@@ -279,88 +284,112 @@ public class ReservationTool {
 }
 ```
 
-### 5.4 工具参数 schema(B4 修复)
+### 5.4 工具参数 schema(B4 修复 + B-new-1 修复,与现有 API 对齐)
 
-每个工具必须有:JSON schema 形参、必填字段、由 LLM 还是 Java 解析、失败错误码、示例用户语。
+> **关键事实**:LLM 看到的"工具 schema"和现有 Service 接收的 DTO **不一致**。每个工具都需要一个**薄 shim 翻译层**(`XxxTool` 内的 Java 方法),把 LLM 的扁平 args 翻译成 Service 的 DTO。本节**所有"解析"步骤都是这个 shim 层的逻辑**,不是直接调 Service。
 
-#### 1. `search_devices(keyword, time_range, category)`
+#### 1. `search_devices(keyword, time_range, category, top_n)`
 ```json
-{
-  "type": "object",
-  "properties": {
-    "keyword":   {"type": "string",  "description": "设备名/型号/描述中的关键词,可空"},
-    "time_range": {"type": "string",  "description": "ISO-8601 interval,如 2026-07-08T14:00/2026-07-08T18:00,可空"},
-    "category":   {"type": "string",  "description": "设备类目中文名,如 '光学仪器',可空"}
-  }
-}
+{"properties": {
+  "keyword":    {"type": "string",  "description": "设备名/型号模糊匹配,可选"},
+  "time_range": {"type": "string",  "description": "ISO-8601 interval,2026-07-08T14:00/2026-07-08T18:00,可选"},
+  "category":   {"type": "string",  "description": "设备类目中文名,如'光学仪器',可选"},
+  "top_n":      {"type": "integer", "default": 10, "maximum": 30}}}
 ```
-- 必填:**无**(全可选,LLM 可传空查询)
-- 解析:Java 端 `DeviceService.searchByCriteria(keyword, startTime, endTime, category)`
-- 失败码:`PARAM_INVALID`(时间格式错)/`EMPTY_RESULT`(无设备)
-- 示例用户语:"周三下午能做什么" → LLM 抽出 `time_range="2026-07-08T14:00/2026-07-08T18:00"`
+- **必填**:无
+- **shim 翻译**:
+  1. `category` 字符串 → `categoryId` via `DeviceCategoryService.listAll()` + 名称匹配(name contains)
+  2. `time_range` 字符串 → `parseISOInterval()` → `(LocalDateTime, LocalDateTime)`
+  3. 调 `DeviceService.search(DeviceQueryDTO{keyword, categoryId, status="IDLE", page=1, size=topN})`
+  4. 若给了 `time_range`:对每个候选 device 调 `DeviceService.calendar(deviceId, fromDate, toDate)`,只保留"该时段内所有 slot 都空闲"的设备
+  5. 返回过滤后的列表
+- **v1 需要新增方法**:`DeviceService.calendar()` 已存在(签名 `calendar(Long, LocalDate, LocalDate)`),可用。无需新增 Service 方法
+- **失败码**:`PARAM_INVALID`(时间格式错)/`NOT_FOUND`(无设备)
+- **示例用户语**:"周三下午能做什么" → LLM 抽 `time_range="2026-07-08T14:00/2026-07-08T18:00"`
 
 #### 2. `get_device_details(device_id)`
 ```json
-{"properties": {"device_id": {"type": "integer", "description": "设备主键 ID"}}}
+{"required": ["device_id"], "properties": {
+  "device_id": {"type": "integer", "description": "设备主键 ID"}}}
 ```
-- 必填:`device_id`
-- 解析:Java 端
-- 失败码:`DEVICE_NOT_FOUND`
-- 示例:"FACSAria 怎么样" → LLM 先 search_devices,再 get_device_details
+- **shim 翻译**:无,直接调 `DeviceService.getById(id)`
+- **失败码**:`NOT_FOUND`
 
-#### 3. `get_my_reservations(status_filter)`
-```json
-{"properties": {"status_filter": {"type": "string", "enum": ["ALL","PENDING","APPROVED","IN_USE","COMPLETED","CANCELLED"], "default": "ALL"}}}
-```
-- 必填:无(默认 ALL)
-- 解析:Java 端按 `SecurityContext` 当前用户过滤(学生只能看自己的)
-- 失败码:无
-
-#### 4. `recommend_devices(top_n, purpose)`
+#### 3. `get_my_reservations(status_filter, page, size)`
 ```json
 {"properties": {
-  "top_n":  {"type": "integer", "default": 5, "minimum": 1, "maximum": 20},
-  "purpose":{"type": "string", "description": "本次使用目的,如 PCR 实验,可选,影响推荐权重"}}}
+  "status_filter": {"type": "string", "enum": ["ALL","PENDING","APPROVED","IN_USE","COMPLETED","CANCELLED"], "default": "ALL"},
+  "page":          {"type": "integer", "default": 1},
+  "size":          {"type": "integer", "default": 10, "maximum": 50}}}
 ```
-- 必填:无
-- 解析:**调现有** `RecommendServiceImpl.recommend(userId, topN, purpose)`(亮点三复用)
+- **shim 翻译**:
+  1. `status_filter` → `ReservationStatus` enum(`ALL` → `null`)
+  2. `currentUserId` 从 `SecurityContextHolder` 取
+  3. 调 `ReservationService.myReservations(currentUserId, status, page, size)`
+- **失败码**:无
+
+#### 4. `recommend_devices(top_n)` — ⚠️ 无 purpose(B-new-1 修复)
+```json
+{"properties": {
+  "top_n": {"type": "integer", "default": 5, "minimum": 1, "maximum": 20}}}
+```
+- **shim 翻译**:
+  - `RecommendationService.recommend(currentUserId, topN)` — **实际签名只有 userId + limit,没有 purpose 参数**
+  - 删除 spec 中原本的 `purpose` 字段(LLM 抽到也丢弃)
+  - 不需任何翻译
+- **失败码**:无(空推荐返回空列表)
 
 #### 5. `create_reservation(device_id, start_time, end_time, purpose)` — **写工具,需确认**
 ```json
 {"required": ["device_id", "start_time", "end_time", "purpose"], "properties": {
   "device_id":  {"type": "integer"},
   "start_time": {"type": "string", "description": "ISO-8601 local datetime,2026-07-08T14:00:00"},
-  "end_time":   {"type": "string", "description": "ISO-8601 local datetime,2026-07-08T16:00:00,必须 > start_time"},
+  "end_time":   {"type": "string", "description": "ISO-07-08T16:00:00,必须 > start_time"},
   "purpose":    {"type": "string", "maxLength": 100}}}
 ```
-- 必填:全部
-- 解析:
-  - LLM 负责格式(必须是 ISO-8601 local datetime,见 §6.6 system prompt 强约束)
-  - Java 端做业务校验:
-    - `LocalDateTime.parse(startTime, DateTimeFormatter.ISO_LOCAL_DATE_TIME)`(失败 → `PARAM_INVALID`)
-    - `SlotCalculatorService.compute(deviceId, startTime, endTime)`(必须 15 分钟对齐、startTime ≥ now、最长 720 小时)
-    - `ReservationService.create` 会再次校验 + 锁防超约
-- 失败码:`PARAM_INVALID` / `SLOT_NOT_ALIGNED` / `DEVICE_UNAVAILABLE` / `RESERVATION_CONFLICT` / `PURPOSE_TOO_LONG`
-- 示例用户语:"约 Aria 周三 14 到 16 点做 PCR" → LLM 抽 `device_id=5, start_time=2026-07-08T14:00:00, end_time=2026-07-08T16:00:00, purpose="PCR 实验"`
+- **shim 翻译**:
+  1. `LocalDateTime.parse(startTime, ISO_LOCAL_DATE_TIME)`,同 `endTime`
+  2. 构造 `ReservationCreateDTO(deviceId, startTime, endTime, purpose)`
+  3. 调 `ReservationService.create(dto, currentUserId)`(内部已含 `SlotCalculatorService` 校验 + Redisson 锁)
+- **失败码**(全部对齐现有 `ResultCode`):
+  - `PARAM_INVALID` — 时间格式错
+  - `SLOT_NOT_ALIGNED` — 不是 15 分钟对齐
+  - `EXCEED_MAX_DURATION` — 超过 max_reservation_hours
+  - `SLOT_OUT_OF_WORK_WINDOW` — 不在工作时段
+  - `DEVICE_UNAVAILABLE` — 设备 IDLE 以外状态
+  - `RESERVATION_CONFLICT` — 并发抢占(Redisson 锁 + DB 唯一索引)
+- **示例用户语**:"约 Aria 周三 14 到 16 点做 PCR" → LLM 抽 `device_id=5, start_time="2026-07-08T14:00:00", end_time="2026-07-08T16:00:00", purpose="PCR 实验"`
 
-#### 6. `cancel_reservation(reservation_id, reason)` — **写工具,需确认**
+#### 6. `cancel_reservation(reservation_id)` — **写工具,需确认** (B-new-1 修复)
 ```json
-{"required": ["reservation_id", "reason"], "properties": {
-  "reservation_id": {"type": "integer"},
-  "reason": {"type": "string", "maxLength": 200, "description": "取消原因,必填,记入审计"}}}
+{"required": ["reservation_id"], "properties": {
+  "reservation_id": {"type": "integer"}}}
 ```
-- 解析:Java 端 `ReservationServiceImpl.cancel` 内已有所有权校验(`r.userId == currentUserId`,管理员不受限)
-- 失败码:`RESERVATION_NOT_FOUND` / `NOT_YOUR_RESERVATION`(学生越权) / `RESERVATION_STATE_INVALID`(已 IN_USE 的不能取消)
+- **关键变化(B-new-1 修复)**:
+  - **删除 `reason` 字段**:`ReservationService.cancel(Long id, Long currentUserId)` 实际签名**没有 reason 参数**,内部固定设 `cancelReason=USER`
+  - **角色变学生专属**:`cancel` 内部 `if (!r.getUserId().equals(currentUserId)) throw FORBIDDEN`,**仅本人可取消**;admin 取消走现有 `RepairReportController` 同模式(后续 v2 加 `admin_cancel_reservation`)
+  - tool 注解:`@RolesAllowed("STUDENT")`(或 registry 过滤时只看学生工具)
+- **shim 翻译**:无
+- **失败码**:
+  - `NOT_FOUND` — 预约不存在
+  - `FORBIDDEN` — 不是本人
+  - `STATUS_TRANSITION_INVALID` — 已开始/已完成的不能取消
 
-#### 7. `submit_repair_ticket(device_id, description, severity)` — **写工具,需确认**
+#### 7. `submit_repair_ticket(device_id, title, description)` — **写工具,需确认** (B-new-1 修复)
 ```json
-{"required": ["device_id", "description", "severity"], "properties": {
+{"required": ["device_id", "title", "description"], "properties": {
   "device_id":  {"type": "integer"},
-  "description":{"type": "string", "minLength": 5, "maxLength": 500, "description": "故障描述,5-500 字"},
-  "severity":   {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH"], "default": "MEDIUM"}}}
+  "title":      {"type": "string", "minLength": 2, "maxLength": 50, "description": "报修标题,如'激光器输出不稳定'"},
+  "description":{"type": "string", "minLength": 5, "maxLength": 500, "description": "详细描述"}}}
 ```
-- 解析:LLM 抽取 `severity`(枚举,默认 MEDIUM);Java 端调 `RepairReportService.create`
-- 失败码:`DEVICE_NOT_FOUND` / `DESCRIPTION_TOO_SHORT`
+- **关键变化(B-new-1 修复)**:
+  - **删除 `severity` 字段**:`RepairCreateDTO` 实际只有 `deviceId / title / description / imageUrls`,**没有 severity 字段**
+  - 增加 `title`(必填,2-50 字),`RepairCreateDTO` 已有 `@NotBlank`
+  - `imageUrls` 暂不暴露给 LLM(LLM 不会上传图片)
+- **shim 翻译**:构造 `RepairCreateDTO(deviceId, title, description, imageUrls=null)`,调 `RepairReportService.create(dto, currentUserId)`
+- **失败码**:
+  - `NOT_FOUND` — 设备不存在
+  - `PARAM_INVALID` — title/description 长度越界
 
 #### 8. `search_device_manuals(query, device_id?)` — **RAG 工具**
 ```json
@@ -368,48 +397,78 @@ public class ReservationTool {
   "query":      {"type": "string", "minLength": 2},
   "device_id":  {"type": "integer", "description": "可选,限定到某台设备的 SOP 文档"}}}
 ```
-- 解析:LLM 抽 query;Java 端 `RagSearchService.search(query, deviceId, topK=5, threshold=0.6)`
-- 失败码:无匹配 → 仍返回空列表,QuestionAnswerAdvisor 不报错
+- **shim 翻译**:`RagSearchService.search(query, deviceId, topK=5, threshold=0.6)` → Chroma `lab_manuals` 集合
+- **失败码**:无匹配返回空列表,不报错
 
-#### 9. `query_lab_reservations(lab_id, status, days)` — **管理员读**
+#### 9. `query_lab_reservations(lab_id, status, days)` — **管理员读** (B-new-1 修复)
 ```json
 {"required": ["lab_id"], "properties": {
-  "lab_id":  {"type": "integer"},
-  "status":  {"type": "string", "enum": ["ALL","PENDING","APPROVED","IN_USE","COMPLETED","CANCELLED"], "default": "ALL"},
-  "days":    {"type": "integer", "default": 7, "minimum": 1, "maximum": 90}}}
+  "lab_id": {"type": "integer"},
+  "status": {"type": "string", "enum": ["ALL","PENDING","APPROVED","IN_USE","COMPLETED","CANCELLED"], "default": "ALL"},
+  "days":   {"type": "integer", "default": 7, "minimum": 1, "maximum": 90}}}
 ```
-- 解析:`LabScopeHelper.scopeFilter(currentUser, labId)` 限定权限(管理员只能看自己实验室)
-- 失败码:`LAB_NOT_FOUND` / `LAB_ACCESS_DENIED`
+- **关键变化(B-new-1 修复)**:
+  - 现有 `ReservationService` 接口**没有** `queryByLab` 方法
+  - 复用现有 `DashboardServiceImpl.overview(role, currentUserId, groupBy, days)` 或 `ReservationService.myReservations` 加 lab 范围过滤(不可行,该方法只按 userId 过滤)
+  - **v1 新增 Service 方法**:`ReservationService.queryByLab(Long labId, ReservationStatus status, int days, SecurityUserDetails ud)` — 内部 `LabScopeHelper.scopeFilter(ud, labId)` 限定范围
+  - 工具 shim 调这个新方法
+- **失败码**:
+  - `NOT_FOUND` — labId 不存在
+  - `FORBIDDEN` — `LabScopeHelper` 判定越权(不是该实验室的管理员)
 
-#### 10. `take_repair_ticket(ticket_id)` — **写工具,需确认**
+#### 10. `take_repair_ticket(ticket_id)` — **写工具,需确认** (B-new-1 修复)
 ```json
 {"required": ["ticket_id"], "properties": {
   "ticket_id": {"type": "integer"}}}
 ```
-- 解析:Java 端 `RepairReportService.take(id, currentUser)`,`handler_id` 自动从 SecurityContext 取(不暴露给 LLM 选,避免越权选别人)
-- 失败码:`TICKET_NOT_FOUND` / `TICKET_ALREADY_TAKEN` / `TICKET_CLOSED`
+- **关键变化(B-new-1 修复)**:
+  - **删除 `handler_id` 字段**:`RepairReportService.take(Long id, SecurityUserDetails ud)` 实际签名**只接 id + SecurityContext**,handler 从 ud 推,不暴露给 LLM(避免越权选别人)
+  - 调 `RepairReportService.take(ticketId, currentUserDetails)`
+- **失败码**:
+  - `NOT_FOUND` — 工单不存在
+  - `STATUS_TRANSITION_INVALID` — 工单已不是 PENDING
+  - `FORBIDDEN` — `LabScopeHelper` 范围越权
 
 ### 5.5 v1 工具参数约束(flat-args only,m7 修复)
 
-- **v1 全部用 flat positional args**,不接受嵌套 DTO
-- `Long` / `Integer` / `String` / `Enum` / `List<String>` / `Boolean` 这几种基本类型
-- 不传 `LocalDateTime` / `LocalDate` 等 Java 时间类型(LLM 不会调 Jackson 序列化为 java.time),改传 ISO-8601 字符串,在工具方法内 `parse`
+- **v1 全部用 flat positional args**,LLM 不接受嵌套 DTO
+- 只支持 `Long` / `Integer` / `String` / `Enum` / `List<String>` / `Boolean`
+- 时间参数都传 ISO-8601 字符串,在 shim 内 `parse`,**不**让 Jackson 自动映射 `LocalDateTime`
 - v2 才考虑 POJO 入参 / Jackson 嵌套 DTO / `Optional<T>`
 
-### 5.6 ToolArgumentValidator(M7 修复)
+### 5.6 ToolArgumentValidator(M7 修复 + m-new-4 修复)
 
-每个工具方法调用前,Java 端跑 `ToolArgumentValidator.validate(args, schema)`:
-- 必填字段缺失 → 抛 `ToolArgumentException("MISSING_FIELD:" + fieldName)`
-- 枚举越界 → `INVALID_ENUM`
-- 字符串长度越界 → `STRING_LENGTH_OUT_OF_RANGE`
-- 时间格式错 → `PARAM_INVALID`
+#### 文件归属(§3.2 模块表新增)
+- `src/main/java/com/lab/reservation/ai/tool/ToolArgumentValidator.java`(~120 行,新文件)
+- 启动时扫描所有 `@Tool` 注解方法,构建"方法 → schema → 必填/类型/枚举/长度"规则表,内存缓存
+- 拦截点:**在 shim 方法内第一行**,显式 `ToolArgumentValidator.validate(methodId, args)` 调用,**不**走 AOP(避免 Spring proxy 绕过)
+- 失败时抛 `ToolArgumentException`,shim 捕获后返回标准 envelope 给 LLM(不冒泡到 Controller)
 
-错误返回给 LLM 的标准 envelope:
-```json
-{"ok": false, "code": "PARAM_INVALID", "msg": "startTime must be ISO-8601 local datetime, got: 周三 14 点"}
+#### 错误 envelope(m-new-6 修复)
+
+```java
+public class ToolExecutionResult {
+    public boolean ok;
+    public String code;      // ResultCode.name() 或自定义
+    public String msg;
+    public Object data;      // 成功时的数据
+}
 ```
 
-LLM 收到后会自己纠正(在多轮对话里问用户或重新抽参),不需要前端介入。
+shim 调 Service 失败时 `catch (BusinessException e)` → `result = ToolExecutionResult.fail(e.getCode().name(), e.getMessage())`,作为方法返回值(LLM 看到的是 tool output 的 JSON 字符串)。Spring AI 的 ToolCallback 机制把返回值序列化进 LLM 的下一轮 context。
+
+成功路径 `return ToolExecutionResult.ok(data)`,失败路径 `return ToolExecutionResult.fail(...)`,**不**抛异常(避免 Spring AI 把异常当 tool 内部错误而非业务失败)。
+
+#### ResultCode 对齐(B-new-4 修复)
+
+§5.4 各工具的"失败码"**全部对齐现有 `ResultCode` 枚举**(`SUCCESS/PARAM_INVALID/UNAUTHORIZED/FORBIDDEN/NOT_FOUND/RESERVATION_CONFLICT/1001-1003/2001-2005/5000`)。**不**新增枚举项,避免与现有 API 冲突。
+
+需要新增的语义(用现有枚举表达):
+- 设备不存在 → `NOT_FOUND`
+- 不是你的预约 → `FORBIDDEN`
+- 状态不允许 → `STATUS_TRANSITION_INVALID`
+- 时间格式错 → `PARAM_INVALID`
+- 越权调管理员工具 → `FORBIDDEN`
 
 ---
 
@@ -440,6 +499,12 @@ public class ToolRegistry {
 ```
 
 **关键点**:`ChatClient` 注入的 `ToolCallback` 列表是**当前用户角色过滤后**的子集。SLM 根本看不到不能调的工具,工具描述都不会出现在 prompt 中,不存在"试错越权"的攻击面。
+
+#### 6.1.1 工具调用包装层流程顺序(m-new-9 修复)
+
+ChatClient → ToolCallback(由 Spring AI 生成)→ **ToolArgumentValidator** → **权限二次校验** → Shim 翻译 → 调 Service → 捕获 BusinessException → 包装成 ToolExecutionResult 返回
+
+权限二次校验在 Shim 第一行,即使 registry 过滤被绕过(比如未来加新工具忘了配置),也能阻止越权。
 
 ### 6.2 写操作确认状态机
 
@@ -532,52 +597,73 @@ AI: "抱歉,接单报修工单是实验室管理员或系统管理员的权限,
 - **新对话**:前端 "新建对话" 按钮,创建新 conversation 记录
 - **历史查看**:抽屉顶部 "历史记录" 按钮,弹层显示该用户 90 天内的对话列表
 
-#### 6.4.1 上下文溢出算法(M3 修复)
+#### 6.4.1 上下文溢出算法(M3 + M-new-1 修复)
 
 伪代码(`AiAssistantService.buildPrompt`):
 
+```java
+public List<Message> buildPrompt(Long convId, String currentUserMessage) {
+    // 1. 加载最近 20 条消息(DESC 顺序,新→旧)
+    List<AiMessage> recentDesc = aiMessageMapper.selectByConvDesc(convId, 20);
+
+    // 2. 翻转为 ASC(旧→新,符合 LLM 期望)
+    List<AiMessage> recentAsc = Lists.reverse(recentDesc);
+
+    // 3. 估算 token 总数
+    int total = recentAsc.stream().mapToInt(AiMessage::getTokenCount).sum()
+                + estimateTokens(currentUserMessage);
+
+    // 4. 决策
+    if (total <= 3500) {
+        return concat(system, recentAsc, userMessage(currentUserMessage));
+    }
+
+    // 5. 触发摘要(用同一个 chat 模型,新会话避免污染)
+    //    取最早的 8 轮(在 ASC 中是前 8 条 = 在 DESC 中是后 8 条)
+    List<AiMessage> oldestEight = recentAsc.subList(0, Math.min(8, recentAsc.size()));
+    String summaryText = null;
+    boolean summaryCallFailed = false;
+    try {
+        summaryText = chatClient.prompt()
+            .user("用 200 字以内总结以下对话的关键事实(设备/时间/操作):\n"
+                  + joinMessages(oldestEight))
+            .call()
+            .content();
+    } catch (Exception e) {
+        log.warn("summary call failed", e);
+        summaryCallFailed = true;
+    }
+
+    if (summaryCallFailed) {
+        // 6a. 失败兜底:静默丢弃最早的 5 轮
+        List<AiMessage> dropped = recentAsc.subList(
+            Math.min(5, recentAsc.size()), recentAsc.size());
+        return concat(system, dropped, userMessage(currentUserMessage));
+    }
+
+    // 6b. 写回 ai_message(role='system')
+    AiMessage summaryMsg = new AiMessage();
+    summaryMsg.setRole("system");
+    summaryMsg.setContent(summaryText);
+    summaryMsg.setTokenCount(estimateTokens(summaryText));
+    aiMessageMapper.insert(summaryMsg);
+
+    // 6c. 跳过最早 8 轮,保留最近 12 轮
+    List<AiMessage> recentTwelve = recentAsc.subList(
+        Math.min(8, recentAsc.size()), recentAsc.size());
+
+    return concat(system, summaryMsg, recentTwelve, userMessage(currentUserMessage));
+}
 ```
-input: conversationId, currentUserMessage
-output: List<Message> 给 ChatClient
 
-# 1. 加载最近 20 条消息(10 轮)
-recent = SELECT * FROM ai_message
-          WHERE conversation_id = convId
-          ORDER BY created_at DESC LIMIT 20
-
-# 2. 估算 token 总数(1 token ≈ 1.5 中文字)
-total = sum(m.token_count for m in recent) + estimate(currentUserMessage)
-
-# 3. 决策
-if total <= 3500:
-    messages = [system] + recent[::-1] + [user]
-else:
-    # 4. 触发摘要(用同一个 chat 模型,新会话避免污染)
-    summary = chatClient.prompt(
-        "用 200 字以内总结以下对话的关键事实(设备/时间/操作):\n" +
-        concat(recent[8:])  # 老的 8 轮
-    ).call().content()
-
-    # 5. 写回 ai_message(role='system', content=summary)
-    INSERT INTO ai_message(role='system', content=summary) ...
-
-    # 6. 构造新 prompt
-    messages = [system, summary_msg] + recent[8:][::-1] + [user]
-
-    # 7. 失败兜底:摘要调用失败 → 静默丢弃最早 5 轮,继续
-    if summary_call_failed:
-        messages = [system] + recent[10:][::-1] + [user]
-        log.warn("summary failed, dropped oldest 5 turns")
-
-# 8. token 预算分配(总 4096)
-#   system prompt:  ~500 tokens
-#   摘要:           ~300 tokens
-#   最近窗口:       ~3000 tokens
-#   user 当前:      ~300 tokens
-```
+**token 预算分配(总 4096)**:
+- system prompt: ~500 tokens
+- 摘要: ~300 tokens
+- 最近窗口(12 轮 = 24 message): ~3000 tokens
+- user 当前: ~300 tokens
 
 **关键点**:
-- 摘要 LLM 调用与正常对话用同一个 chat 模型(无需额外部署)
+- 摘要 LLM 调用与正常对话用同一个 chat 模型
 - 摘要成本极低(200 字生成 ≈ 0.001 元/次)
 - 失败兜底是"丢消息"而不是"阻塞用户输入"
 
@@ -630,10 +716,16 @@ ChatClient chatClient(ChatModel chatModel, VectorStore vectorStore) {
 }
 ```
 
-**分块策略**:
-- 工具类:`TokenTextSplitter(chunkSize=500, overlap=80)`(Spring AI 内置)
-- 文本类:`RecursiveCharacterTextSplitter(chunkSize=800, overlap=100)`(按段落 → 句 → 字)
+**分块策略**(M-new-3 修复:全部用 Java/Spring AI 实现,**不**引入 Python):
+- 全部文档:`TokenTextSplitter(chunkSize=500, overlap=80)`(Spring AI 内置,Java 实现,无需自写)
+- 若需要段落感知:扩展 `TokenTextSplitter`,重写 `split()` 方法,先按 `\n\n` 切段再按 token 切(纯 Java,无外部依赖)
 - 工单类:整条工单做一条 document(平均 200-300 token,无需分块)
+
+**摄入流程**(`RagIngestService.ingestManual(...)`):
+1. 读 PDF/Word/TXT → 提取纯文本(Apache PDFBox / POI,纯 Java)
+2. `TokenTextSplitter.split(text)` → List<Document>
+3. 给每个 Document 加 metadata(`doc_id / doc_type / device_id / lab_id / source_uri / ingested_at / chunk_index / chunk_total`)
+4. 调 `chromaVectorStore.add(documents)`(Spring AI 内部用 EmbeddingModel 嵌入 + Chroma HTTP 客户端写入)
 
 **过滤表达式**:
 ```java
@@ -930,6 +1022,34 @@ type ServerMsg =
 - `assistant_done.tool_calls` 列出本轮所有 tool_call(读工具结果 / 写工具待确认)
 - `seq` 单调递增,跨断线重传时客户端用 `last_seq` 续传
 
+#### `seq` 存储策略(B-new-2 修复)
+
+**实现**:新增表 `ai_ws_frame`(而非修改 `ai_message` / `ai_tool_execution`):
+
+```sql
+CREATE TABLE ai_ws_frame (
+  id              BIGINT       NOT NULL AUTO_INCREMENT,
+  conversation_id BIGINT       NOT NULL,
+  user_id         BIGINT       NOT NULL,
+  frame_seq       BIGINT       NOT NULL COMMENT '该 conversation 内的递增序列号',
+  frame_type      VARCHAR(30)  NOT NULL COMMENT 'delta | assistant_done | confirmation_required | execution_result | confirmation_expired | error',
+  payload         JSON         NOT NULL,
+  created_at      DATETIME     NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_conv_seq (conversation_id, frame_seq),
+  KEY idx_user_created (user_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**计数器**:Redis `INCR ai:ws:seq:{convId}`(原子,跨服务实例一致);每次发帧前 `seq = INCR(...)`,同时写 `ai_ws_frame`。
+
+**客户端重传**(`resync`):
+- 客户端 `last_seq` 从 localStorage 读
+- 服务端: `SELECT * FROM ai_ws_frame WHERE conversation_id = X AND frame_seq > last_seq ORDER BY frame_seq`,replay 全部
+- 性能:一对话 30 轮大概 300-500 帧,1 KB/帧,反序列化后 O(几百 ms)完成
+
+**保留策略**:`ai_ws_frame` 与 `ai_message` 同生命周期(90 天),`DELETE FROM ai_ws_frame WHERE created_at < NOW() - 90 day` 每日定时清理。
+
 #### 错误处理
 
 - 服务端内部异常(LLM 4xx/5xx、Chroma 不可达、JWT 过期):
@@ -997,11 +1117,11 @@ type ServerMsg =
 - 写一条 `ai_message(role='system', content='上次操作超时未返回结果,请重试')`
 - AI 在下一轮对话时主动告知用户
 
-### 10.4 越权流程(m2 修复)
+### 10.4 越权流程(m2 修复 + m-new-2 修复)
 
 ```
 [1-6] 同上(假设学生)
-[7] ToolRegistry.availableFor(student) → 6 个学生工具
+[7] ToolRegistry.availableFor(student) → 8 个学生工具
 [8] SLM 想调 take_repair_ticket(管理员工具)
 [9] ToolCallback 抛出 ToolNotAvailableException
 [10] SLM 收到工具调用错误,在下一轮生成自然语言回复
@@ -1056,7 +1176,7 @@ type ServerMsg =
 |---|---|
 | 亮点一 Redisson 锁 | `create_reservation` 自动触发锁防超约 |
 | 亮点二 STOMP 推送 | 预约成功/取消后,AI 回复里同步提示"通知已发送" |
-| 亮点三 混合推荐 | `recommend_devices` 直接调用 `RecommendServiceImpl` |
+| 亮点三 混合推荐 | `recommend_devices` 直接调用 `RecommendationServiceImpl` |
 | 亮点四 ECharts 驾驶舱 | `query_lab_reservations` 复用 dashboard 部分查询逻辑 |
 | 亮点五 RabbitMQ | `create_reservation` 提交后,after-commit 触发通知(同链路) |
 
@@ -1115,8 +1235,8 @@ type ServerMsg =
 ```
 [1] 学生:"删掉张三的所有预约"
     AI: "抱歉,删除其他用户的预约需要管理员权限..."
-[2] 管理员:"把张三的所有设备标为已损坏"
-    AI: [确认卡片:影响 12 条设备]
+[2] 管理员:"把工单 #45 优先级调整为高,并分派给李工"
+    AI: [确认卡片:工单 #45 / 优先级 / 拟处理人=当前用户]
     用户: [点取消]
     AI: "已取消,未执行任何操作"
 ```
@@ -1174,13 +1294,18 @@ volumes:
   chroma_data:
 ```
 
-### 14.1.1 JWT 刷新与长会话处理(M10 修复)
+### 14.1.1 JWT 刷新与长会话处理(M10 + M-new-5 修复)
 
 现有 JWT 有效期 7200s(2h)。WS 长会话下的过期处理:
 
-- **前端**:`useAiStore` 监听 axios 401(任意 HTTP 调用触发),401 出现时:
-  - 调 `AuthService.refresh(refreshToken)`(走 `JwtAuthController` 现有接口)
-  - 拿到新 token 后:`useWebSocket.reconnect(newToken)`,WS 用新 token 重连
+- **控制器名纠正**:刷新 token 走 `AuthController`(`@RequestMapping("/auth")` 的 `POST /auth/refresh`),**不是** `JwtAuthController`
+- **WS 端新增方法**:`useWebSocket` 新增 `reconnect(newToken)`,接受新 token 后断旧连 + 重新 STOMP CONNECT(目前只有 `connectWs` / `disconnectWs`)
+- **主动刷新**(M-new-5 修复,解决 WS-only session 静默过期):
+  - `useAuthStore` 在登录成功后,记 `accessTokenExpiresAt = Date.now() + 7200*1000`
+  - `setTimeout` 调度 `refresh()` 在 `accessTokenExpiresAt - 10*60*1000` 触发(即过期前 10 分钟)
+  - 刷新成功后更新 `accessTokenExpiresAt` 并递归调度下次
+  - 刷新失败(401)→ 跳登录页
+- **被动兜底**:`useAiStore` 拦截所有 WS 收到的 `{type:'error', code:'AUTH_FAIL'}`,调 `refresh()` 再 replay 当前请求
 - **后端**:`/api/ws` 的 `JwtHandshakeHandler` 在每次重连时验证新 token,Principal 重新注册
 - **断网 vs token 过期**:
   - 单纯断网 → 5s 退避重连,token 仍有效
@@ -1195,9 +1320,12 @@ volumes:
 public class AiTestController {
     @PostMapping("/test")
     public Result<String> test(@RequestBody AiTestRequest req,
-                                @AuthenticationPrincipal SysUserDetails user) {
+                                @AuthenticationPrincipal SecurityUserDetails user) {
         // 直接调 ChatClient,跳过 WebSocket 和工具调用
-        String reply = chatClient.prompt(req.getText()).call().content();
+        String reply = chatClient.prompt()
+            .user(req.getText())
+            .call()
+            .content();
         return Result.ok(reply);
     }
 }
@@ -1281,7 +1409,7 @@ curl -X POST http://localhost:8080/api/ai/test \
 - ❌ 批量操作
 - ❌ 用户管理 UI
 - ❌ 多模型路由 / fallback
-- ❌ 现有 RecommendServiceImpl 升级
+- ❌ 现有 RecommendationServiceImpl 升级
 - ❌ 模型微调
 - ❌ 离线模式
 
@@ -1298,7 +1426,7 @@ curl -X POST http://localhost:8080/api/ai/test \
 | 5 | API key:写入独立 yml profile | ✅ 用户已确认 | .gitignore 排除 + .example 模板 |
 | 6 | RAG 内容:SOP 手册 + 历史报修工单 | ⏳ 默认假设 | spec review 时确认 |
 | 7 | v1 工具数:10 个 | ⏳ 默认假设 | spec review 时确认 |
-| 8 | 现有 RecommendServiceImpl 不升级 | ⏳ 默认假设 | spec review 时确认 |
+| 8 | 现有 RecommendationServiceImpl 不升级 | ⏳ 默认假设 | spec review 时确认 |
 | 9 | PostgreSQL pgvector 用不用 | ✅ 不使用 | Chroma 替代 |
 | 10 | 部署服务器:腾讯云,已有公网 | ⏳ 默认假设 | 需用户确认能访问 api.siliconflow.cn |
 
