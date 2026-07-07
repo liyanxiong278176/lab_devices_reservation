@@ -2098,7 +2098,7 @@ public Flux<String> stream(String systemPrompt, List<Message> history, Object...
 
 (Object... 兼容 `ToolCallback[]` —— 内部强转成 `ChatClient` 能接受的 tools 参数即可。简化:直接转 `tools` 到 `ChatClient.prompt().tools(tools)`,ChatClient 重载自动识别。)
 
-- [ ] **Step 5.9: 重写 `AiAssistantService` 的 while-loop(M1 修复:用 ToolCallback[] 真正调工具)**
+- [ ] **Step 5.9: 重写 `AiAssistantService` 的 while-loop(M1 修复:用 ToolCallback[] 真正调工具,BLOCKING #1 round-4 修复:用 siliconFlowClient 触发 @CircuitBreaker)**
 
 `src/main/java/com/lab/reservation/ai/service/AiAssistantService.java`:
 
@@ -2110,7 +2110,8 @@ public class AiAssistantService {
 
     private static final int MAX_TURNS = 10;
 
-    private final ChatClient chatClient;
+    // BLOCKING #1 round-4 修复:用 SiliconFlowClient(带 @CircuitBreaker),不用 ChatClient 直接调
+    private final SiliconFlowClient siliconFlowClient;
     private final ToolRegistry toolRegistry;
     private final ConversationService conversationService;
     private final ConfirmationService confirmationService;
@@ -2171,22 +2172,25 @@ public class AiAssistantService {
 
                 List<Message> history = conversationService.buildPrompt(convId, text, user.getAuthorities());
 
-                // B-NEW-3 修复:.tools() 不是 .toolCallbacks();接受 ToolCallback[] 或 POJO
-                ChatClient.RequestSpec spec = chatClient.prompt()
-                        .system(promptBuilder.build(extractRole(user)))
-                        .messages(history)
-                        .tools(toolCallbacks);
-
-            // 流式收集 + step_update 推送
-            StringBuilder reply = new StringBuilder();
-            spec.stream().content().handle((chunk, err) -> {
-                if (chunk != null) {
+                // BLOCKING #1 round-4 修复:走 siliconFlowClient,@CircuitBreaker 在 SiliconFlowClient.stream 上
+                StringBuilder reply = new StringBuilder();
+                siliconFlowClient.stream(
+                        promptBuilder.build(extractRole(user)),
+                        history,
+                        toolCallbacks  // Object... 兼容 ToolCallback[]
+                ).doOnNext(chunk -> {
                     reply.append(chunk);
                     frameService.push(convId, user, "delta",
                         Map.of("text", chunk));
-                }
-                return null;
-            }).blockLast();
+                })
+                .onErrorResume(err -> {
+                    // CircuitBreaker 触发或网络错误,统一报错
+                    log.warn("SiliconFlow call failed", err);
+                    frameService.push(convId, user, "error",
+                        Map.of("code", "AI_UNAVAILABLE", "msg", "AI 助手暂时不可用,请稍后再试"));
+                    return Flux.empty();
+                })
+                .blockLast();
 
             String finalReply = reply.toString();
             if (finalReply.isBlank()) break;  // AI 沉默,结束
