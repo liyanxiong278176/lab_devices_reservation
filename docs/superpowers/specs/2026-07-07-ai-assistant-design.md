@@ -272,14 +272,14 @@ public class ReservationTool {
         reason = "将创建一条新预约,占用设备某时段",
         riskSummary = "若该时段已被人预约,创建将失败"
     )
-    public ReservationVO createReservation(
+    public Long createReservation(
         @ToolParam(description = "设备 ID,Long 类型") Long deviceId,
         @ToolParam(description = "开始时间,ISO-8601 local datetime 格式 2026-07-08T14:00:00") String startTime,
         @ToolParam(description = "结束时间,ISO-8601 local datetime 格式 2026-07-08T16:00:00") String endTime,
         @ToolParam(description = "使用目的,不超过 100 字") String purpose
     ) {
-        // 调现有 service,返回 VO
-        return reservationService.create(...);
+        // 调现有 service,返回 id(MINOR-1 修复:实际返回 Long 不是 VO)
+        return reservationService.create(dto, currentUserId);
     }
 }
 ```
@@ -410,7 +410,7 @@ public class ReservationTool {
 - **关键变化(B-new-1 修复)**:
   - 现有 `ReservationService` 接口**没有** `queryByLab` 方法
   - 复用现有 `DashboardServiceImpl.overview(role, currentUserId, groupBy, days)` 或 `ReservationService.myReservations` 加 lab 范围过滤(不可行,该方法只按 userId 过滤)
-  - **v1 新增 Service 方法**:`ReservationService.queryByLab(Long labId, ReservationStatus status, int days, SecurityUserDetails ud)` — 内部 `LabScopeHelper.scopeFilter(ud, labId)` 限定范围
+  - **v1 新增 Service 方法**:`ReservationService.queryByLab(Long labId, ReservationStatus status, int days, SecurityUserDetails ud)` — 内部判 `if (!labScopeHelper.managedLabIds(ud).contains(labId)) throw FORBIDDEN`(MINOR-3 修复:`LabScopeHelper` 实际只有 `managedLabIds(ud)`,无 `scopeFilter` 方法)
   - 工具 shim 调这个新方法
 - **失败码**:
   - `NOT_FOUND` — labId 不存在
@@ -716,8 +716,8 @@ ChatClient chatClient(ChatModel chatModel, VectorStore vectorStore) {
 }
 ```
 
-**分块策略**(M-new-3 修复:全部用 Java/Spring AI 实现,**不**引入 Python):
-- 全部文档:`TokenTextSplitter(chunkSize=500, overlap=80)`(Spring AI 内置,Java 实现,无需自写)
+**分块策略**(M-new-3 + NIT-1 修复:全部用 Java/Spring AI 实现,**不**引入 Python):
+- 全部文档:`TokenTextSplitter.builder().withChunkSize(500).withMinChunkSizeChars(350).withMinChunkLengthToEmbed(5).build()`(Spring AI 内置 builder,Java 实现;**不**用 `chunkSize=500, overlap=80` —— TokenTextSplitter **没有** `overlap` 参数,改用 `withMinChunkSizeChars` 控制合并)
 - 若需要段落感知:扩展 `TokenTextSplitter`,重写 `split()` 方法,先按 `\n\n` 切段再按 token 切(纯 Java,无外部依赖)
 - 工单类:整条工单做一条 document(平均 200-300 token,无需分块)
 
@@ -825,13 +825,15 @@ App.vue
 ```
 idle (空状态,显示建议问题)
   → user_typing
-  → sending (发送中,禁用输入)
-  → streaming (AI 流式输出,逐字渲染)
+  → sending (发送中,禁用输入 + 立即渲染"AI 思考中..."占位气泡)
+  → streaming (AI 流式输出,逐字 append 到占位气泡)
   → awaiting_confirmation (显示确认卡片,等用户操作)
   → executing (用户已确认,等待后端结果)
   → done
   → error
 ```
+
+**Cold-start UX(避免 1-3 秒空白体验断层)**:在 `sending` 状态立即插入占位 AI 消息气泡(三个点的"AI 思考中..."动画,复用 V5 `--bg-elevated` token);首个 `delta` 帧到达时,把占位气泡替换为真实流式内容。占位气泡用 Vue `v-if="state === 'sending'"` 控制,`streaming` 态自动消失。
 
 ---
 
@@ -1301,7 +1303,7 @@ volumes:
 - **控制器名纠正**:刷新 token 走 `AuthController`(`@RequestMapping("/auth")` 的 `POST /auth/refresh`),**不是** `JwtAuthController`
 - **WS 端新增方法**:`useWebSocket` 新增 `reconnect(newToken)`,接受新 token 后断旧连 + 重新 STOMP CONNECT(目前只有 `connectWs` / `disconnectWs`)
 - **主动刷新**(M-new-5 修复,解决 WS-only session 静默过期):
-  - `useAuthStore` 在登录成功后,记 `accessTokenExpiresAt = Date.now() + 7200*1000`
+  - `useUserStore` 在登录成功后,记 `accessTokenExpiresAt = Date.now() + 7200*1000`(实际文件 `frontend/src/stores/user.ts`,不是 `useAuthStore`,MINOR-2 修复)
   - `setTimeout` 调度 `refresh()` 在 `accessTokenExpiresAt - 10*60*1000` 触发(即过期前 10 分钟)
   - 刷新成功后更新 `accessTokenExpiresAt` 并递归调度下次
   - 刷新失败(401)→ 跳登录页
