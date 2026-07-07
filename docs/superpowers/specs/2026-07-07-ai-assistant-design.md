@@ -12,7 +12,7 @@
 
 ### 1.1 现状盘点
 
-平台已有 5 个工程亮点(亮点一 Redisson 锁、亮点二 STOMP 推送、亮点三 混合推荐、亮点四 ECharts 驾驶舱、亮点五 RabbitMQ),工作量充足但缺一个**有差异化的、对外可见的**创新点。论文评审与答辩需要"亮点",亮点三(规则推荐)已被 Spring AI 论文生态冲击,亮点六需要更高的立意。
+平台已有 5 个工程亮点(亮点一 Redisson 锁、亮点二 STOMP 推送、亮点三 混合推荐、亮点四 ECharts 驾驶舱),工作量充足但缺一个**有差异化的、对外可见的**创新点。论文评审与答辩需要"亮点",亮点三(规则推荐)已被 Spring AI 论文生态冲击,亮点六需要更高的立意。
 
 ### 1.2 痛点回顾(deep-research 已抓到的真实吐槽)
 
@@ -47,6 +47,8 @@
 - 审计日志(ai_tool_execution 表)
 - 多轮对话持久化(ai_conversation + ai_message)
 - RAG(设备 SOP 手册 + 历史报修工单)
+- ★ **腾讯云对标视觉特效**:页面光晕 / 彩色光标 / Sub-step 同步 / 推荐下一步(§7.4)
+- ★ **多步连击操作模式**(§7.4.5,AI 代理自治)
 - 评估实验(20-30 用例的工具调用准确率 / 确认通过率 / 延迟)
 - 论文章节(亮点六)
 
@@ -835,6 +837,161 @@ idle (空状态,显示建议问题)
 
 **Cold-start UX(避免 1-3 秒空白体验断层)**:在 `sending` 状态立即插入占位 AI 消息气泡(三个点的"AI 思考中..."动画,复用 V5 `--bg-elevated` token);首个 `delta` 帧到达时,把占位气泡替换为真实流式内容。占位气泡用 Vue `v-if="state === 'sending'"` 控制,`streaming` 态自动消失。
 
+### 7.4 视觉特效(腾讯云对标)★ 用户新增
+
+参照腾讯云控制台"智能助手 KiKi"在执行命令时的视觉表现,本助手需实现以下 4 个特效(在 V5 深色 token 基础上叠加,**不**改 V5 既有视觉):
+
+#### 7.4.1 页面周边彩色光晕(执行态)
+
+- **触发**:AI 处于 `executing` 状态(写操作已确认,后端正在执行业务 service)时,全屏 overlay 启用
+- **效果**:从抽屉所在角落(右下)向四周辐射的**彩虹光晕**,带 8-12s 周期的 hue 旋转(`@keyframes hueRotate { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }`)
+- **技术实现**:
+  ```css
+  .ai-aurora-overlay {
+    position: fixed; inset: 0; pointer-events: none; z-index: 48;
+    background: radial-gradient(
+      ellipse 60% 60% at calc(100% - 220px) calc(100% - 80px),
+      hsla(280, 100%, 70%, 0.35) 0%,
+      hsla(220, 100%, 65%, 0.18) 25%,
+      hsla(180, 100%, 60%, 0.08) 45%,
+      transparent 70%
+    );
+    animation: auroraPulse 4s ease-in-out infinite, hueRotate 12s linear infinite;
+    mix-blend-mode: screen;
+  }
+  .ai-aurora-overlay.idle { display: none; }
+  ```
+- **状态联动**:`useAiStore.state === 'executing'` 时 mount,其他状态 unmount
+- **不影响主页面**:pointer-events: none,`mix-blend-mode: screen` 让背景文字仍可读
+- **可访问性**:`prefers-reduced-motion: reduce` 时关闭动画(降级为静态淡光晕)
+
+#### 7.4.2 彩色光标(执行态)
+
+- **触发**:同 §7.4.1,`executing` 状态时全局光标变成"色彩斑斓"的自定义箭头
+- **效果**:蓝-青-紫渐变的发光箭头,带 1.5s 周期的光点脉冲
+- **技术实现**:
+  ```css
+  body.ai-executing,
+  body.ai-executing * { cursor: url('data:image/svg+xml;utf8,<svg ...彩色渐变箭头...>') 0 0, auto !important; }
+  ```
+  SVG 用 data-URI 内联(避免外链 404),48x48,渐变 + 中心光点
+- **状态联动**:`useAiStore` 状态变化时切换 `<body class="ai-executing">`
+- **可访问性**:同 §7.4.1,降级为系统默认光标
+
+#### 7.4.3 Sub-step 实时执行同步
+
+当前 §10 数据流只推"最终结果"。腾讯云模式要求 AI 在执行过程中**逐步播报**每个动作("弹窗已打开" → "命令已输入" → "点击执行"),让用户清楚 AI 在做什么。这需要在 WS 契约加新帧类型。
+
+**新 WS 帧类型**(在 §10.0 客户端/服务端契约中新增):
+```typescript
+| { type: 'step_update'; seq: number; conv_id: number;
+    step_id: number;     // 单次 assistant 回合内的步骤编号
+    status: 'started' | 'completed' | 'failed';
+    text: string;        // 中文描述,如"已为您打开预约创建页"
+    target?: string;     // 可选,描述 AI 正在操作的页面/对象,如"Create.vue"
+    duration_ms?: number // started → completed 之间耗时
+  }
+```
+
+**触发场景**:
+- AI 调工具前(`tool_call` 发出前)→ `step_update(step_id=1, status=started, text="正在为您查询可用设备...")`
+- 工具返回结果 → `step_update(step_id=1, status=completed, text="已找到 3 台可用设备", duration_ms=820)`
+- 多个工具连续调用 → step_id 递增
+- 工具执行失败 → `step_update(status=failed, text="查询失败:网络超时")`
+
+**前端渲染**(`MessageCard` 新增子类型 `StepTimelineCard`):
+```
+┌─────────────────────────────────┐
+│ ✓ 1. 已为您打开设备列表页   1.2s│
+│ ✓ 2. 查询到 3 台可用设备    0.8s│
+│ ◐ 3. 正在创建预约...           │  ← 当前步骤,旋转图标
+└─────────────────────────────────┘
+```
+
+**实现位置**:`AiAssistantService` 在调用 `ChatClient` 时,工具执行前后都向 `ai_ws_frame` 写 `step_update` 帧(不只是 `assistant_done`);后端推完一个 `step_update` 后,LLM 继续生成下一个 `delta` 解释下一步动作。
+
+**论文价值**:这超出主流"流式 + tool_call"模式,体现"AI 操作过程透明化"的工程创新。
+
+#### 7.4.4 推荐下一步操作卡片
+
+**新 WS 帧类型**:
+```typescript
+| { type: 'suggestions'; seq: number; conv_id: number;
+    items: Array<{ label: string;       // 按钮文字,如"确认预约"
+                   action: 'send' | 'open' | 'navigate';
+                   value: string         // send 时为要发的消息;open 时为弹窗名;navigate 时为路由
+                 }>
+  }
+```
+
+**触发**:每个 `assistant_done` 帧**之前或同时**推一次 `suggestions`,LLM 在生成最终回复时同步产出 1-3 个推荐项。
+
+**前端渲染**(`MessageCard` 新增子类型 `SuggestionRow`):
+```
+┌─────────────────────────────────┐
+│ 已为您预约成功 ✓ 通知已发送      │
+│                                  │
+│ 还可以:                          │
+│ [📅 查看我的预约] [🔍 找同类设备] │
+│ [❓ 这台设备怎么用]              │  ← 3 个建议按钮
+└─────────────────────────────────┘
+```
+
+**实现位置**:
+- 后端:LLM 输出的 JSON 结构化字段 + `ChatClient` 的 `outputSchema` 约束(类似 tool_call 的 output schema 模式)
+- 前端:点击按钮 → `useAiStore.sendMessage(suggestion.value)` 或路由跳转
+
+#### 7.4.5 多步连击操作模式(continuous)
+
+腾讯云模式中,AI 不止做一件事,而是**连续完成多步**(开弹窗 → 输入命令 → 点执行 → 关弹窗 → 报告结果)。LLM 自己决定下一步,直到任务完成。
+
+**架构**:
+- 现有 §6.4 ChatClient.prompt() 是单回合。改造为**while-loop**:
+  ```java
+  while (turnCount++ < MAX_TURNS) {  // 防御性上限,比如 10
+      String aiOutput = chatClient.prompt(...).call().content();
+      // 检测:是 tool_call 还是 final answer
+      if (finalAnswerDetected(aiOutput)) break;
+      // 否则执行 tool,append tool result,继续 loop
+  }
+  ```
+- 每步一个 `step_update` 帧
+- 用户可中断:抽屉关闭 / 顶栏红点点击 → WS `{type:'cancel_session', conv_id}`,后端退出 loop,写 `ai_tool_execution(status='cancelled')`
+- 论文价值:体现"AI 代理自治(agent autonomy)"能力
+
+#### 7.4.6 视觉状态机扩展(合并到 §7.3)
+
+```dot
+digraph ai_state {
+  idle -> user_typing [label="用户输入"]
+  user_typing -> sending [label="回车"]
+  sending -> streaming [label="首个 delta"]
+  sending -> step_running [label="首个 step_update"]
+  streaming -> step_running [label="step_update 到达"]
+  step_running -> streaming [label="继续流式"]
+  step_running -> awaiting_confirmation [label="需确认"]
+  awaiting_confirmation -> executing [label="用户确认"]
+  executing -> step_running [label="下一步开始"]
+  executing -> done [label="全部完成"]
+  done -> idle
+  any -> error
+}
+```
+
+**视觉联动总表**:
+
+| 状态 | 悬浮球 | 抽屉 | 光晕 | 光标 | 卡片 |
+|---|---|---|---|---|---|
+| idle | 呼吸脉冲 | 隐藏 | 关 | 默认 | 隐藏 |
+| user_typing | 静态 | 展开 | 关 | 默认 | 用户消息 |
+| sending | 旋转脉冲 | 展开 | 关 | 默认 | 思考中占位 |
+| streaming | 旋转脉冲 | 展开 | 关 | 默认 | delta append |
+| step_running | 高速旋转 | 展开 | **开** | **彩色** | StepTimeline |
+| awaiting_confirmation | 警示黄 | 展开 | 关 | 默认 | 确认卡片 |
+| executing | 旋转+黄 | 展开 | **开** | **彩色** | StepTimeline 续 |
+| done | 完成勾 | 展开 | 关(渐隐 500ms) | 默认渐隐 | SuggestionsRow |
+| error | 静态红 | 展开 | 关 | 默认 | 错误卡 |
+
 ---
 
 ## 8. 数据模型(新增 3 张表)
@@ -999,13 +1156,25 @@ type ClientMsg =
 type ServerMsg =
   // 流式增量(每个 chunk 一帧)
   | { type: 'delta'; seq: number; conv_id: number; text: string }
+  // Sub-step 实时同步(§7.4.3 腾讯云模式:每步动作单独播报)
+  | { type: 'step_update'; seq: number; conv_id: number;
+      step_id: number;
+      status: 'started' | 'completed' | 'failed';
+      text: string;          // "已为您打开设备列表页"
+      target?: string;        // 可选,"Create.vue" / "BD Aria III"
+      duration_ms?: number }  // started→completed 耗时
+  // 推荐下一步操作(§7.4.4)
+  | { type: 'suggestions'; seq: number; conv_id: number;
+      items: Array<{ label: string;
+                     action: 'send' | 'open' | 'navigate';
+                     value: string }> }
   // 整轮结束
   | { type: 'assistant_done'; seq: number; conv_id: number;
       tool_calls: Array<{name: string; args: any; result?: any; status: 'ok'|'error'}> }
   // 写工具待确认
   | { type: 'confirmation_required'; seq: number; action_id: number;
       tool_name: string; summary: string; risk: string; args: any;
-      estimated_impact?: string }  // 如 "影响 1 条设备"
+      estimated_impact?: string }
   // 写工具超时自动取消(M5)
   | { type: 'confirmation_expired'; action_id: number }
   // 写工具执行结果
@@ -1013,8 +1182,26 @@ type ServerMsg =
       result: { ok: boolean; code?: string; msg?: string; data?: any } }
   // 错误
   | { type: 'error'; code: 'RATE_LIMIT'|'AUTH_FAIL'|'INTERNAL'|'TOOL_FAIL'; msg: string }
-  // 心跳(每 30s)
+  // 心跳
   | { type: 'ping'; ts: number };
+```
+
+**新增帧类型的触发顺序**(典型多步流程):
+```
+[user_message]                                  ← 用户输入
+  → [delta] × N                                 ← AI 思考/解释
+  → [step_update started "查询可用设备"]
+  → [confirmation_required]                    ← 写工具(可选)
+  → [delta] × N                                 ← AI 解释确认内容
+  → [user: confirm_action]
+  → [step_update completed]                    ← 完成该步
+  → [step_update started "创建预约"]
+  → [delta] × N
+  → [step_update completed]
+  → [step_update started "发送通知"]
+  → [step_update completed]
+  → [suggestions]                              ← 推荐下一步
+  → [assistant_done]                           ← 整轮收尾
 ```
 
 #### 流式结束判定
@@ -1163,13 +1350,19 @@ CREATE TABLE ai_ws_frame (
   6.6 多轮对话与持久化
       6.6.1 上下文管理(滑动窗口 + 摘要)
       6.6.2 90 天滚动策略
-  6.7 评估实验
-      6.7.1 工具调用准确率(20-30 用例)
-      6.7.2 确认通过率(用户研究)
-      6.7.3 端到端响应延迟(分位数统计)
-      6.7.4 越权防护正确性
-  6.8 与同类方案的对比
-  6.9 局限与展望
+  6.7 ★ 视觉特效与操作透明化(腾讯云对标)
+      6.7.1 页面光晕 / 彩色光标的 CSS 实现 + 状态联动
+      6.7.2 Sub-step 同步机制(step_update 帧 + StepTimeline 卡片)
+      6.7.3 多步连击操作模式(while-loop 代理自治 + 防御性 turnCount 上限)
+      6.7.4 推荐下一步(suggestion 帧 + SuggestionRow 卡片)
+  6.8 评估实验
+      6.8.1 工具调用准确率(20-30 用例)
+      6.8.2 确认通过率(用户研究)
+      6.8.3 端到端响应延迟(分位数统计)
+      6.8.4 越权防护正确性
+      6.8.5 Sub-step 同步对用户感知延迟的改善
+  6.9 与同类方案的对比
+  6.10 局限与展望
 ```
 
 ### 11.2 与前 5 个亮点的关系
@@ -1376,9 +1569,11 @@ curl -X POST http://localhost:8080/api/ai/test \
 | C | 确认机制 + 审计日志(状态机 + ai_tool_execution) | 3 |
 | D | WebSocket 流式 + 多轮上下文(§10.0 契约 + resync) | 4 |
 | E | 前端悬浮球 + 抽屉 + 卡片库(V5 深色 token) | 5 |
+| E' | **★ 视觉特效**(§7.4:光晕/光标/StepTimeline/SuggestionRow) | **3** |
+| E'' | **★ Sub-step 同步后端**(while-loop 代理 + step_update 帧) | **2** |
 | F | RAG(手册 / 工单向量化 + Chroma 集合 + §6.5.1 schema) | 4 |
 | G | 评估实验 + 论文章节(亮点六) | 5 |
-| **合计** | | **~31 天** |
+| **合计** | | **~36 天** |
 
 ---
 
