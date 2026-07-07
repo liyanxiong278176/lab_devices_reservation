@@ -100,7 +100,7 @@ const { reveal: _loginReveal } = useStagger(rootRef, { delay: 80 })
     <section class="login-form-wrap">
       <div class="login-card" data-stagger>
         <header class="login-card__head">
-          <h2 class="login-card__title">欢迎回来</h2>
+          <h2 class="login-card__title">欢迎回来 666</h2>
           <p class="login-card__subtitle">登录以继续</p>
         </header>
 
