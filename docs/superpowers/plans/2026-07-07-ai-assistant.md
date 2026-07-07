@@ -136,7 +136,9 @@
 - Create: `src/main/java/com/lab/reservation/ai/HelloWorldController.java`(临时冒烟用)
 - Modify: `docker-compose.yml`
 
-- [ ] **Step 1.1: 加 Spring AI 依赖到 pom.xml(B3 修复:含 `spring-ai-advisors-vector-store`)**
+- [ ] **Step 1.1: 加 Spring AI 依赖到 pom.xml(B-NEW-1/2 修复:Spring AI 1.0.6,与 Spring Boot 3.2.5 兼容)**
+
+**关键决策**:Spring AI 2.0.0 需要 Spring Boot 4.1.x,本项目 Spring Boot 是 3.2.5,**用 1.0.6**(已 GA,功能完整,artifact 名 `spring-ai-advisors-vector-store` 在 1.x 和 2.0.0-M8 是同一个名,2.0.0 GA 改名 `spring-ai-vector-store-advisor`)。
 
 在 `pom.xml` 的 `<dependencyManagement>` 段加 BOM(版本管理):
 
@@ -146,7 +148,7 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-bom</artifactId>
-            <version>2.0.0</version>
+            <version>1.0.6</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -154,7 +156,7 @@
 </dependencyManagement>
 ```
 
-在 `<dependencies>` 段加 4 个 starter + Bucket4j + Resilience4j(**注意加 `spring-ai-advisors-vector-store`,没有它 `QuestionAnswerAdvisor` import 失败**):
+在 `<dependencies>` 段加 4 个 starter + Bucket4j + Resilience4j:
 
 ```xml
 <dependency>
@@ -190,13 +192,13 @@ mvn dependency:resolve -DincludeScope=runtime 2>&1 | tail -20
 
 Expected: 看到 `spring-ai-starter-model-openai`, `spring-ai-starter-vector-store-chroma`, `spring-ai-advisors-vector-store`, `bucket4j_jdk17-redis` 四个新依赖已解析,无错误。
 
-**若 `spring-ai-bom:2.0.0` 解析失败(M9 修复)**:降级到 `1.0.6`(已 GA,功能相同,版本号稳定)。
+**版本不兼容信号**(B-NEW-1):若报 `NoSuchMethodError` / `ClassNotFoundException` 在 Spring AI 类中,说明 Spring AI 2.0.0 与 Spring Boot 3.2.5 不兼容,**回退到 1.0.6**。Step 1.1 已默认 1.0.6,正常不应出现。
 
 - [ ] **Step 1.3: 提交 pom.xml 改动**
 
 ```bash
 git add pom.xml
-git commit -m "build(ai-assistant): add Spring AI 2.0 + Bucket4j + Resilience4j deps"
+git commit -m "build(ai-assistant): add Spring AI 1.0.6 + Bucket4j + Resilience4j deps"
 ```
 
 - [ ] **Step 1.4: 创建 application-siliconflow.yml.example 模板**
@@ -1813,19 +1815,50 @@ public class RateLimitService {
 }
 ```
 
-- [ ] **Step 5.6: 加 `@CircuitBreaker` 到 `ChatClientConfig`(B5 修复:Resilience4j 实际使用)**
+- [ ] **Step 5.6: 新建 `SiliconFlowClient` wrapper service + 加 `@CircuitBreaker`(B5 + M-NEW-2 修复:CircuitBreaker 必须在实际调用的 service 方法上,不是 @Bean 工厂)**
 
-修改 `ChatClientConfig`,在硅基流动出口加 `@CircuitBreaker`:
+**为什么不能在 `@Bean` 工厂上**:`@CircuitBreaker` 是 AOP 拦截,**只在方法被外部调用时触发**。`chatClient(ChatClient.Builder builder)` 是工厂方法,本身不做网络请求,真正的 LLM 调用在 `chatClient.prompt().call().content()` —— AOP 拦截不到。
+
+**修复**:新建独立 `SiliconFlowClient` service,所有硅基流动调用都走它。
+
+`src/main/java/com/lab/reservation/ai/service/SiliconFlowClient.java`:
 
 ```java
-@Bean
-@io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker(name = "siliconflow", fallbackMethod = "fallbackChat")
-public ChatClient chatClient(ChatClient.Builder builder) { ... }
+package com.lab.reservation.ai.service;
 
-// fallback 方法签名要匹配
-public ChatClient fallbackChat(ChatClient.Builder builder, Throwable t) {
-    log.warn("SiliconFlow circuit breaker fallback triggered", t);
-    throw new RuntimeException("AI 助手暂时不可用,请稍后再试");
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+
+@Slf4j
+@Service
+public class SiliconFlowClient {
+
+    private final ChatClient chatClient;
+
+    public SiliconFlowClient(ChatClient chatClient) {
+        this.chatClient = chatClient;
+    }
+
+    /** 流式调用硅基流动,被 @CircuitBreaker 拦截 */
+    @CircuitBreaker(name = "siliconflow", fallbackMethod = "streamFallback")
+    public Flux<String> stream(String systemPrompt, java.util.List<Message> history, Object[] tools) {
+        return chatClient.prompt()
+                .system(systemPrompt)
+                .messages(history)
+                .tools(tools)
+                .stream()
+                .content();
+    }
+
+    /** fallback:签名要匹配(stream + Throwable),返回 empty Flux */
+    public Flux<String> streamFallback(String systemPrompt, java.util.List<Message> history, Object[] tools, Throwable t) {
+        log.warn("SiliconFlow circuit breaker fallback triggered", t);
+        return Flux.error(new RuntimeException("AI 助手暂时不可用,请稍后再试"));
+    }
 }
 ```
 
@@ -1842,27 +1875,74 @@ resilience4j:
         permitted-number-of-calls-in-half-open-state: 3
 ```
 
-- [ ] **Step 5.7: 修改 `JwtHandshakeHandler`,把 Principal 设为完整 `SecurityUserDetails`(B2 修复)**
+**调用方改动**:`AiAssistantService` 的 while-loop 改调 `siliconFlowClient.stream(...)` 而不是 `chatClient.prompt().stream()`。
+
+- [ ] **Step 5.7: 修改 `JwtHandshakeHandler`,把 Principal 设为 `WsUserPrincipal`(B2 + B-NEW-4 修复:不破现有通知通道)**
+
+**关键风险**(B-NEW-4):如果直接返回 `SecurityUserDetails` 作 Principal,其 `getName()` 返回 **username**(继承自 Spring `User` 默认实现),而现有 `NotificationServiceImpl.notify(...)` 调 `messagingTemplate.convertAndSendToUser(String.valueOf(userId), ...)` —— Spring 用 `Principal.getName()` 匹配 user destination prefix。**改错会打挂现有通知功能。**
+
+**修复**:新增 `WsUserPrincipal` 包装类,`getName()` 返回 `String.valueOf(userId)`:
+
+`src/main/java/com/lab/reservation/security/ws/WsUserPrincipal.java`(新文件):
+
+```java
+package com.lab.reservation.security.ws;
+
+import com.lab.reservation.security.SecurityUserDetails;
+import java.security.Principal;
+import java.util.Objects;
+
+/** STOMP Principal 包装:让 getName() 返回 userId(而非 username),不破坏现有通知通道 */
+public class WsUserPrincipal implements Principal {
+    private final Long userId;
+    private final SecurityUserDetails user;
+
+    public WsUserPrincipal(SecurityUserDetails user) {
+        this.user = user;
+        this.userId = user.getUserId();
+    }
+
+    @Override
+    public String getName() {
+        return String.valueOf(userId);  // 关键:与现有 NotificationServiceImpl.notify 一致
+    }
+
+    public Long getUserId() { return userId; }
+    public SecurityUserDetails getUser() { return user; }
+
+    @Override
+    public boolean equals(Object o) {
+        return o instanceof WsUserPrincipal p && Objects.equals(p.userId, this.userId);
+    }
+
+    @Override
+    public int hashCode() { return Objects.hash(userId); }
+}
+```
 
 修改 `src/main/java/com/lab/reservation/config/JwtHandshakeHandler.java`:
 
 ```java
 @Component
 public class JwtHandshakeHandler extends DefaultHandshakeHandler {
-    private final UserService userService;  // 新注入
+    private final CustomUserDetailsService userDetailsService;  // B-NEW-5 修复:用 UserDetailsService 不是 UserService
 
     @Override
-    protected Principal determineUser(HandshakeRequest request, Map<String, Object> attributes) {
-        String userId = (String) attributes.get(WS_USER_ID);
-        if (userId == null) return null;
-        // 查 SecurityUserDetails,设为 Principal
-        SecurityUserDetails user = userService.loadSecurityUserById(Long.parseLong(userId));
-        return user;
+    protected Principal determineUser(ServerHttpRequest request, WebSocketHandler wsHandler, Map<String, Object> attributes) {
+        // B-NEW-6 修复:Long 不是 String
+        Object uid = attributes.get(WS_USER_ID);
+        if (!(uid instanceof Long userId)) return null;
+        // 用 username 加载 SecurityUserDetails(现有 CustomUserDetailsService.loadUserByUsername 已知)
+        // 实际需要 userId→username 映射,这里简化为 SysUserMapper 查 username
+        SysUser sysUser = sysUserMapper.selectById(userId);
+        if (sysUser == null) return null;
+        SecurityUserDetails user = (SecurityUserDetails) userDetailsService.loadUserByUsername(sysUser.getUsername());
+        return new WsUserPrincipal(user);
     }
 }
 ```
 
-(在 `UserService` 加 `loadSecurityUserById(Long)` 方法,返回 SecurityUserDetails。若已存在类似方法,直接复用。)
+**依赖**:`CustomUserDetailsService` 已存在(在 `security/` 包);`SysUserMapper` 已存在(在 `mapper/` 包);`WsUserPrincipal` 新建在 `security/ws/` 包(与 `WsAuthHandshakeInterceptor` 同目录)。
 
 - [ ] **Step 5.8: 修改 `AiAssistantController`,Principal 直接是 SecurityUserDetails(B2 修复,移除 @AuthenticationPrincipal)**
 
@@ -1961,10 +2041,10 @@ public class AiAssistantService {
         List<ToolDefinition> tools = toolRegistry.availableFor(user);
         ToolCallback[] toolCallbacks = tools.stream()
                 .map(t -> MethodToolCallback.builder()
-                    .toolDefinition(ToolDefinition.builder()
+                    .toolDefinition(org.springframework.ai.tool.definition.ToolDefinition.builder()
                         .name(t.name())
                         .description(t.description())
-                        .inputSchema(...)  // 从 validator schema 生成
+                        .inputSchema(JsonSchemaGenerator.generateForMethodInput(t.method()))  // Spring AI 自带
                         .build())
                     .toolMethod(t.method())
                     .toolObject(t.bean())
@@ -1982,20 +2062,21 @@ public class AiAssistantService {
         AtomicBoolean cancelled = cancelFlags.computeIfAbsent(convId, k -> new AtomicBoolean(false));
         cancelled.set(false);
 
-        for (int turn = 0; turn < MAX_TURNS; turn++) {
-            if (cancelled.get()) {
-                frameService.push(convId, user, "step_update",
-                    Map.of("step_id", -1, "status", "failed", "text", "已取消"));
-                break;
-            }
+        try {
+            for (int turn = 0; turn < MAX_TURNS; turn++) {
+                if (cancelled.get()) {
+                    frameService.push(convId, user, "step_update",
+                        Map.of("step_id", -1, "status", "failed", "text", "已取消"));
+                    break;
+                }
 
-            List<Message> history = conversationService.buildPrompt(convId, text, user.getAuthorities());
+                List<Message> history = conversationService.buildPrompt(convId, text, user.getAuthorities());
 
-            // 用 ToolCallingAdvisor 让 Spring AI 自动 loop(单次 call 内可多次 tool_call)
-            ChatClient.RequestSpec spec = chatClient.prompt()
-                    .system(promptBuilder.build(extractRole(user)))
-                    .messages(history)
-                    .toolCallbacks(toolCallbacks);
+                // B-NEW-3 修复:.tools() 不是 .toolCallbacks();接受 ToolCallback[] 或 POJO
+                ChatClient.RequestSpec spec = chatClient.prompt()
+                        .system(promptBuilder.build(extractRole(user)))
+                        .messages(history)
+                        .tools(toolCallbacks);
 
             // 流式收集 + step_update 推送
             StringBuilder reply = new StringBuilder();
@@ -2032,6 +2113,10 @@ public class AiAssistantService {
 
         // 6. 推 suggestions(从 finalReply 提取)
         // (简化:生产用 LLM 输出 JSON 解析)
+        } finally {
+            // M-NEW-6 修复:清理 cancel flag,防止 ConcurrentHashMap 无限增长
+            cancelFlags.remove(convId);
+        }
     }
 
     public void handleCancelSession(SecurityUserDetails user, Long convId) {
