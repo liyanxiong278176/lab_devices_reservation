@@ -4,6 +4,10 @@ target/
 !**/src/test/**/target/
 .kotlin
 
+# IDE / IDEs / Superpowers worktrees
+.worktrees/
+worktrees/
+
 ### IntelliJ IDEA ###
 .idea/
 *.iws
