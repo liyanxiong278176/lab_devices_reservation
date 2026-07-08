@@ -18,6 +18,7 @@ public enum ResultCode {
     EXCEED_MAX_DURATION(2003, "超过单次最大可预约时长"),
     DEVICE_UNAVAILABLE(2004, "设备当前不可预约"),
     STATUS_TRANSITION_INVALID(2005, "预约状态不允许该操作"),
+    AI_UNAVAILABLE(2006, "AI 助手暂时不可用,请稍后再试"),
     BUSINESS_ERROR(5000, "业务异常");
 
     private final int code;

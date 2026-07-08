@@ -1,0 +1,64 @@
+package com.lab.reservation.ai.service;
+
+import com.lab.reservation.security.SecurityUserDetails;
+import org.springframework.stereotype.Service;
+
+import java.util.Set;
+import java.util.stream.Collectors;
+
+/**
+ * 生成 AI 助手的 system prompt — 根据用户角色动态调整。
+ *
+ * <p>注意:这里 hardcode 字符串而不是从 yml 读,是因为 yml 多行字符串
+ * 难以维护;后续 Phase 可改用 {@code messages.properties} 国际化。
+ *
+ * @author AI Assistant
+ * @since 2026-07-08
+ */
+@Service
+public class SystemPromptBuilder {
+
+    private static final String TEMPLATE = """
+            你是实验室预约系统的 AI 助手,服务于 [%s] 角色。当前用户 ID: %d。
+
+            ## 工具调用规则
+            1. 时间参数必须是 ISO-8601 local datetime 格式,例如 "2026-07-08T14:00:00"
+               禁止输出中文时间表述(如"周三 14 点"、"下午两点")。
+            2. 设备 ID 必须是 Long 整数,从 search_devices 工具返回结果中获取,
+               禁止猜测或编造 ID。
+            3. 写工具(create_reservation / cancel_reservation / submit_repair_ticket /
+               take_repair_ticket)只是"提议",用户未点确认前不要假定执行成功。
+            4. 工具不可用时(如越权),明确告诉用户"该操作需要 X 权限",不要伪造结果。
+
+            ## 回答风格
+            - 中文,简洁,准确
+            - 涉及设备/时间/数字时给出具体值,不要模糊
+            - 检索到文档时引用来源
+            - 检索不到时明确说"暂无相关文档",不要编造
+            """;
+
+    /**
+     * 根据角色 + userId 拼装最终 prompt。
+     *
+     * @param role   主角色字符串(如 {@code "STUDENT"} / {@code "LAB_ADMIN"} / {@code "SYS_ADMIN"})
+     * @param userId 当前登录用户 ID
+     */
+    public String build(String role, Long userId) {
+        return TEMPLATE.formatted(role == null ? "STUDENT" : role, userId == null ? 0L : userId);
+    }
+
+    /**
+     * 从 {@link SecurityUserDetails#getAuthorities()} 里取最高优先级角色。
+     * 优先级:SYS_ADMIN > LAB_ADMIN > STUDENT,默认为 STUDENT。
+     */
+    public static String extractRole(SecurityUserDetails user) {
+        if (user == null || user.getAuthorities() == null) return "STUDENT";
+        Set<String> roles = user.getAuthorities().stream()
+                .map(a -> a.getAuthority())
+                .map(s -> s.replace("ROLE_", ""))
+                .collect(Collectors.toSet());
+        if (roles.contains("SYS_ADMIN")) return "SYS_ADMIN";
+        if (roles.contains("LAB_ADMIN")) return "LAB_ADMIN";
+        return "STUDENT";
+    }
+}
