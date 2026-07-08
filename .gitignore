@@ -38,3 +38,6 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# AI assistant secrets (硅基流动 API key 等)
+src/main/resources/application-siliconflow.yml

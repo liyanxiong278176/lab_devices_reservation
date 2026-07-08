@@ -1,0 +1,31 @@
+spring:
+  ai:
+    openai:
+      base-url: https://api.siliconflow.cn/v1
+      api-key: REPLACE_ME_WITH_SILICONFLOW_API_KEY
+      chat:
+        options:
+          model: deepseek-ai/DeepSeek-V4-Flash
+          temperature: 0.3
+          max-tokens: 4096
+          stream-usage: true
+      embedding:
+        options:
+          model: BAAI/bge-m3
+          dimensions: 1024
+    vectorstore:
+      chroma:
+        url: http://chroma:8000
+        collection-name: lab_manuals
+        initialize-schema: true
+
+ai:
+  assistant:
+    ratelimit:
+      capacity: 20
+      refill-per-minute: 20
+    context-window-turns: 10
+    pending-timeout-minutes: 5
+    rag:
+      top-k: 5
+      similarity-threshold: 0.6
