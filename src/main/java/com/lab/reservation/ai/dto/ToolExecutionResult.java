@@ -5,7 +5,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * AI 工具调用的统一返回结构。
+ * 工具调用的返回信封,刻意与 common.result.Result 区分:
+ * AI 工具调用失败不应该触发全局业务异常,因为可能源于 LLM 编造参数或权限不足,
+ * 而非业务侧逻辑错误。
  *
  * <p>与 {@code com.lab.reservation.common.result.Result} 形态对齐但放在 ai 包内,
  * 因为 Tool 调用失败的处理策略和业务 API 略有差异(工具失败一般只记日志,

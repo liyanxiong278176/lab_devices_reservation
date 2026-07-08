@@ -1,7 +1,10 @@
 package com.lab.reservation.ai;
 
 import com.lab.reservation.ai.dto.ToolExecutionResult;
+import com.lab.reservation.aspect.Log;
 import com.lab.reservation.security.SecurityUserDetails;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -31,17 +34,26 @@ import java.util.Map;
  * @since 2026-07-08
  */
 @Slf4j
+@Tag(name = "AI 助手")
 @RestController
-@RequestMapping("/api/ai")
+@RequestMapping("/ai")
 public class HelloWorldController {
 
     private final ChatClient chatClient;
 
+    /**
+     * 显式构造器 + 单次 build():Spring AI 1.0.x 的 {@code ChatClientAutoConfiguration}
+     * 只暴露 {@code ChatClient.Builder} bean(没有现成的 {@code ChatClient}),
+     * 所以这里不能像其他 11 个 Controller 那样用 {@code @RequiredArgsConstructor}
+     * 直接注入 {@code ChatClient},必须在构造期 {@code builder.build()} 一次。
+     */
     public HelloWorldController(ChatClient.Builder builder) {
         this.chatClient = builder.build();
     }
 
+    @Operation(summary = "AI 冒烟测试")
     @PostMapping("/test")
+    @Log("AI 冒烟测试")
     public ToolExecutionResult test(
             @RequestBody Map<String, String> req,
             @AuthenticationPrincipal SecurityUserDetails user) {
