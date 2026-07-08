@@ -63,4 +63,19 @@ public class CustomUserDetailsService implements UserDetailsService {
         return new SecurityUserDetails(u.getId(), u.getUsername(), u.getPassword(),
                 enabled, u.getRealName(), roleCodes, permCodes);
     }
+
+    /**
+     * 通过 userId 直接加载 SecurityUserDetails — AI 助手 WS 握手用:
+     * JwtHandshakeHandler 已经在拦截器阶段拿到了 userId,无需再去解析 token。
+     */
+    public SecurityUserDetails loadSecurityUserById(Long userId) {
+        if (userId == null) {
+            throw new UsernameNotFoundException("userId is null");
+        }
+        SysUser u = userMapper.selectById(userId);
+        if (u == null) {
+            throw new UsernameNotFoundException("user not found: " + userId);
+        }
+        return (SecurityUserDetails) loadUserByUsername(u.getUsername());
+    }
 }
