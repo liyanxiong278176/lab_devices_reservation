@@ -24,6 +24,24 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+  chroma:
+    image: chromadb/chroma:1.0.0
+    container_name: lab-chroma
+    restart: unless-stopped
+    volumes:
+      - chroma_data:/chroma/chroma
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+      - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 volumes:
   mysql_data:
   redis_data:
+  chroma_data:
