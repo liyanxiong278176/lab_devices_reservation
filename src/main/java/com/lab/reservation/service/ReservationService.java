@@ -60,6 +60,24 @@ public interface ReservationService {
     IPage<ReservationVO> myReservations(Long currentUserId, ReservationStatus status, int page, int size);
 
     /**
+     * 按实验室查询预约（管理员 / 实验室负责人）。
+     *
+     * <p>服务端通过 {@code @PreAuthorize} 限制调用方角色；LAB_ADMIN 还需通过
+     * {@link com.lab.reservation.service.LabScopeHelper} 校验自辖范围,SYS_ADMIN 全局可见。
+     * labId 必传;status 可空(为空则全部状态);days 范围 [1, 365],超过按 365 截断并 clamp。
+     *
+     * <p>实现细节:预约行本身不带 lab_id(只通过 device_id 间接关联),所以会先取该 lab 下
+     * 全部 device.id,再对 reservation 做 device_id IN (...) 过滤;最后按 start_time 倒序分页。
+     *
+     * @param labId  实验室 ID
+     * @param status 状态过滤(null = 全部)
+     * @param days   最近 N 天
+     * @param ud     当前用户 — 必须是 LAB_ADMIN 或 SYS_ADMIN;否则被 @PreAuthorize 拒绝
+     * @return 预约列表(按开始时间倒序)
+     */
+    IPage<ReservationVO> queryByLab(Long labId, ReservationStatus status, int days, SecurityUserDetails ud);
+
+    /**
      * 预约详情（本人，或持有 device:approve 的管理员代查，或 SYS_ADMIN）。
      */
     ReservationVO detail(Long id, SecurityUserDetails ud);

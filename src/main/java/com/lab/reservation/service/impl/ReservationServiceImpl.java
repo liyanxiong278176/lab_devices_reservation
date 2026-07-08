@@ -16,6 +16,7 @@ import com.lab.reservation.mapper.ReservationItemMapper;
 import com.lab.reservation.mapper.ReservationMapper;
 import com.lab.reservation.mq.NotificationProducer;
 import com.lab.reservation.security.SecurityUserDetails;
+import com.lab.reservation.service.LabScopeHelper;
 import com.lab.reservation.service.ReservationLock;
 import com.lab.reservation.service.ReservationService;
 import com.lab.reservation.service.SlotCalculatorService;
@@ -24,12 +25,14 @@ import com.lab.reservation.vo.reservation.ReservationVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -62,6 +65,7 @@ public class ReservationServiceImpl implements ReservationService {
     private final SlotCalculatorService slotCalculator;
     private final NotificationProducer notificationProducer;
     private final ReservationLock reservationLock;
+    private final LabScopeHelper labScopeHelper;
 
     /** 签到宽限分钟（now 早于 startTime − grace 视为未到时间）。默认 0。 */
     @Value("${lab.slot.check-in-grace-minutes:0}")
@@ -269,6 +273,47 @@ public class ReservationServiceImpl implements ReservationService {
         qw.orderByDesc(Reservation::getCreatedAt);
 
         IPage<Reservation> rp = reservationMapper.selectPage(p, qw);
+        return rp.convert(this::toVO);
+    }
+
+    @Override
+    @PreAuthorize("hasAnyRole('LAB_ADMIN','SYS_ADMIN')")
+    public IPage<ReservationVO> queryByLab(Long labId, ReservationStatus status, int days, SecurityUserDetails ud) {
+        if (labId == null || labId <= 0) {
+            throw new BusinessException(ResultCode.PARAM_INVALID);
+        }
+        if (days <= 0 || days > 365) {
+            throw new BusinessException(ResultCode.PARAM_INVALID);
+        }
+
+        // 范围校验:LAB_ADMIN 只能查自辖 lab;SYS_ADMIN 通过(null 表示不限)
+        List<Long> managedLabIds = labScopeHelper.managedLabIds(ud);
+        if (managedLabIds != null && !managedLabIds.contains(labId)) {
+            throw new BusinessException(ResultCode.FORBIDDEN);
+        }
+
+        // 预约表不带 lab_id,通过 device.lab_id 间接过滤;先取 lab 下全部 device.id
+        List<Device> devices = deviceMapper.selectList(new LambdaQueryWrapper<Device>()
+                .eq(Device::getLabId, labId)
+                .select(Device::getId));
+        if (devices == null || devices.isEmpty()) {
+            // lab 下没有任何设备 → 返回空页(避免 IN () 空集合语法错误,某些 DB 拒绝)
+            IPage<ReservationVO> empty = new Page<>(1, 1);
+            empty.setRecords(Collections.emptyList());
+            empty.setTotal(0L);
+            return empty;
+        }
+        Set<Long> deviceIds = devices.stream().map(Device::getId).collect(Collectors.toSet());
+
+        LocalDateTime since = LocalDateTime.now().minusDays(days);
+        int pageSize = Math.min(Math.max(days * 20, 1), 1000);
+        LambdaQueryWrapper<Reservation> qw = new LambdaQueryWrapper<Reservation>()
+                .in(Reservation::getDeviceId, deviceIds)
+                .ge(Reservation::getStartTime, since)
+                .orderByDesc(Reservation::getStartTime)
+                .eq(status != null, Reservation::getStatus, status == null ? null : status.name());
+
+        IPage<Reservation> rp = reservationMapper.selectPage(new Page<>(1, pageSize), qw);
         return rp.convert(this::toVO);
     }
 
