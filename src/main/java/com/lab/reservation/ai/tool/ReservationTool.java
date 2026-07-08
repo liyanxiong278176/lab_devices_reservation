@@ -122,8 +122,8 @@ public class ReservationTool {
         dto.setDeviceId(deviceId);
         dto.setStartTime(start);
         dto.setEndTime(end);
-        // purpose 可空;服务端 DTO 标了 @NotBlank,但 ReservationServiceImpl.create 不读
-        // 该字段 — 仅用于通知文本生成。这里用空白字符串占位,服务端不依赖。
+        // purpose 是 @NotBlank 但仅在 @Valid (controller 层) 触发;
+        // AI 工具路径绕过 controller,需要兜底。设为 "(无)" 让通知/列表文本可读。
         dto.setPurpose(purpose == null || purpose.isBlank() ? "(无)" : purpose.trim());
 
         try {

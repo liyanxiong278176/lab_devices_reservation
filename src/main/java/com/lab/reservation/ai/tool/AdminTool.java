@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
@@ -79,6 +80,14 @@ public class AdminTool {
             log.warn("queryLabReservations rejected user={} labId={}: code={} msg={}",
                     user.getUserId(), labId, e.getCode(), e.getMessage());
             return ToolExecutionResult.fail(String.valueOf(e.getCode()), e.getMessage());
+        } catch (AccessDeniedException e) {
+            // @PreAuthorize("hasAnyRole('LAB_ADMIN','SYS_ADMIN')") 拒绝
+            // (学生身份误调管理员工具) 抛 Spring Security 的 AccessDeniedException,
+            // 而非 BusinessException,这里单独捕获并转成 fail 信封,而不是
+            // 让 stack trace 冒到 LLM。
+            log.warn("queryLabReservations denied user={} labId={}: {}",
+                    user.getUserId(), labId, e.getMessage());
+            return ToolExecutionResult.fail("FORBIDDEN", "无权查询该实验室");
         }
     }
 

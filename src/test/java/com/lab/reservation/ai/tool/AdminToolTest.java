@@ -3,6 +3,7 @@ package com.lab.reservation.ai.tool;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.lab.reservation.ai.dto.ToolExecutionResult;
+import com.lab.reservation.ai.security.SecurityUserDetailsForTests;
 import com.lab.reservation.common.result.ResultCode;
 import com.lab.reservation.entity.enums.ReservationStatus;
 import com.lab.reservation.exception.BusinessException;
@@ -189,5 +190,30 @@ class AdminToolTest {
         org.junit.jupiter.api.Assertions.assertThrows(
                 IllegalStateException.class,
                 () -> adminTool.queryLabReservations(3L, null, 7));
+    }
+
+    @Test
+    void queryLabReservations_access_denied_returns_FORBIDDEN_envelope() {
+        // 服务端 @PreAuthorize("hasAnyRole('LAB_ADMIN','SYS_ADMIN')") 拒绝学生身份
+        // → 抛 org.springframework.security.access.AccessDeniedException(RuntimeException)
+        // → 不被 catch (BusinessException) 接住。工具层须单独捕获并返回 fail 信封。
+        ReservationService rs = mock(ReservationService.class);
+        org.mockito.Mockito.doThrow(new org.springframework.security.access.AccessDeniedException("no"))
+                .when(rs).queryByLab(any(), any(), anyInt(), any());
+        AdminTool tool = new AdminTool(rs);
+
+        // 模拟学生身份 — 触发服务端 @PreAuthorize 拒绝
+        SecurityUserDetails student = SecurityUserDetailsForTests.student();
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(student, "password", student.getAuthorities()));
+        try {
+            ToolExecutionResult r = tool.queryLabReservations(3L, null, 7);
+
+            assertThat(r.isOk()).isFalse();
+            assertThat(r.getCode()).isEqualTo("FORBIDDEN");
+            assertThat(r.getMsg()).contains("无权查询该实验室");
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
     }
 }
