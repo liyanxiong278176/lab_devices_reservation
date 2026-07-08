@@ -24,6 +24,13 @@ public class AiProperties {
     /** 审批 pending 状态超过此分钟数未处理 → 自动取消。 */
     private int pendingTimeoutMinutes = 5;
 
+    /**
+     * pending 超时扫描间隔(ms),由 {@code AiActionTimeoutScheduler#fixedDelayString}
+     * 占位符 {@code ${ai.assistant.pending-timeout-check-ms:60000}} 读取。
+     * 默认 60000ms = 60s;同时在 yml 里可被覆盖无需改代码。
+     */
+    private long pendingTimeoutCheckMs = 60000L;
+
     /** RAG 检索参数。 */
     private Rag rag = new Rag();
 
