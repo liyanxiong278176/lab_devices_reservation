@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
 
 /**
  * RAG 摄入服务 — 把设备手册 / FAQ 切块后写入 Chroma。
@@ -49,16 +50,19 @@ public class RagIngestService {
     public List<Document> splitIntoChunks(String text, String docId, Long deviceId) {
         List<Document> raw = splitter.split(new Document(text));
         int total = raw.size();
-        return raw.stream().map(d -> {
-            Map<String, Object> meta = new HashMap<>();
-            meta.put("doc_id", docId);
-            meta.put("doc_type", "manual");
-            meta.put("device_id", deviceId);
-            meta.put("ingested_at", Instant.now().toString());
-            meta.put("chunk_index", raw.indexOf(d));
-            meta.put("chunk_total", total);
-            return new Document(d.getText(), meta);
-        }).toList();
+        return IntStream.range(0, total)
+                .mapToObj(i -> {
+                    Document d = raw.get(i);
+                    Map<String, Object> meta = new HashMap<>();
+                    meta.put("doc_id", docId);
+                    meta.put("doc_type", "manual");
+                    meta.put("device_id", deviceId);
+                    meta.put("ingested_at", Instant.now().toString());
+                    meta.put("chunk_index", i);
+                    meta.put("chunk_total", total);
+                    return new Document(d.getText(), meta);
+                })
+                .toList();
     }
 
     /** 摄入一段文本(管理员调用)。返回写入的 chunk 数。 */

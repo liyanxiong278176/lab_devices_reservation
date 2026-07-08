@@ -1,9 +1,12 @@
 package com.lab.reservation.ai;
 
+import com.lab.reservation.ai.dto.RagIngestRequestDTO;
 import com.lab.reservation.ai.service.RagIngestService;
 import com.lab.reservation.aspect.Log;
+import com.lab.reservation.common.result.Result;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -52,11 +55,8 @@ public class AdminRagController {
     @Operation(summary = "摄入设备手册")
     @Log("RAG 摄入")
     @PostMapping("/ingest")
-    public Map<String, Object> ingest(@RequestBody Map<String, Object> req) {
-        String docId = (String) req.get("doc_id");
-        String text = (String) req.get("text");
-        Long deviceId = ((Number) req.get("device_id")).longValue();
-        int chunks = ingestService.ingest(docId, text, deviceId);
-        return Map.of("ok", true, "chunks_ingested", chunks);
+    public Result<Map<String, Object>> ingest(@Valid @RequestBody RagIngestRequestDTO req) {
+        int chunks = ingestService.ingest(req.getDocId(), req.getText(), req.getDeviceId());
+        return Result.ok(Map.of("ok", true, "chunks_ingested", chunks));
     }
 }
