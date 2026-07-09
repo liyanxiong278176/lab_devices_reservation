@@ -927,13 +927,13 @@ chroma:
   volumes:
     - chroma_data:/chroma/chroma
   ports:
-    - "127.0.0.1:8000:8000"   # localhost-only, prod 用内部网络
+    - "127.0.0.1:9000:9000"   # localhost-only, prod 用内部网络(端口 9000 不是默认 8000,跟本机其余服务错开)
   environment:
     - IS_PERSISTENT=TRUE
     - PERSIST_DIRECTORY=/chroma/chroma
     - ANONYMIZED_TELEMETRY=FALSE
   healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+    test: ["CMD", "curl", "-f", "http://localhost:9000/api/v2/heartbeat"]
     interval: 30s
     timeout: 5s
     retries: 3
@@ -944,7 +944,7 @@ chroma:
 ```bash
 docker compose up -d chroma        # 仅启 chroma（开发期）
 sleep 5
-curl -s http://localhost:8000/api/v2/heartbeat   # 期望 {"nanosecond heartbeat": N}
+curl -s http://localhost:9000/api/v2/heartbeat   # 期望 {"nanosecond heartbeat": N}
 ```
 
 数据迁移注意：
