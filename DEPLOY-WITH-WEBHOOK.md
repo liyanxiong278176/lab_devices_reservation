@@ -927,7 +927,7 @@ chroma:
   volumes:
     - chroma_data:/chroma/chroma
   ports:
-    - "127.0.0.1:9000:9000"   # localhost-only, prod 用内部网络(端口 9000 不是默认 8000,跟本机其余服务错开)
+    - "127.0.0.1:9000:8000"   # 容器内 Chroma 默认监听 8000;host 暴露为 9000 避开常用端口
   environment:
     - IS_PERSISTENT=TRUE
     - PERSIST_DIRECTORY=/chroma/chroma

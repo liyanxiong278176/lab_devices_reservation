@@ -21,7 +21,9 @@ spring:
           dimensions: 1024
     vectorstore:
       chroma:
-        url: http://chroma:8000
+        client:
+          host: http://localhost
+          port: 9000
         collection-name: lab_manuals
         initialize-schema: true
 

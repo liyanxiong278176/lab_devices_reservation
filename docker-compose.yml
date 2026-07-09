@@ -31,7 +31,7 @@ services:
     volumes:
       - chroma_data:/chroma/chroma
     ports:
-      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9000:8000"
     environment:
       - IS_PERSISTENT=TRUE
       - PERSIST_DIRECTORY=/chroma/chroma
