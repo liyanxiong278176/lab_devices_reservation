@@ -30,27 +30,27 @@ public class AiAssistantController {
 
     private final AiAssistantService service;
 
-    @MessageMapping("/app/assistant/send")
+    @MessageMapping("/assistant/send")
     public void onSend(WsClientMsg.UserMessage msg, Principal principal) {
         service.handleUserMessage(toUser(principal), msg.convId(), msg.text());
     }
 
-    @MessageMapping("/app/assistant/confirm")
+    @MessageMapping("/assistant/confirm")
     public void onConfirm(WsClientMsg.ConfirmAction msg, Principal principal) {
         service.handleConfirm(toUser(principal), msg.actionId());
     }
 
-    @MessageMapping("/app/assistant/cancel")
+    @MessageMapping("/assistant/cancel")
     public void onCancel(WsClientMsg.CancelAction msg, Principal principal) {
         service.handleCancel(toUser(principal), msg.actionId());
     }
 
-    @MessageMapping("/app/assistant/resync")
+    @MessageMapping("/assistant/resync")
     public void onResync(WsClientMsg.Resync msg, Principal principal) {
         service.handleResync(toUser(principal), msg.convId(), msg.lastSeq());
     }
 
-    @MessageMapping("/app/assistant/cancel_session")
+    @MessageMapping("/assistant/cancel_session")
     public void onCancelSession(WsClientMsg.CancelSession msg, Principal principal) {
         service.handleCancelSession(toUser(principal), msg.convId());
     }

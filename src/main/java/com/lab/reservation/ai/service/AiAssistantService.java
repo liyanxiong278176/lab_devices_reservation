@@ -7,10 +7,7 @@ import com.lab.reservation.security.SecurityUserDetails;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.tool.definition.DefaultToolDefinition;
-import org.springframework.ai.tool.definition.ToolDefinition;
-import org.springframework.ai.tool.method.MethodToolCallback;
-import org.springframework.ai.util.json.schema.JsonSchemaGenerator;
+import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -74,6 +71,16 @@ public class AiAssistantService {
             return;
         }
 
+        // STOMP 入口的 Principal 不会自动写到 SecurityContextHolder;tool 内部用
+        // SecurityContextHolder.getContext() 拿当前用户,所以这里显式塞进去,流式调用完
+        // finally 清理,避免污染其他 inbound 线程。
+        org.springframework.security.core.Authentication prev =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        org.springframework.security.authentication.UsernamePasswordAuthenticationToken auth =
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        user, null, user.getAuthorities());
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);
+
         // 2. 会话:null 新建,非 null 校验存在;用一个 final 引用,避免 lambda 闭包限制
         final Long convId;
         if (convIdIn == null) {
@@ -90,6 +97,8 @@ public class AiAssistantService {
             convId = convIdIn;
         }
 
+        try {
+
         // 3. step_update 起步
         frameService.push(convId, user, "step_update",
                 Map.of("step_id", 0, "status", "started", "text", "正在处理您的请求"));
@@ -101,59 +110,68 @@ public class AiAssistantService {
         AtomicBoolean cancelled = cancelFlags.computeIfAbsent(convId, k -> new AtomicBoolean(false));
         cancelled.set(false);
 
-        try {
-            for (int turn = 0; turn < MAX_TURNS; turn++) {
-                if (cancelled.get()) {
-                    frameService.push(convId, user, "step_update",
-                            Map.of("step_id", -1, "status", "cancelled", "text", "已取消"));
-                    break;
-                }
-
-                List<ToolRegistry.ToolDefinition> tools = toolRegistry.availableFor(user);
-                Object[] toolCallbacks = tools.stream().map(this::toToolCallback).toArray();
-
-                List<Message> history = conversationService.buildPrompt(convId, text);
-
-                StringBuilder reply = new StringBuilder();
-                long t0 = System.currentTimeMillis();
-                siliconFlowClient.stream(
-                        promptBuilder.build(SystemPromptBuilder.extractRole(user), user.getUserId()),
-                        history,
-                        toolCallbacks
-                ).doOnNext(chunk -> {
-                    // 取消后跳过 delta 推送
-                    if (cancelled.get()) return;
-                    reply.append(chunk);
-                    frameService.push(convId, user, "delta", Map.of("text", chunk));
-                }).onErrorResume(err -> {
-                    log.warn("SiliconFlow call failed for conv={}: {}", convId, err.getMessage());
-                    frameService.push(convId, user, "error",
-                            Map.of("code", "AI_UNAVAILABLE", "msg", "AI 助手暂时不可用,请稍后再试"));
-                    return Flux.empty();
-                }).blockLast();
-                long costMs = System.currentTimeMillis() - t0;
-
-                String finalReply = reply.toString();
-                if (finalReply.isBlank()) break;
-
-                // 持久化 assistant 回复
-                conversationService.appendMessage(convId, "assistant", finalReply, null, estimateTokens(finalReply));
-
-                // step_update 完成 + assistant_done + suggestions
+        for (int turn = 0; turn < MAX_TURNS; turn++) {
+            if (cancelled.get()) {
                 frameService.push(convId, user, "step_update",
-                        Map.of("step_id", turn, "status", "completed",
-                                "text", "本轮处理完成", "duration_ms", costMs));
-                frameService.push(convId, user, "assistant_done",
-                        Map.of("text", finalReply, "tool_calls", List.of()));
-                frameService.push(convId, user, "suggestions",
-                        Map.of("items", List.of(
-                                Map.of("label", "查看我的预约", "value", "查看我的预约"),
-                                Map.of("label", "推荐设备", "value", "推荐设备"))));
-                // 当前阶段没接工具循环,1 轮后退出
+                        Map.of("step_id", -1, "status", "cancelled", "text", "已取消"));
                 break;
             }
+
+            List<ToolRegistry.ToolDefinition> tools = toolRegistry.availableFor(user);
+            // Spring AI 1.0.6 ChatClient 期待 ToolCallback[] 传 .toolCallbacks() (不是 .tools())。
+            // MethodToolCallbackProvider 反射每个 bean 上的 @Tool 方法生成 ToolCallback 列表。
+            Object[] beans = tools.stream().map(t -> t.bean()).distinct().toArray();
+            org.springframework.ai.tool.ToolCallback[] toolCallbacks =
+                    org.springframework.ai.tool.method.MethodToolCallbackProvider.builder()
+                            .toolObjects(beans)
+                            .build()
+                            .getToolCallbacks();
+
+            List<Message> history = conversationService.buildPrompt(convId, text);
+
+            StringBuilder reply = new StringBuilder();
+            long t0 = System.currentTimeMillis();
+            siliconFlowClient.stream(
+                    promptBuilder.build(SystemPromptBuilder.extractRole(user), user.getUserId()),
+                    history,
+                    toolCallbacks
+            ).doOnNext(chunk -> {
+                // 取消后跳过 delta 推送
+                if (cancelled.get()) return;
+                reply.append(chunk);
+                frameService.push(convId, user, "delta", Map.of("text", chunk));
+            }).onErrorResume(err -> {
+                log.warn("SiliconFlow call failed for conv={}: {}", convId, err.getMessage());
+                frameService.push(convId, user, "error",
+                        Map.of("code", "AI_UNAVAILABLE", "msg", "AI 助手暂时不可用,请稍后再试"));
+                return Flux.empty();
+            }).blockLast();
+            long costMs = System.currentTimeMillis() - t0;
+
+            String finalReply = reply.toString();
+            if (finalReply.isBlank()) break;
+
+            // 持久化 assistant 回复
+            conversationService.appendMessage(convId, "assistant", finalReply, null, estimateTokens(finalReply));
+
+            // step_update 完成 + assistant_done + suggestions
+            frameService.push(convId, user, "step_update",
+                    Map.of("step_id", turn, "status", "completed",
+                            "text", "本轮处理完成", "duration_ms", costMs));
+            frameService.push(convId, user, "assistant_done",
+                    Map.of("text", finalReply, "tool_calls", List.of()));
+            frameService.push(convId, user, "suggestions",
+                    Map.of("items", List.of(
+                            Map.of("label", "查看我的预约", "value", "查看我的预约"),
+                            Map.of("label", "推荐设备", "value", "推荐设备"))));
+            // 当前阶段没接工具循环,1 轮后退出
+            break;
+        }
         } finally {
             cancelFlags.remove(convId);
+            // 恢复 SecurityContext 到调用前的状态,避免污染后续 inbound 任务。
+            org.springframework.security.core.context.SecurityContextHolder.getContext()
+                    .setAuthentication(prev);
         }
     }
 
@@ -184,29 +202,15 @@ public class AiAssistantService {
     /** 中断当前会话的流式生成。 */
     public void handleCancelSession(SecurityUserDetails user, Long convId) {
         cancelFlags.computeIfAbsent(convId, k -> new AtomicBoolean(false)).set(true);
+        // 推一个 step_update cancelled 帧给前端,触发 store.state 走 cancelled 分支回到 idle。
+        frameService.push(convId, user, "step_update",
+                Map.of("step_id", -1, "status", "cancelled", "text", "已取消"));
         log.info("user {} cancelled session {}", user.getUserId(), convId);
     }
 
     // ------------------------------------------------------------------
     // 内部工具
     // ------------------------------------------------------------------
-
-    /**
-     * 把内部 {@link ToolRegistry.ToolDefinition} 包成 Spring AI 的
-     * {@link MethodToolCallback}(可被 ChatClient 反射调用)。
-     */
-    private Object toToolCallback(ToolRegistry.ToolDefinition def) {
-        ToolDefinition aiDef = DefaultToolDefinition.builder()
-                .name(def.name())
-                .description(def.description())
-                .inputSchema(JsonSchemaGenerator.generateForMethodInput(def.method()))
-                .build();
-        return MethodToolCallback.builder()
-                .toolDefinition(aiDef)
-                .toolMethod(def.method())
-                .toolObject(def.bean())
-                .build();
-    }
 
     /** 简单 token 估算:中英文混合按 length/2 算下界,空串给 0。 */
     private int estimateTokens(String s) {

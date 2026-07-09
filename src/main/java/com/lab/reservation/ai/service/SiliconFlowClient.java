@@ -6,6 +6,7 @@ import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -46,13 +47,26 @@ public class SiliconFlowClient {
     @CircuitBreaker(name = "siliconflow", fallbackMethod = "streamFallback")
     public Flux<String> stream(String systemPrompt,
                                List<Message> history,
-                               Object... toolCallbacks) {
-        return chatClient.prompt()
+                               ToolCallback... toolCallbacks) {
+        // Spring AI 1.0.6 + OpenAI starter:用 .stream() 内部会触发
+        // "Removing streamOptions from the request as it is not a streaming request"
+        // 警告并退化成非流式 — tool callback + 1.0.6 chatClient.stream() 配合有问题。
+        // 这里用 .call() 拿完整 reply,再以小 chunk 推到调用方,模拟流式断点体验。
+        String reply = chatClient.prompt()
                 .system(systemPrompt)
                 .messages(history)
-                .tools(toolCallbacks)
-                .stream()
+                .toolCallbacks(toolCallbacks)
+                .call()
                 .content();
+        if (reply == null || reply.isEmpty()) {
+            return Flux.empty();
+        }
+        // 按 12 字一块切,推给前端的 delta frame,触发打字机效果。
+        java.util.List<String> chunks = new java.util.ArrayList<>();
+        for (int i = 0; i < reply.length(); i += 12) {
+            chunks.add(reply.substring(i, Math.min(i + 12, reply.length())));
+        }
+        return Flux.fromIterable(chunks);
     }
 
     /**
@@ -62,7 +76,7 @@ public class SiliconFlowClient {
     @SuppressWarnings("unused")
     public Flux<String> streamFallback(String systemPrompt,
                                        List<Message> history,
-                                       Object[] toolCallbacks,
+                                       ToolCallback[] toolCallbacks,
                                        Throwable t) {
         log.warn("SiliconFlow circuit breaker fallback triggered: {}", t.getMessage());
         return Flux.error(new BusinessException(ResultCode.AI_UNAVAILABLE));

@@ -90,7 +90,7 @@ class AiAssistantServiceTest {
         when(registry.availableFor(any())).thenReturn(List.of());
         when(conv.buildPrompt(anyLong(), anyString())).thenReturn(List.of());
         when(prompt.build(anyString(), anyLong())).thenReturn("system");
-        when(llm.stream(anyString(), any(), any(Object[].class))).thenReturn(Flux.empty());
+        when(llm.stream(anyString(), any(), org.mockito.ArgumentMatchers.<org.springframework.ai.tool.ToolCallback>any())).thenReturn(Flux.empty());
 
         svc.handleUserMessage(student(), null, "hi");
 

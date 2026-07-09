@@ -58,8 +58,14 @@ public class AiFrameService {
         if (seq == null) {
             seq = 1L;
         }
-        payload.put("seq", seq);
-        payload.put("conv_id", convId);
+        // 调用方常传 Map.of(...) 不可变 map;copy 一份 mutable 后再写 seq/conv_id + type。
+        // type 字段是前端 WsServerFrame union 的 discriminator,必须放在 payload 里,前端
+        // switch (frame.type) 才能正确路由;frame_type 只用来落 ai_ws_frame 表不参与推送。
+        Map<String, Object> mutable = new HashMap<>(payload);
+        mutable.put("type", type);
+        mutable.put("seq", seq);
+        mutable.put("conv_id", convId);
+        payload = mutable;
 
         AiWsFrame f = new AiWsFrame();
         f.setConversationId(convId);
