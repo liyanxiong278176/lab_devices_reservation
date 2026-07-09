@@ -3,7 +3,7 @@ spring:
     openai:
       # 聊天模型:DeepSeek OpenAI 兼容端点
       # 注册: https://platform.deepseek.com → API Keys
-      base-url: https://api.deepseek.com/v1
+      base-url: https://api.deepseek.com
       api-key: REPLACE_ME_WITH_DEEPSEEK_API_KEY
       chat:
         options:
@@ -14,7 +14,7 @@ spring:
       # 嵌入模型:硅基流动(bge-m3 中文 embedding 强)
       # 注册: https://cloud.siliconflow.cn → API 密钥
       embedding:
-        base-url: https://api.siliconflow.cn/v1
+        base-url: https://api.siliconflow.cn
         api-key: REPLACE_ME_WITH_SILICONFLOW_API_KEY
         options:
           model: BAAI/bge-m3
