@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { Close, Promotion, ChatLineSquare } from '@element-plus/icons-vue'
+import { Close, Promotion, ChatLineSquare, VideoPause } from '@element-plus/icons-vue'
 import { useAiStore } from '@/stores/ai'
 import MessageCard from './MessageCard.vue'
 import ConfirmationCard from './ConfirmationCard.vue'
@@ -33,6 +33,10 @@ async function send() {
   inputText.value = ''
   store.send(text)
   await scrollToBottom()
+}
+
+function stop() {
+  store.cancelSession()
 }
 
 function onConfirm(actionId: number) {
@@ -137,14 +141,24 @@ function onSuggestionClick(value: string) {
             ref="inputRef"
             v-model="inputText"
             placeholder="输入消息,Enter 发送,Shift+Enter 换行"
-            :disabled="store.state === 'sending' || store.state === 'streaming'"
+            :disabled="store.state === 'sending' || store.state === 'streaming' || store.state === 'step_running' || store.state === 'executing'"
             rows="2"
             @keydown="onKeydown"
           />
           <el-button
+            v-if="store.state === 'sending' || store.state === 'streaming' || store.state === 'step_running' || store.state === 'executing'"
+            type="danger"
+            plain
+            :icon="VideoPause"
+            title="停止当前 AI 任务"
+            @click="stop"
+          >
+            停止
+          </el-button>
+          <el-button
             type="primary"
             :icon="Promotion"
-            :disabled="!inputText.trim() || store.state === 'sending' || store.state === 'streaming'"
+            :disabled="!inputText.trim() || store.state === 'sending' || store.state === 'streaming' || store.state === 'step_running' || store.state === 'executing'"
             @click="send"
           >
             发送
