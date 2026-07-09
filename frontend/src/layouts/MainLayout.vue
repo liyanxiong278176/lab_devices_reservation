@@ -8,6 +8,8 @@ import { useAppStore } from '@/stores/app'
 import { useNotificationStore } from '@/stores/notification'
 import { connectWs, disconnectWs } from '@/composables/useWebSocket'
 import AiAssistant from '@/components/ai/AiAssistant.vue'
+import AuroraOverlay from '@/components/ai/AuroraOverlay.vue'
+import ColorCursor from '@/components/ai/ColorCursor.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -121,6 +123,8 @@ function onLogout() {
     </el-container>
 
     <AiAssistant />
+    <AuroraOverlay />
+    <ColorCursor />
   </el-container>
 </template>
 

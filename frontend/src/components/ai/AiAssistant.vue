@@ -4,6 +4,8 @@ import { Close, Promotion, ChatLineSquare } from '@element-plus/icons-vue'
 import { useAiStore } from '@/stores/ai'
 import MessageCard from './MessageCard.vue'
 import ConfirmationCard from './ConfirmationCard.vue'
+import StepTimelineCard from './StepTimelineCard.vue'
+import SuggestionRow from './SuggestionRow.vue'
 
 const store = useAiStore()
 
@@ -121,19 +123,14 @@ function onSuggestionClick(value: string) {
         </div>
 
         <div v-if="store.state === 'step_running' || store.state === 'streaming'" class="ai-step-bar">
-          {{ store.currentStepUpdates[store.currentStepUpdates.length - 1]?.text ?? '处理中…' }}
+          <StepTimelineCard :steps="store.currentStepUpdates" />
         </div>
 
-        <div v-if="store.currentSuggestions.length > 0" class="ai-suggestions">
-          <button
-            v-for="s in store.currentSuggestions"
-            :key="s.value"
-            class="ai-suggestion-chip"
-            @click="onSuggestionClick(s.value)"
-          >
-            {{ s.label }}
-          </button>
-        </div>
+        <SuggestionRow
+          v-if="store.currentSuggestions.length > 0"
+          :items="store.currentSuggestions"
+          @pick="onSuggestionClick"
+        />
 
         <footer class="ai-input-bar">
           <textarea
