@@ -21,7 +21,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'http://localhost:8080', changeOrigin: true },
+      // AI 助手与通知共用 /api/ws SockJS 端点,必须 ws upgrade 透传,
+      // 否则浏览器跨源 ws upgrade 到 :8080 被 CORS 拒,且 vite 缺 ws:true 也不会升级。
+      '/api': { target: 'http://localhost:8080', changeOrigin: true, ws: true },
       '/ws': { target: 'http://localhost:8080', ws: true, changeOrigin: true },
     },
   },

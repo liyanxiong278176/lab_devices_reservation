@@ -7,8 +7,9 @@ import type { WsClientMsg, WsServerFrame } from '@/types/ai'
  * AI 助手 STOMP 客户端 — 复用 /api/ws endpoint (与通知同 endpoint),
  * 但走独立的 STOMP subscription + send path。
  *
- * <p>WS URL pattern 跟 useWebSocket.ts 一致:dev 用 VITE_WS_BASE 直连,
- * prod 用 window.location 同源 /api/ws (nginx 反代)。
+ * <p>WS URL pattern 跟 useWebSocket.ts 一致:VITE_WS_BASE 留空时走同源
+ * window.location,经 vite dev server proxy(配 ws:true)到 :8080,避免跨源
+ * ws upgrade 失败。生产经 nginx 反代同样同源。
  *
  * <p>JWT refresh 后调 reconnect(newToken) 重建连接。
  */
@@ -41,7 +42,7 @@ export function connectAiWs(onFrame: (frame: WsServerFrame) => void) {
           const frame = JSON.parse(msg.body) as WsServerFrame
           _onFrame?.(frame)
         } catch (e) {
-          console.warn('[AI ws] frame parse failed', e)
+          // 静默 — 单条坏帧不打扰用户
         }
       })
     },
