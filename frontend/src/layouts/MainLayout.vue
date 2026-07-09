@@ -7,6 +7,7 @@ import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
 import { useNotificationStore } from '@/stores/notification'
 import { connectWs, disconnectWs } from '@/composables/useWebSocket'
+import AiAssistant from '@/components/ai/AiAssistant.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -118,6 +119,8 @@ function onLogout() {
         <router-view />
       </el-main>
     </el-container>
+
+    <AiAssistant />
   </el-container>
 </template>
 
