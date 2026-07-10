@@ -176,7 +176,8 @@ class LlmClientTest {
     void callOnce_returns_chatResponse() {
         AssistantMessage am = new AssistantMessage("hi");
         ChatResponse expected = new ChatResponse(List.of(new Generation(am)));
-        when(chatClient.prompt(any()).system(any()).messages(anyList()).options(any()).call().chatResponse())
+        // 注意:实现调 cc.prompt() 无参;deep-stubs 需匹配无参重载
+        when(chatClient.prompt().system(any()).messages(anyList()).options(any()).call().chatResponse())
                 .thenReturn(expected);
 
         ChatResponse got = llm.callOnce("sys", List.of(new UserMessage("hi")), chatClient, List.of());
@@ -186,7 +187,7 @@ class LlmClientTest {
 
     @Test
     void streamFinal_returns_flux_content() {
-        when(chatClient.prompt(any()).system(any()).messages(anyList()).stream().content())
+        when(chatClient.prompt().system(any()).messages(anyList()).stream().content())
                 .thenReturn(Flux.just("a", "b", "c"));
 
         List<String> out = llm.streamFinal("sys", List.of(new UserMessage("hi")), chatClient).collectList().block();
@@ -895,9 +896,6 @@ void confirm_resumes_appends_tool_response_and_continues_to_phase2() throws Exce
     row.setArguments(argsJson);
     row.setStatus("pending");
     when(confirmationService.confirmAndLoad(77L, 1L)).thenReturn(row);
-
-    // registry 返回 executableDef(confirmRequired=false,可执行)
-    when(registry.findById("createReservation")).thenReturn(Optional.of(executableDef()));
 
     // 续循环第二轮 callOnce → 无 toolCall → phase2
     when(llm.callOnce(any(), anyList(), any(), anyList()))
