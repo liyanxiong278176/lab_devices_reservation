@@ -37,10 +37,6 @@ function close() {
   store.close()
 }
 
-function toggle() {
-  store.toggle()
-}
-
 async function send() {
   const text = inputText.value.trim()
   if (!text) return
