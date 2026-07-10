@@ -154,13 +154,13 @@ export const useAiStore = defineStore('ai', () => {
     currentStepUpdates.value = []
     currentSuggestions.value = []
     messages.value.push({
-      id: crypto.randomUUID(),
+      id: uuid(),
       role: 'user',
       text,
       timestamp: Date.now(),
     })
     messages.value.push({
-      id: crypto.randomUUID(),
+      id: uuid(),
       role: 'assistant',
       text: '',
       timestamp: Date.now(),
