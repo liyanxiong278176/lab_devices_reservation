@@ -56,12 +56,8 @@ services:
       # AI per-user key:master key 加密用户存 DB 的 chat key,必需(prod 禁用 dev 派生 key)。
       # 生成:openssl rand -base64 32,写进服务器 .env。chat key 零进服务器(用户在 UI 自配)。
       AI_MASTER_KEY: ${AI_MASTER_KEY:?set AI_MASTER_KEY in .env (run openssl rand -base64 32)}
-      # RAG(embedding)系统级可选:默认 none=关;要检索设备手册才在 .env 设 openai + 下面的 key。
-      SPRING_AI_MODEL_EMBEDDING: ${SPRING_AI_MODEL_EMBEDDING:-none}
-      SPRING_AI_VECTORSTORE_TYPE: ${SPRING_AI_VECTORSTORE_TYPE:-none}
-      SPRING_AI_OPENAI_EMBEDDING_API_KEY: ${SPRING_AI_OPENAI_EMBEDDING_API_KEY:-}
-      SPRING_AI_OPENAI_EMBEDDING_BASE_URL: ${SPRING_AI_OPENAI_EMBEDDING_BASE_URL:-}
-      SPRING_AI_OPENAI_EMBEDDING_OPTIONS_MODEL: ${SPRING_AI_OPENAI_EMBEDDING_OPTIONS_MODEL:-BAAI/bge-m3}
+      # RAG/chroma 已从 prod 撤(prod=chat-only)。embedding/vectorstore 默认 none,
+      # 走 application-prod.yml 的 ${VAR:none} 兜底;休眠 RAG 代码 gated on vectorstore.type=none。
     mem_limit: 768m
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:8080/api/actuator/health 2>/dev/null | grep -q '\"status\":\"UP\"' || exit 1"]
