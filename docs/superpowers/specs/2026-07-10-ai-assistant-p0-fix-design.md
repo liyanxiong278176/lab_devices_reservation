@@ -37,15 +37,25 @@ handleUserMessage(user, convId, text):
     if cancelled: 推 step_update(cancelled), break
     ChatResponse resp = llmClient.callOnce(sys, history, userClient, toolDefs)   // 非流,带 tools
     List<ToolCall> calls = resp.toolCalls()
+    // 熔断 fallback / 模型空答:content 空 + 无 toolCalls → EMPTY_RESPONSE,不浪费一次 streamFinal
+    if calls.empty && (resp.content() == null || resp.content().isBlank()):
+       推 error{EMPTY_RESPONSE}; break
     if calls.empty:
        脱离 for,进入阶段2 真流式收尾
+    // 调 callOnce 前先把上轮 assistant(tool-calling)消息入 history,保证 LLM 看得见自己上一轮的 tool 请求
     for call in calls:
        ToolDefinition def = registry.findById(call.name)
        if def.confirmRequired:
           actionId = confirmationService.create(convId, msgId, call.name, call.args)
+          argsHash = sha256(json(call.args))
           推 step_update(tool: <name> 等待确认)
           推 confirmation_required 帧 {actionId, tool_name, reason, risk_summary, estimated_impact, args}
-          挂起循环: suspended.put(convId, SuspendState{turn, history, user})
+          挂起循环: suspended.put(convId, SuspendState{
+              turn, history(含本轮 AssistantMessage+其 ToolCall),
+              pendingCallId: call.id,
+              pendingArgsHash: argsHash,
+              user
+          })
           return   // 等用户确认
        else:
           推 step_update(tool: <name> 执行中)
@@ -53,7 +63,14 @@ handleUserMessage(user, convId, text):
           追加 ToolResponseMessage(history, call.id, result)
     // 一轮 tool 调完,for turn 继续(让 LLM 看 tool 结果再决定)
 
+  // MAX_TURNS 防失控:仍有 toolCall 却超轮数(cancel 早退已 break,不会误触)
+  if !calls.empty && turn == MAX_TURNS-1 && !cancelled:
+     推 error{TOO_MANY_TURNS}; break
+
   // 阶段2 真流式收尾:
+  // 注意:触发阶段2 的那轮 callOnce 返回的 ChatResponse 其 content **丢弃不入 history**
+  // (它带 tools,无法流式);streamFinal 不带 tools **重新生成**最终回答。
+  // 故一次对话 LLM 调用数 = toolTurns + 1(收尾),规划估时按此。
   llmClient.streamFinal(sys, history, userClient)
      .doOnNext(chunk -> { if cancelled return; reply.append(chunk); 推 delta 帧 })
      .onErrorResume(err -> { 推 error(AI_UNAVAILABLE); Flux.empty() })
@@ -68,26 +85,36 @@ handleUserMessage(user, convId, text):
 handleConfirm(user, actionId):
   row = load(actionId)
   if row.userId != user.userId: 推 error(FORBIDDEN); return   // owner 校验
+  SuspendState st = suspended.get(row.convId)
+  // argsHash 校验:确认的参数必须与挂起时一致,防旧确认卡重放
+  if st != null && st.pendingArgsHash != sha256(json(row.arguments)):
+     推 error{ARGS_CHANGED, msg:"确认参数已变化,请重新发起"}; return
   confirmationService.confirm(actionId)   // pending → confirmed
-  SuspendState st = suspended.get(convId)
   推 step_update(tool: 执行中)
   result = dispatch(def, row.arguments)
+  confirmationService.execute(actionId, result)   // confirmed → executed
+  推 execution_result{actionId, ok:true, result}
   if st != null:
-     confirmationService.execute(actionId, result)   // confirmed → executed
-     推 execution_result{actionId, ok:true, result}
-     继续跑完 st 挂起的 for-turn 循环 → 阶段2 流式收尾
-  else:   // 进程重启 / 超时 fallback
-     confirmationService.execute(actionId, result)
-     推 execution_result{actionId, ok:true, result}
-     不续循环(单工具重跑)
+     // 关键:把确认的工具结果入 history,LLM 续循环时才能准确复述写操作结果(修 B1/B2)
+     // call.id 取自挂起态(ConfirmationService 不持久化 tool_call_id,只能从内存 history 的
+     // AssistantMessage 取)
+     追加 ToolResponseMessage(st.history, st.pendingCallId, result)
+     继续跑完 st 挂起的 for-turn 循环 → 阶段2 流式收尾(推 delta/assistant_done/suggestions)
+     suspended.remove(row.convId)
+  else:   // 进程重启 / 超时 fallback:无法续循环(SuspendState 丢了)
+     // 补终态帧,否则前端卡 executing(前端仅在 ok=false 自动回 idle)
+     推 step_update(completed)
+     推 assistant_done{text:"操作已完成(会话上下文已失效,无法续答)", tool_calls:[]}
 ```
 
 ### 关键不变量
 
 - 读工具单轮直接跑;写工具首轮即挂起推确认卡,**不执行业务**。
-- `MAX_TURNS=10` 防失控(保留)。
-- 挂起态 in-memory(`ConcurrentHashMap<convId, SuspendState>`),进程重启走 fallback 重跑单工具。毕设单实例可接受。
-- `argsHash` 防重放:confirm 时校验 `row.arguments` 与挂起态一致(JSON 序列化比对)。
+- `MAX_TURNS=10` 防失控;超轮 + 仍有 toolCall → `error{TOO_MANY_TURNS}` break。
+- 挂起态 in-memory(`ConcurrentHashMap<convId, SuspendState>`),进程重启走 fallback(单工具重跑 + 终态帧,不续循环)。毕设单实例可接受。
+- **argsHash 校验**:挂起时存 `pendingArgsHash`,confirm 时比对 `sha256(row.arguments)`,防旧确认卡重放。仅 `st != null` 路径生效(restart-fallback 无 st,靠 owner+status 校验)。
+- **挂起会话并发**:`suspended.containsKey(convId)` 即视为 BUSY,新 `user_message` 推 `error{BUSY, msg:"有待确认操作"}`,不入循环(防覆盖挂起态 orphan pending action)。
+- **过期动作清挂起态**:`AiActionTimeoutScheduler.expireOldPending` 把 pending→expired 时,同步 `suspended.remove(convId)` + 推 `confirmation_expired` 帧。否则 5min 后用户无确认卡可点(refresh 丢卡片),会话永久卡 BUSY。`handleCancel`/`handleConfirm` 的早退路径也须 `suspended.remove`。
 
 ## 3. 确认流程数据流
 
@@ -145,7 +172,16 @@ public ChatResponse callOnce(String sys, List<Message> history,
             .toolCallbacks(tools).call().chatResponse();
 }
 
-// 阶段2:最终回答。真流式,无 tools(决策已做完)。
+// callOnce 的 fallback:签名须匹配(同参 + 末尾 Throwable)。返合成 ChatResponse
+// (无 toolCalls、空 content),编排器见空 content 且无 toolCalls → 走 EMPTY_RESPONSE 错误分支。
+@SuppressWarnings("unused")
+public ChatResponse callOnceFallback(String sys, List<Message> history,
+                                     ChatClient cc, ToolCallback[] tools, Throwable t) {
+    log.warn("LLM callOnce fallback: {}", t.getMessage());
+    return emptyChatResponse();   // content=null, toolCalls=[]
+}
+
+// 阶段2:最终回答。真流式,无 tools(决策已做完)。无熔断,Flux 自身 onErrorResume 兜。
 public Flux<String> streamFinal(String sys, List<Message> history, ChatClient cc) {
     return cc.prompt().system(sys).messages(history).stream().content();
 }
@@ -162,7 +198,7 @@ public Flux<String> streamFinal(String sys, List<Message> history, ChatClient cc
 
 ### 熔断
 
-`callOnce` 带 `@CircuitBreaker`(替原 `stream` 上的)。`streamFinal` 不带(Flux 自身 onErrorResume 兜)。fallback 返 `Flux.error(BusinessException(AI_UNAVAILABLE))`,编排器 catch 推 error 帧。resilience4j 配置(`application-dev.yml` 的 `resilience4j.circuitbreaker.instances.llm`)沿用不动。
+`callOnce` 带 `@CircuitBreaker`(替原 `stream` 上的),fallback 返合成空 `ChatResponse`(content=null + 无 toolCalls),编排器见此走 `EMPTY_RESPONSE` 错误分支。`streamFinal` 不带熔断(Flux 自身 onErrorResume 兜)。resilience4j 配置(`application-dev.yml` 的 `resilience4j.circuitbreaker.instances.llm`)沿用不动。
 
 ## 5. 限流改造(B3 误伤)
 
@@ -194,6 +230,7 @@ public Flux<String> streamFinal(String sys, List<Message> history, ChatClient cc
 | `ai/service/LlmClient.java` | 拆 `callOnce` + `streamFinal`,删伪流式 12 字切片。 |
 | `ai/service/ConversationService.java` | `buildPrompt` 重建含 assistant + tool 消息(现只建 user)。用 Spring AI `AssistantMessage` + `ToolResponseMessage`。 |
 | `ai/service/ConfirmationService.java` | 不改(状态机已全)。仅补调用点(在 Orchestrator)。confirm 加 owner 校验。 |
+| `ai/task/AiActionTimeoutScheduler.java` | `expireOldPending` 后调 orchestrator 清挂起态(`suspended.remove`)+ 推 `confirmation_expired` 帧。 |
 | `ai/tool/ToolArgumentValidator.java` | `p.getName()` → pom 加 `-parameters` 编译。 |
 
 ### 前端(2 文件)
