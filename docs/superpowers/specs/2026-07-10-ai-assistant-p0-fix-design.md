@@ -165,11 +165,18 @@ pending(5min)──expireOldPending()──▶ expired   (AiActionTimeoutSchedul
 
 ```java
 // 阶段1:工具决策。非流,拿 toolCalls。带熔断。
+// 关键:internalToolExecutionEnabled=false — 否则 Spring AI 1.0.6 的 ToolCallingManager
+// 会自动执行 toolCallbacks(含写工具),confirmation 拦截不可能。设 false 后模型只返回
+// toolCalls 不执行,由编排器手动 dispatch。
 @CircuitBreaker(name = "llm", fallbackMethod = "callOnceFallback")
 public ChatResponse callOnce(String sys, List<Message> history,
-                             ChatClient cc, ToolCallback[] tools) {
+                             ChatClient cc, List<ToolCallback> tools) {
+    OpenAiChatOptions opts = OpenAiChatOptions.builder()
+            .toolCallbacks(tools)
+            .internalToolExecutionEnabled(false)
+            .build();
     return cc.prompt().system(sys).messages(history)
-            .toolCallbacks(tools).call().chatResponse();
+            .options(opts).call().chatResponse();
 }
 
 // callOnce 的 fallback:签名须匹配(同参 + 末尾 Throwable)。返合成 ChatResponse
