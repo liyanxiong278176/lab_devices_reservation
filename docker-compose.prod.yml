@@ -46,25 +46,25 @@ services:
     mem_limit: 128m
   # Chroma 向量库(RAG 设备手册检索)。Spring AI ChromaVectorStore 在 afterPropertiesSet
   # 阶段急切连 client,连不上就 boot 失败,故 prod 显式起一个常驻实例。
-  # 端口 9000 跟 application.yml 的 chroma.client.port 一致;app 经 service 名 http://chroma 连。
+  # 端口统一 9999:宿主机 9000 被 GitHub webhook 占用,容器内外都用 9999。
   chroma:
     image: chromadb/chroma:latest
     container_name: lab-chroma-prod
     restart: unless-stopped
-    # chromadb 镜像默认跑 8000,显式拉到 9000
-    command: ["run", "--host", "0.0.0.0", "--port", "9000"]
+    # chromadb 镜像默认跑 8000,显式拉到 9999(避开宿主机 9000/webhook)
+    command: ["run", "--host", "0.0.0.0", "--port", "9999"]
     environment:
       IS_PERSISTENT: "TRUE"
       ANONYMIZED_TELEMETRY: "FALSE"
     volumes:
       - chroma_data:/chroma/chroma
     ports:
-      - "0.0.0.0:9000:9000"
+      - "0.0.0.0:9999:9999"
     mem_limit: 256m
     healthcheck:
       # chromadb/chroma 镜像无 curl/wget/python(distroless-like,bash 在 /usr/bin/bash)。
-      # 用 bash /dev/tcp 探端口;chroma bind 了 9000 即视为就绪。/bin/sh 是 dash(不支持 /dev/tcp),故用 CMD bash。
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/9000"]
+      # 用 bash /dev/tcp 探端口;chroma bind 了 9999 即视为就绪。/bin/sh 是 dash(不支持 /dev/tcp),故用 CMD bash。
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/9999"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -89,7 +89,9 @@ services:
       SPRING_AI_OPENAI_EMBEDDING_BASE_URL: ${SPRING_AI_OPENAI_EMBEDDING_BASE_URL:-}
       SPRING_AI_OPENAI_EMBEDDING_OPTIONS_MODEL: ${SPRING_AI_OPENAI_EMBEDDING_OPTIONS_MODEL:-BAAI/bge-m3}
       # Chroma 经 compose service 名访问(容器内 localhost 连不到 chroma 容器)
+      # 端口 9999:chroma 内部跑 9999(避开宿主 9000/webhook),覆盖 application.yml 默认的 9000
       SPRING_AI_VECTORSTORE_CHROMA_CLIENT_HOST: http://chroma
+      SPRING_AI_VECTORSTORE_CHROMA_CLIENT_PORT: "9999"
     mem_limit: 768m
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:8080/api/actuator/health 2>/dev/null | grep -q '\"status\":\"UP\"' || exit 1"]
