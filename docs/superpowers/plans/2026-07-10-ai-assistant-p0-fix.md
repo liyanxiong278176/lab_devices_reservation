@@ -15,9 +15,9 @@
 ## Task Dependency Order(实现顺序)
 
 任务有交叉依赖,按此序执行(非严格编号序):
-1 → 2 → 3 → 4(骨架)→ 5(suspend)→ **6(confirmAndLoad owner 校验)** → 7(resume)→ 8(cancel/busy)→ 9(scheduler expire)→ 10(AiAssistantService 接线)→ 11(前端)→ 12(e2e)
+1 → 2 → 3 → 4(骨架)→ 5(suspend)→ **8(confirmAndLoad owner 校验)** → 6(resume)→ 7(cancel/busy)→ 9(scheduler expire)→ 10(AiAssistantService 接线)→ 11(前端)→ 12(e2e)
 
-> 即:**confirmAndLoad(Task 6)必须在 resume(Task 7)之前**。下面任务编号保留不动,但 Task 7 顶部标 PREREQ。
+> 即:**confirmAndLoad(Task 8)必须在 resume(Task 6)之前**。下面任务编号保留不动,但 Task 6 顶部标 PREREQ。
 
 ---
 
@@ -304,13 +304,7 @@ git commit -m "feat(ai): LlmClient callOnce (internalToolExecution=false) + stre
 - Modify: `src/main/java/com/lab/reservation/ai/service/ConversationService.java`(`buildPrompt` 方法)
 - Test: `src/test/java/com/lab/reservation/ai/service/ConversationServiceTest.java`(新建)
 
-**问题:** 现状只重建 user 消息,多轮上下文断裂。改:assistant 段也重建。**另:加无 `currentText` 重载** — 因 `AiAssistantService` 在调 `runLoop` 前已把 user 消息持久化,DB 查询已含它;若 runLoop 再传 `currentText` 追加 → 用户请求重复。故 runLoop 用 `buildPrompt(convId)` 重载(只从 DB 重建,不追加 currentText)。
-
-**Files:**
-- Modify: `src/main/java/com/lab/reservation/ai/service/ConversationService.java`(`buildPrompt` 方法)
-- Test: `src/test/java/com/lab/reservation/ai/service/ConversationServiceTest.java`(新建)
-
-**问题:** 现状只重建 user 消息,多轮上下文断裂。改:assistant 段也重建(含 tool_calls 不持久化细节则跳过;tool 响应段若 role=tool 也重建)。
+**问题:** 现状只重建 user 消息,多轮上下文断裂。改:assistant 段也重建。**另:加无 `currentText` 重载** — 因 `AiAssistantService` 在调 `runLoop` 前已把 user 消息持久化,DB 查询已含它;若 runLoop 再传 `currentText` 追加 → 用户请求重复。故 runLoop 用 `buildPrompt(convId)` 重载(只从 DB 重建,不追加 currentText)。tool 段(role=tool)当前 appendMessage 不写,跳过。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -493,7 +487,7 @@ class ToolLoopOrchestratorTest {
         ChatResponse resp = resp("好的,这是我的回答");
         when(llm.callOnce(any(), anyList(), any(), anyList())).thenReturn(resp);
         when(llm.streamFinal(any(), anyList(), any())).thenReturn(Flux.just("好的", "这是"));
-        when(conversationService.buildPrompt(anyLong(), any())).thenReturn(java.util.List.of(new UserMessage("hi")));
+        when(conversationService.buildPrompt(anyLong())).thenReturn(java.util.List.of(new UserMessage("hi")));
 
         orch.runLoop(chatClient, user, 1L, "你好");
 
@@ -792,7 +786,7 @@ void write_tool_suspends_and_pushes_confirmation_required_without_executing() th
     assertThat(orch.suspended).containsKey(1L);
 }
 
-private ToolRegistry.ToolDefinition confirmDef(String name) throws Exception {
+private ToolRegistry.ToolDefinition confirmDef(String name) {
     // 构造 confirmRequired=true 的 ToolDefinition mock
     ToolRegistry.ToolDefinition d = mock(ToolRegistry.ToolDefinition.class);
     when(d.confirmRequired()).thenReturn(true);
@@ -800,6 +794,14 @@ private ToolRegistry.ToolDefinition confirmDef(String name) throws Exception {
     when(d.confirmReason()).thenReturn("reason");
     when(d.confirmRisk()).thenReturn("risk");
     when(d.confirmImpact()).thenReturn("impact");
+    return d;
+}
+
+private ToolRegistry.ToolDefinition executableDef() {
+    // confirmRequired=false(可执行,不挂起)
+    ToolRegistry.ToolDefinition d = mock(ToolRegistry.ToolDefinition.class);
+    when(d.confirmRequired()).thenReturn(false);
+    when(d.id()).thenReturn("createReservation");
     return d;
 }
 ```
@@ -816,7 +818,7 @@ Expected: FAIL(suspendForConfirm 空实现)
 ```java
 void suspendForConfirm(Long convId, SecurityUserDetails user,
                        AssistantMessage.ToolCall call, ToolRegistry.ToolDefinition def,
-                       List<Message> history, int turn, AssistantMessage am) {
+                       List<Message> history, int turn) {
     Map<String, Object> args = parseArgs(call.arguments());
     Long actionId = confirmationService.create(convId, null, call.name(), args);
     String argsHash = sha256(call.arguments());
@@ -837,19 +839,19 @@ void suspendForConfirm(Long convId, SecurityUserDetails user,
     log.info("write tool {} suspended for conv={} actionId={}", call.name(), convId, actionId);
 }
 
-static String sha256(String s) {
-    if (s == null) s = "";
+/** 把 LLM 返的 tool arguments JSON 解成 Map(给 confirmationService.create 存参)。 */
+@SuppressWarnings("unchecked")
+static Map<String, Object> parseArgs(String json) {
+    if (json == null || json.isBlank()) return Map.of();
     try {
-        var md = java.security.MessageDigest.getInstance("SHA-256");
-        byte[] h = md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        var sb = new StringBuilder();
-        for (byte b : h) sb.append(String.format("%02x", b));
-        return sb.toString();
+        return new com.fasterxml.jackson.databind.ObjectMapper().readValue(json, Map.class);
     } catch (Exception e) {
-        return String.valueOf(s.hashCode());
+        return Map.of();
     }
 }
 ```
+
+> `sha256(...)` 已在 Task 4 定义,不重复。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -880,26 +882,27 @@ git commit -m "feat(ai): write tools suspend + push confirmation_required frame"
 ```java
 @Test
 void confirm_resumes_appends_tool_response_and_continues_to_phase2() throws Exception {
-    // 预置挂起态
+    // 预置挂起态(argsHash 用真实 row.arguments 的 sha256,免 ARGS_CHANGED 误判)
+    String argsJson = "{\"deviceId\":1,\"startTime\":\"2026-07-11T14:00:00\",\"endTime\":\"2026-07-11T16:00:00\"}";
     orch.suspended.put(1L, new ToolLoopOrchestrator.SuspendState(
-            0, new ArrayList<>(List.of(new UserMessage("hi"))), "call_1", "hash", user));
-    when(registry.findById("createReservation")).thenReturn(Optional.of(confirmDef("createReservation")));
-    // confirmDef 的 method/bean 返回成功结果
-    ToolRegistry.ToolDefinition d = orch.suspended.get(1L) == null ? null : null; // 占位
+            0, new ArrayList<>(List.of(new UserMessage("hi"))), "call_1",
+            ToolLoopOrchestrator.sha256(argsJson), user));
 
-    // confirmationService.confirm 不抛;load actionId 返回 row
+    // confirmAndLoad(mock,owner 校验在 Task 8 单测里验;此处返 row)
     AiToolExecution row = new AiToolExecution();
-    row.setId(77L); row.setConversationId(1L); row.setUserId(1L);
+    row.setId(77L); row.setConversationId(1L);
     row.setToolName("createReservation");
-    row.setArguments("{\"deviceId\":1,\"startTime\":\"2026-07-11T14:00:00\",\"endTime\":\"2026-07-11T16:00:00\"}");
+    row.setArguments(argsJson);
     row.setStatus("pending");
     when(confirmationService.confirmAndLoad(77L, 1L)).thenReturn(row);
+
+    // registry 返回 executableDef(confirmRequired=false,可执行)
+    when(registry.findById("createReservation")).thenReturn(Optional.of(executableDef()));
 
     // 续循环第二轮 callOnce → 无 toolCall → phase2
     when(llm.callOnce(any(), anyList(), any(), anyList()))
             .thenReturn(resp("已为您预约成功,预约号 123"));
     when(llm.streamFinal(any(), anyList(), any())).thenReturn(Flux.just("已预约"));
-    when(registry.findById("createReservation")).thenReturn(Optional.of(executableDef()));
     // resolver 返回 mock callback,.call 返成功 JSON
     org.springframework.ai.tool.ToolCallback cb = mock(org.springframework.ai.tool.ToolCallback.class);
     when(cb.call(anyString())).thenReturn("{\"ok\":true,\"data\":{\"reservation_id\":123}}");
@@ -1147,6 +1150,11 @@ public class ConfirmationService {
         mapper.updateById(e);
         return e;
     }
+
+    /** 按 id 取 row(onExpire 等无 user 上下文路径用)。 */
+    public AiToolExecution getRow(Long actionId) {
+        return mapper.selectById(actionId);
+    }
     // ... 既有 create/execute/cancel/error/expireOldPending 不变
 }
 ```
@@ -1184,9 +1192,17 @@ Run: `cat src/main/java/com/lab/reservation/ai/task/AiActionTimeoutScheduler.jav
 @Test
 void on_expire_removes_suspend_and_pushes_expired_frame() {
     orch.suspended.put(1L, new ToolLoopOrchestrator.SuspendState(0, new ArrayList<>(), "c1", "h", user));
+    // onExpire 经 confirmationService.getRow + conversationService.getOrThrow 取 userId
+    AiToolExecution row = new AiToolExecution();
+    row.setId(77L); row.setConversationId(1L);
+    when(confirmationService.getRow(77L)).thenReturn(row);
+    AiConversation conv = new AiConversation(); conv.setUserId(1L);
+    when(conversationService.getOrThrow(1L)).thenReturn(conv);
+
     orch.onExpire(1L, 77L);
+
     assertThat(orch.suspended).doesNotContainKey(1L);
-    verify(frameService).push(eq(1L), any(), eq("confirmation_expired"), anyMap());
+    verify(frameService).pushByUser(eq(1L), eq(1L), eq("confirmation_expired"), anyMap());
 }
 ```
 
@@ -1508,4 +1524,4 @@ git commit -m "test(ai): e2e verification — tool loop + confirmation + streami
 2. **internalToolExecutionEnabled(false) 行为** → e2e Step 4 验证模型真返 toolCalls 不自动执行。若失效(工具仍自动跑),回退方案:不用 `.options()`,改用低层 `OpenAiChatModel.call(Prompt)` 直接构造。
 3. **AssistantMessage 带 toolCalls 构造** → 测试里若构造器不可用,用 `AssistantMessage.builder()` 或反射设字段。
 4. **DRY** → runLoop 与 continueLoop 的 for 体重复,抽 `runTurns(...)` 私有方法复用,避免维护两份。
-5. **AiToolExecution.userId 字段** → Task 8 Step 3b 必须确认存在,否则 owner 校验无据。可能需 V7 迁移。
+5. **owner 校验零 schema** → `AiToolExecution` 无 userId 列(已验证)。owner 经 `conversationId → AiConversation.userId` 解析(Task 8 confirmAndLoad),**不需 V7 迁移**。若实测发现 `AiConversation.userId` 为空(异常数据),owner 校验返 null → 推 FORBIDDEN,不推进状态(安全失败)。
