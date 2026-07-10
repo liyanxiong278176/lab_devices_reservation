@@ -1,4 +1,9 @@
 spring:
+  # Spring Boot 3.x 禁止在 profile 专属文件里用 spring.profiles.include(InvalidConfigDataPropertyException)。
+  # 改用 config.import 加载 gitignored 的 application-siliconflow.yml(chat+embedding 密钥);
+  # optional: 前缀保证文件缺失不报错(本机有,服务器无)。
+  config:
+    import: "optional:classpath:application-siliconflow.yml"
   datasource:
     url: jdbc:mysql://localhost:3306/lab_reservation?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root

@@ -4,6 +4,33 @@ spring:
     username: root
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  ai:
+    # prod 零 chat key:用 Spring AI 官方开关 spring.ai.model.*=none 关闭模型 auto-config。
+    # 这些 auto-config(OpenAiChat/Image/AudioSpeech/AudioTranscription/Moderation)在无 api-key
+    # 时会在 bean 实例化期抛 IllegalArgumentException(不会 graceful back-off),
+    # 故显式置 none(其 @ConditionalOnProperty havingValue="openai", matchIfMissing=true)。
+    # chat 走 per-user(UserChatClientProvider 手搓 OpenAiChatModel),不依赖任何 auto-config。
+    # embedding 保留可选:operator 设 SPRING_AI_MODEL_EMBEDDING=openai + 下面的 embedding env 即开 RAG。
+    # app 内 ChatClientConfig/HelloWorldController/Rag* 也复用同一组属性做条件,一处开关管全部。
+    model:
+      chat: none
+      image: none
+      audio:
+        speech: none
+        transcription: none
+      moderation: none
+      embedding: ${SPRING_AI_MODEL_EMBEDDING:none}
+    chat:
+      client:
+        enabled: false          # 无 ChatModel,关 ChatClientAutoConfiguration(chatClientBuilder)
+    vectorstore:
+      type: ${SPRING_AI_VECTORSTORE_TYPE:none}   # 默认 none;开 RAG 时 operator 设 chroma
+    openai:
+      embedding:
+        base-url: ${SPRING_AI_OPENAI_EMBEDDING_BASE_URL:}
+        api-key: ${SPRING_AI_OPENAI_EMBEDDING_API_KEY:}
+        options:
+          model: ${SPRING_AI_OPENAI_EMBEDDING_OPTIONS_MODEL:BAAI/bge-m3}
   flyway:
     enabled: true
     baseline-on-migrate: true

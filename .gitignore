@@ -41,3 +41,6 @@ build/
 
 # AI assistant secrets (硅基流动 API key 等)
 src/main/resources/application-siliconflow.yml
+
+# 部署环境变量(含 AI_MASTER_KEY / embedding key 等密钥,勿提交;.env.example 是 tracked 模板)
+.env

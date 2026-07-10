@@ -1,12 +1,19 @@
 spring:
   profiles:
     active: dev
-    include: siliconflow
   application:
     name: lab-devices-reservation
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
+  ai:
+    vectorstore:
+      chroma:
+        client:
+          host: http://localhost
+          port: 9000
+        collection-name: lab_manuals
+        initialize-schema: true
 server:
   port: 8080
   servlet:
@@ -28,3 +35,22 @@ jwt:
   secret: "change-me-please-this-is-a-dev-secret-key-at-least-32-bytes-long!!"
   access-ttl: 7200
   refresh-ttl: 604800
+ai:
+  assistant:
+    ratelimit:
+      capacity: 20
+      refill-per-minute: 20
+    context-window-turns: 10
+    pending-timeout-minutes: 5
+    rag:
+      top-k: 5
+      similarity-threshold: 0.6
+# 熔断器(从 gitignored application-siliconflow.yml 迁来;实例改名 siliconflow→llm 匹配 @CircuitBreaker(name="llm"))
+resilience4j:
+  circuitbreaker:
+    instances:
+      llm:
+        failure-rate-threshold: 50
+        sliding-window-size: 10
+        wait-duration-in-open-state: 60s
+        permitted-number-of-calls-in-half-open-state: 3

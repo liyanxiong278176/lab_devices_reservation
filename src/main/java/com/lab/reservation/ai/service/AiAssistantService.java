@@ -6,6 +6,7 @@ import com.lab.reservation.entity.AiConversation;
 import com.lab.reservation.security.SecurityUserDetails;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.stereotype.Service;
@@ -39,7 +40,7 @@ public class AiAssistantService {
     /** 单轮对话最大迭代次数(防工具循环失控);工具调用全开后实际只跑 1 轮。 */
     private static final int MAX_TURNS = 10;
 
-    private final SiliconFlowClient siliconFlowClient;
+    private final LlmClient llmClient;
     private final ToolRegistry toolRegistry;
     private final ConversationService conversationService;
     private final ConfirmationService confirmationService;
@@ -49,6 +50,7 @@ public class AiAssistantService {
     private final SystemPromptBuilder promptBuilder;
     private final AiProperties props;
     private final ObjectMapper objectMapper;
+    private final UserChatClientProvider userChatClientProvider;
 
     /** convId → 是否已请求取消(下次 emit 时跳过 delta + break loop)。 */
     private final ConcurrentHashMap<Long, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
@@ -72,14 +74,15 @@ public class AiAssistantService {
         }
 
         // STOMP 入口的 Principal 不会自动写到 SecurityContextHolder;tool 内部用
-        // SecurityContextHolder.getContext() 拿当前用户,所以这里显式塞进去,流式调用完
+        // SecurityContextHolder.getContext() 拿当前用户,所以需要显式塞进去,流式调用完
         // finally 清理,避免污染其他 inbound 线程。
+        // 注意:setAuthentication 移到下方 try 内部首行 — 这样 CONV_NOT_FOUND 在 try 外
+        // return 时 setAuthentication 还没执行,context 仍 == prev,不会污染线程池。
         org.springframework.security.core.Authentication prev =
                 org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
         org.springframework.security.authentication.UsernamePasswordAuthenticationToken auth =
                 new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
                         user, null, user.getAuthorities());
-        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);
 
         // 2. 会话:null 新建,非 null 校验存在;用一个 final 引用,避免 lambda 闭包限制
         final Long convId;
@@ -98,6 +101,19 @@ public class AiAssistantService {
         }
 
         try {
+        // setAuthentication 放在 try 内部首行:所有 try 内的早返回(含 AI_NOT_CONFIGURED)
+        // 都会命中 finally 恢复 prev;而 try 外的 CONV_NOT_FOUND 返回时这行还没执行,context 仍 == prev。
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);
+
+        // per-user ChatClient:无 key → 提示去配置(prod 严格拒绝,服务器零 chat key)
+        ChatClient userChatClient = userChatClientProvider.resolve(user.getUserId()).orElse(null);
+        if (userChatClient == null) {
+            frameService.push(convId, user, "error",
+                    Map.of("code", "AI_NOT_CONFIGURED",
+                           "msg", "请先配置你的 AI API Key",
+                           "action", "open_settings"));
+            return;
+        }
 
         // 3. step_update 起步
         frameService.push(convId, user, "step_update",
@@ -131,9 +147,10 @@ public class AiAssistantService {
 
             StringBuilder reply = new StringBuilder();
             long t0 = System.currentTimeMillis();
-            siliconFlowClient.stream(
+            llmClient.stream(
                     promptBuilder.build(SystemPromptBuilder.extractRole(user), user.getUserId()),
                     history,
+                    userChatClient,
                     toolCallbacks
             ).doOnNext(chunk -> {
                 // 取消后跳过 delta 推送
@@ -141,7 +158,7 @@ public class AiAssistantService {
                 reply.append(chunk);
                 frameService.push(convId, user, "delta", Map.of("text", chunk));
             }).onErrorResume(err -> {
-                log.warn("SiliconFlow call failed for conv={}: {}", convId, err.getMessage());
+                log.warn("LLM stream failed for conv={}: {}", convId, err.getMessage());
                 frameService.push(convId, user, "error",
                         Map.of("code", "AI_UNAVAILABLE", "msg", "AI 助手暂时不可用,请稍后再试"));
                 return Flux.empty();

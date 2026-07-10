@@ -436,7 +436,7 @@ class AiCredentialServiceTest {
         row.setModel("deepseek-chat");
         row.setTemperature(0.3);
         when(mapper.selectOne(any())).thenReturn(row);
-        when(crypto.decrypt("CIPHER")).thenReturn("sk-3b72afaa6d124c0cb33eceaf5ccc3756");
+        when(crypto.decrypt("CIPHER")).thenReturn("sk-deadbeefcafebabe123456789abcd3756");
 
         AiCredentialVO vo = service.get(1L);
         assertTrue(vo.getApiKeyMasked().startsWith("sk-****"));

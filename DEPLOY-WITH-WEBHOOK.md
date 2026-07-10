@@ -953,3 +953,46 @@ curl -s http://localhost:9000/api/v2/heartbeat   # 期望 {"nanosecond heartbeat
 - 单实例假设：所有 `ai_*` 表 + Chroma + Redis 全在同一台机器；横向扩展场景需考虑 Chroma 的分布式部署或迁到 Pinecone/Weaviate 等托管服务（论文列为未来工作）。
 - 启动顺序：MySQL → Redis → Chroma → app；Chroma 健康检查失败不会阻塞 app 启动（Spring AI 是 lazy 初始化），但首次 RAG 调用会 503。
 
+## 6. AI BYO-key 部署(每用户自带 LLM key)
+
+本系统的 AI 助手 chat **不依赖服务器持有任何 chat key**——每个用户在「AI 助手球 → 齿轮设置」里填自己的 API key(DeepSeek/OpenAI/硅基流动/自定义),AES-GCM 加密后存数据库,服务器零 chat key,各付各的额度。服务器只持有一个**加密用 master key** + (可选)一个系统级 embedding key 供 RAG 检索设备手册。
+
+### 服务器侧配置(.env)
+
+`docker-compose.prod.yml` 的 `app` 服务已声明以下环境变量(从同目录 `.env` 读取):
+
+```bash
+# 必需 —— 加密用户存 DB 的 chat key 用。生成:openssl rand -base64 32
+AI_MASTER_KEY=...
+
+# 可选 —— 要 RAG(检索设备手册)才填,否则默认关。
+SPRING_AI_MODEL_EMBEDDING=openai            # none=关 / openai=开
+SPRING_AI_VECTORSTORE_TYPE=chroma           # none=关 / chroma=开
+SPRING_AI_OPENAI_EMBEDDING_API_KEY=...
+SPRING_AI_OPENAI_EMBEDDING_BASE_URL=https://api.siliconflow.cn
+SPRING_AI_OPENAI_EMBEDDING_OPTIONS_MODEL=BAAI/bge-m3
+```
+
+部署步骤:
+
+```bash
+# 1. 在服务器项目根写 .env(已 gitignore,勿提交)
+cp .env.example .env
+#   填 AI_MASTER_KEY:openssl rand -base64 32
+#   (可选)填 embedding 三件套启用 RAG
+
+# 2. 起 prod
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+注意:
+- **`AI_MASTER_KEY` 不填会 boot 失败**(compose 用 `${AI_MASTER_KEY:?...}` 强制)。生产禁用 dev 派生 key。
+- **chat key 永远不进 `.env`**——chat 走用户 UI 自配;服务器只管 embedding(系统级)。
+- chat auto-config 在 prod 用 `spring.ai.model.*=none` 全关(`application-prod.yml`),app 零 chat key 也能 boot;chat 完全走 `UserChatClientProvider` 运行时按用户 key 构建 `OpenAiChatModel`。
+- embedding/model/vectorstore 任一缺 → RAG 整链(`RagSearchService`/`RagIngestService`/`RagManualTool`/`AdminRagController`)经 `@ConditionalOnProperty` 跳过,boot 不挂,只是不检索手册。
+- master key 轮换(全表 re-encrypt)本期未实现,列为未来工作。
+
+### 用户侧
+
+登录后点右下角 AI 球 → 齿轮 → 选服务商(自动填 base-url + 模型)→ 填 API Key → 保存(后端先真连一次验证再加密落库)。未配 key 的用户跟 AI 说话会收到「未配置...去配置」提示。
+

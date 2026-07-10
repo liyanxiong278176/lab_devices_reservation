@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { Close, Promotion, ChatLineSquare, VideoPause } from '@element-plus/icons-vue'
+import { Close, Promotion, ChatLineSquare, VideoPause, Setting } from '@element-plus/icons-vue'
 import { useAiStore } from '@/stores/ai'
 import MessageCard from './MessageCard.vue'
 import ConfirmationCard from './ConfirmationCard.vue'
 import StepTimelineCard from './StepTimelineCard.vue'
 import SuggestionRow from './SuggestionRow.vue'
+import AiConfig from './AiConfig.vue'
 
 const store = useAiStore()
 
@@ -14,6 +15,19 @@ const messagesRef = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 
 const confirmationsOnly = computed(() => store.confirmations.filter((c) => c.status === 'pending'))
+
+// 设置模式(内嵌配置) + AI_NOT_CONFIGURED 兜底
+const showSettings = ref(false)
+const needsConfig = computed(() => store.lastError?.code === 'AI_NOT_CONFIGURED')
+
+function onConfigSaved() {
+  showSettings.value = false
+  store.lastError = null // 清掉 AI_NOT_CONFIGURED 错误态
+}
+
+function openSettings() {
+  showSettings.value = true
+}
 
 function open() {
   store.open()
@@ -97,73 +111,85 @@ function onSuggestionClick(value: string) {
             <el-icon><ChatLineSquare /></el-icon>
             <span>AI 助手</span>
           </div>
-          <el-button text :icon="Close" circle @click="close" />
+          <div class="ai-header-actions">
+            <el-button text :icon="Setting" circle :class="{ 'is-active': showSettings }" title="AI 配置" @click="showSettings = !showSettings" />
+            <el-button text :icon="Close" circle @click="close" />
+          </div>
         </header>
 
-        <div ref="messagesRef" class="ai-messages">
-          <MessageCard
-            v-for="m in store.messages"
-            :key="m.id"
-            :message="m"
-          />
+        <AiConfig v-if="showSettings" @saved="onConfigSaved" />
 
-          <ConfirmationCard
-            v-for="c in confirmationsOnly"
-            :key="c.actionId"
-            :confirmation="c"
-            @confirm="onConfirm"
-            @cancel="onCancel"
-          />
+        <template v-else>
+          <div ref="messagesRef" class="ai-messages">
+            <MessageCard
+              v-for="m in store.messages"
+              :key="m.id"
+              :message="m"
+            />
 
-          <div v-if="store.messages.length === 0 && confirmationsOnly.length === 0" class="ai-empty">
-            <p>你好,我是实验室预约 AI 助手。</p>
-            <p class="ai-empty-hint">试试问:</p>
-            <ul>
-              <li>"推荐一台显微镜"</li>
-              <li>"我下周的预约有哪些?"</li>
-              <li>"怎么开机 FACS Aria III?"</li>
-            </ul>
+            <ConfirmationCard
+              v-for="c in confirmationsOnly"
+              :key="c.actionId"
+              :confirmation="c"
+              @confirm="onConfirm"
+              @cancel="onCancel"
+            />
+
+            <div v-if="store.messages.length === 0 && confirmationsOnly.length === 0" class="ai-empty">
+              <p>你好,我是实验室预约 AI 助手。</p>
+              <p class="ai-empty-hint">试试问:</p>
+              <ul>
+                <li>"推荐一台显微镜"</li>
+                <li>"我下周的预约有哪些?"</li>
+                <li>"怎么开机 FACS Aria III?"</li>
+              </ul>
+            </div>
+
+            <div v-if="needsConfig" class="ai-notconfig">
+              <p>未配置 AI API Key,无法使用 AI 助手。</p>
+              <el-button type="primary" size="small" @click="openSettings">去配置</el-button>
+            </div>
           </div>
-        </div>
 
-        <div v-if="store.state === 'step_running' || store.state === 'streaming'" class="ai-step-bar">
-          <StepTimelineCard :steps="store.currentStepUpdates" />
-        </div>
+          <div v-if="store.state === 'step_running' || store.state === 'streaming'" class="ai-step-bar">
+            <StepTimelineCard :steps="store.currentStepUpdates" />
+          </div>
 
-        <SuggestionRow
-          v-if="store.currentSuggestions.length > 0"
-          :items="store.currentSuggestions"
-          @pick="onSuggestionClick"
-        />
-
-        <footer class="ai-input-bar">
-          <textarea
-            ref="inputRef"
-            v-model="inputText"
-            placeholder="输入消息,Enter 发送,Shift+Enter 换行"
-            :disabled="store.state === 'sending' || store.state === 'streaming' || store.state === 'step_running' || store.state === 'executing'"
-            rows="2"
-            @keydown="onKeydown"
+          <SuggestionRow
+            v-if="store.currentSuggestions.length > 0"
+            :items="store.currentSuggestions"
+            @pick="onSuggestionClick"
           />
-          <el-button
-            v-if="store.state === 'sending' || store.state === 'streaming' || store.state === 'step_running' || store.state === 'executing'"
-            type="danger"
-            plain
-            :icon="VideoPause"
-            title="停止当前 AI 任务"
-            @click="stop"
-          >
-            停止
-          </el-button>
-          <el-button
-            type="primary"
-            :icon="Promotion"
-            :disabled="!inputText.trim() || store.state === 'sending' || store.state === 'streaming' || store.state === 'step_running' || store.state === 'executing'"
-            @click="send"
-          >
-            发送
-          </el-button>
-        </footer>
+
+          <footer class="ai-input-bar">
+            <textarea
+              ref="inputRef"
+              v-model="inputText"
+              placeholder="输入消息,Enter 发送,Shift+Enter 换行"
+              :disabled="store.state === 'sending' || store.state === 'streaming' || store.state === 'step_running' || store.state === 'executing'"
+              rows="2"
+              @keydown="onKeydown"
+            />
+            <el-button
+              v-if="store.state === 'sending' || store.state === 'streaming' || store.state === 'step_running' || store.state === 'executing'"
+              type="danger"
+              plain
+              :icon="VideoPause"
+              title="停止当前 AI 任务"
+              @click="stop"
+            >
+              停止
+            </el-button>
+            <el-button
+              type="primary"
+              :icon="Promotion"
+              :disabled="!inputText.trim() || store.state === 'sending' || store.state === 'streaming' || store.state === 'step_running' || store.state === 'executing'"
+              @click="send"
+            >
+              发送
+            </el-button>
+          </footer>
+        </template>
       </div>
     </Transition>
   </div>
@@ -228,6 +254,27 @@ function onSuggestionClick(value: string) {
   gap: 8px;
   font-weight: 600;
   color: var(--fg-primary, #e5e7eb);
+}
+.ai-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ai-header .is-active {
+  color: var(--accent, #6366f1);
+}
+.ai-notconfig {
+  margin: 12px 14px;
+  padding: 14px;
+  background: var(--bg-elev-1, #111827);
+  border: 1px solid var(--border-subtle, #1f2937);
+  border-radius: 10px;
+  text-align: center;
+  p {
+    color: var(--fg-secondary, #d1d5db);
+    font-size: 13px;
+    margin-bottom: 10px;
+  }
 }
 .ai-messages {
   flex: 1;

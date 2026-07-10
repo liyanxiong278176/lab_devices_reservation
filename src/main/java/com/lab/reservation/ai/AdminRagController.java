@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,6 +37,7 @@ import java.util.Map;
 @RequestMapping("/admin/rag")
 @RequiredArgsConstructor
 @PreAuthorize("hasAnyRole('LAB_ADMIN','SYS_ADMIN')")
+@ConditionalOnProperty(name = "spring.ai.vectorstore.type", havingValue = "chroma", matchIfMissing = true)
 public class AdminRagController {
 
     private final RagIngestService ingestService;
