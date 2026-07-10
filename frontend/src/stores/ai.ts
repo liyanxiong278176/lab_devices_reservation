@@ -6,6 +6,7 @@ import {
   reconnectAiWs,
   sendAiMsg,
 } from '@/composables/useAiWebSocket'
+import { uuid } from '@/utils/uuid'
 import type {
   AiAssistantState,
   ChatMessage,
@@ -105,7 +106,7 @@ export const useAiStore = defineStore('ai', () => {
       last.text += text
     } else {
       messages.value.push({
-        id: crypto.randomUUID(),
+        id: uuid(),
         role: 'assistant',
         text,
         timestamp: Date.now(),
