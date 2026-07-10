@@ -18,7 +18,7 @@ export interface AiCredentialSaveDTO {
 }
 
 export const PROVIDER_PRESETS: Record<AiProvider, { baseUrl: string; model: string }> = {
-  deepseek:    { baseUrl: 'https://api.deepseek.com',   model: 'deepseek-chat' },
+  deepseek:    { baseUrl: 'https://api.deepseek.com',   model: 'deepseek-v4-flash' },
   openai:      { baseUrl: 'https://api.openai.com',     model: 'gpt-4o-mini' },
   siliconflow: { baseUrl: 'https://api.siliconflow.cn', model: 'deepseek-ai/DeepSeek-V3' },
   custom:      { baseUrl: '',                            model: '' },
