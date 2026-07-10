@@ -1,13 +1,19 @@
 package com.lab.reservation.ai.service;
 
+import com.lab.reservation.entity.UserAiCredential;
 import com.lab.reservation.security.SecurityUserDetails;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 生成 AI 助手的 system prompt — 根据用户角色动态调整。
+ * 生成 AI 助手的 system prompt — 根据用户角色 + 用户自配模型动态调整。
+ *
+ * <p>注入用户在 BYO-key 设置里配的模型名,让 AI 被问「你是什么模型」时如实回答,
+ * 而不是凭训练数据瞎编(GPT-4o 等)。
  *
  * <p>注意:这里 hardcode 字符串而不是从 yml 读,是因为 yml 多行字符串
  * 难以维护;后续 Phase 可改用 {@code messages.properties} 国际化。
@@ -16,10 +22,23 @@ import java.util.stream.Collectors;
  * @since 2026-07-08
  */
 @Service
+@RequiredArgsConstructor
 public class SystemPromptBuilder {
+
+    private final AiCredentialService credService;
+
+    /** dev 兜底模型名(用户未配 BYO key 时用,从 siliconflow yml 读)。 */
+    @Value("${spring.ai.openai.chat.options.model:默认模型}")
+    private String devFallbackModel;
 
     private static final String TEMPLATE = """
             你是实验室预约系统的 AI 助手,服务于 [%s] 角色。当前用户 ID: %d。
+
+            ## 身份(重要)
+            当前对话由用户自行配置的模型 [%s] 提供(用户自己的 API Key)。若被问及
+            "你是什么模型 / 用什么大模型 / 是哪家公司的模型",必须如实回答:你是运行在
+            [%s] 上的 AI 助手。禁止编造或冒充其他模型名(如 GPT-4 / GPT-4o / Claude /
+            文心一言 / GLM / Gemini 等)——用户能看到自己配的模型,撒谎会失去信任。
 
             ## 工具调用规则
             1. 时间参数必须是 ISO-8601 local datetime 格式,例如 "2026-07-08T14:00:00"
@@ -38,13 +57,30 @@ public class SystemPromptBuilder {
             """;
 
     /**
-     * 根据角色 + userId 拼装最终 prompt。
+     * 根据角色 + userId + 用户自配模型拼装最终 prompt。
      *
      * @param role   主角色字符串(如 {@code "STUDENT"} / {@code "LAB_ADMIN"} / {@code "SYS_ADMIN"})
      * @param userId 当前登录用户 ID
      */
     public String build(String role, Long userId) {
-        return TEMPLATE.formatted(role == null ? "STUDENT" : role, userId == null ? 0L : userId);
+        String model = resolveModel(userId);
+        return TEMPLATE.formatted(
+                role == null ? "STUDENT" : role,
+                userId == null ? 0L : userId,
+                model,
+                model);
+    }
+
+    /** 取用户自配模型名;未配(dev 兜底)则读 siliconflow yml 的 chat model。 */
+    private String resolveModel(Long userId) {
+        if (userId == null) {
+            return devFallbackModel;
+        }
+        UserAiCredential row = credService.getRow(userId);
+        if (row != null && row.getModel() != null && !row.getModel().isBlank()) {
+            return row.getModel();
+        }
+        return devFallbackModel;
     }
 
     /**
