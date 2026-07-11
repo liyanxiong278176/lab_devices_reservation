@@ -101,6 +101,18 @@ public class ToolRegistry {
     }
 
     /**
+     * 按 {@code @Tool(name=...)} 查找(LLM 调用时用的名字,如 {@code "searchDevices"})。
+     *
+     * <p>与 {@link #findById} 区别:id 是内部键 {@code ClassName.methodName},
+     * name 是 LLM 看到的工具名。编排器 dispatch 时按 LLM 返回的 name 查 def。
+     */
+    public Optional<ToolDefinition> findByName(String name) {
+        return tools.values().stream()
+                .filter(t -> t.name().equals(name))
+                .findFirst();
+    }
+
+    /**
      * 角色声明被嵌在 @Tool(description = "...") 末尾:
      * <pre>"查询空闲设备 {roles:STUDENT,LAB_ADMIN}"</pre>
      * 没有 {roles:...} 就视为开放给所有角色。
