@@ -168,7 +168,38 @@ public class ToolLoopOrchestrator {
     void suspendForConfirm(Long convId, SecurityUserDetails user,
                            AssistantMessage.ToolCall call, ToolRegistry.ToolDefinition def,
                            List<Message> history, int turn) {
-        // Task 5 实现 — 本 task 留空 stub,签名固定不要改
+        Map<String, Object> args = parseArgs(call.arguments());
+        // msgId 传 null:此时尚未把 assistant 消息落库(message 由 phase2/收尾统一落),
+        // 审计行只靠 convId + toolName + args 定位即可
+        Long actionId = confirmationService.create(convId, null, call.name(), args);
+        String argsHash = sha256(call.arguments());
+
+        suspended.put(convId, new SuspendState(turn, new ArrayList<>(history), call.id(), argsHash, user));
+
+        frameService.push(convId, user, "step_update",
+                Map.of("step_id", turn, "status", "awaiting_confirmation",
+                        "text", "等待确认 " + call.name()));
+        frameService.push(convId, user, "confirmation_required", Map.of(
+                "action_id", actionId,
+                "tool_name", call.name(),
+                "reason", def.confirmReason(),
+                "risk_summary", def.confirmRisk(),
+                "estimated_impact", def.confirmImpact(),
+                "args", args
+        ));
+        log.info("write tool {} suspended for conv={} actionId={}", call.name(), convId, actionId);
+    }
+
+    /** 把 LLM 返的 tool arguments JSON 解成 Map(给 confirmationService.create 存参)。 */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> parseArgs(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(json, Map.class);
+        } catch (Exception e) {
+            log.warn("parseArgs failed for {}: {}", json, e.toString());
+            return Map.of();
+        }
     }
 
     static ToolResponseMessage toolResp(String id, String name, String data) {
