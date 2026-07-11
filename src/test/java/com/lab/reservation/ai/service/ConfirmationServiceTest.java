@@ -2,6 +2,7 @@ package com.lab.reservation.ai.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lab.reservation.ai.exception.ConfirmationException;
+import com.lab.reservation.entity.AiConversation;
 import com.lab.reservation.entity.AiToolExecution;
 import com.lab.reservation.mapper.AiToolExecutionMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,12 +22,14 @@ import static org.mockito.Mockito.when;
 class ConfirmationServiceTest {
 
     private AiToolExecutionMapper mapper;
+    private ConversationService conversationService;
     private ConfirmationService svc;
 
     @BeforeEach
     void setUp() {
         mapper = mock(AiToolExecutionMapper.class);
-        svc = new ConfirmationService(mapper, new ObjectMapper());
+        conversationService = mock(ConversationService.class);
+        svc = new ConfirmationService(mapper, new ObjectMapper(), conversationService);
     }
 
     @Test
@@ -151,6 +154,44 @@ class ConfirmationServiceTest {
         assertThat(old.getStatus()).isEqualTo(ConfirmationService.STATUS_EXPIRED);
         assertThat(old.getErrorMessage()).isEqualTo("PENDING_TIMEOUT");
         verify(mapper).updateById(old);
+    }
+
+    @Test
+    void confirmAndLoad_returns_null_when_not_owner() {
+        AiToolExecution row = pendingRow(77L, 1L);
+        AiConversation conv = new AiConversation();
+        conv.setUserId(1L);
+        when(mapper.selectById(77L)).thenReturn(row);
+        when(conversationService.getOrThrow(1L)).thenReturn(conv);
+
+        AiToolExecution got = svc.confirmAndLoad(77L, 999L);
+
+        assertThat(got).isNull();
+        verify(mapper, never()).updateById(any());
+    }
+
+    @Test
+    void confirmAndLoad_confirms_when_owner() {
+        AiToolExecution row = pendingRow(77L, 1L);
+        AiConversation conv = new AiConversation();
+        conv.setUserId(1L);
+        when(mapper.selectById(77L)).thenReturn(row);
+        when(conversationService.getOrThrow(1L)).thenReturn(conv);
+
+        AiToolExecution got = svc.confirmAndLoad(77L, 1L);
+
+        assertThat(got).isNotNull();
+        assertThat(got.getStatus()).isEqualTo(ConfirmationService.STATUS_CONFIRMED);
+    }
+
+    private AiToolExecution pendingRow(Long id, Long convId) {
+        AiToolExecution e = new AiToolExecution();
+        e.setId(id);
+        e.setConversationId(convId);
+        e.setStatus(ConfirmationService.STATUS_PENDING);
+        e.setToolName("createReservation");
+        e.setArguments("{}");
+        return e;
     }
 
     private AiToolExecution newPending(Long id) {

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lab.reservation.ai.exception.ConfirmationException;
+import com.lab.reservation.entity.AiConversation;
 import com.lab.reservation.entity.AiToolExecution;
 import com.lab.reservation.mapper.AiToolExecutionMapper;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +47,7 @@ public class ConfirmationService {
 
     private final AiToolExecutionMapper mapper;
     private final ObjectMapper objectMapper;
+    private final ConversationService conversationService;
 
     /**
      * 创建一条 pending 记录 — 通常由工具执行时(tool 收到 LLM 调用,但被
@@ -79,6 +81,36 @@ public class ConfirmationService {
         e.setStatus(STATUS_CONFIRMED);
         e.setUserConfirmedAt(LocalDateTime.now());
         mapper.updateById(e);
+    }
+
+    /**
+     * 原子地"校验属主 + 推进 pending→confirmed"并返回最新行;resume 路径(Task 6)用。
+     *
+     * <p>owner 解析:本表无 userId 列,经 {@code conversationId → AiConversation.userId} 间接比对。
+     * 行不存在 / 非 pending / 会话不属于 requester 均返回 {@code null}(幂等 no-op,
+     * 由调用方决定如何回应,通常是 silent 404)。注意:若会话本身不存在(数据完整性异常),
+     * {@code conversationService.getOrThrow} 会抛 {@code BusinessException} 上浮 ——
+     * 这是有意为之,真实异常不应被吞成 null。
+     *
+     * @param actionId        工具执行行 id
+     * @param requesterUserId 当前发起 confirm 的用户 id
+     * @return 已 confirmed 的行;校验失败返回 null
+     */
+    public AiToolExecution confirmAndLoad(Long actionId, Long requesterUserId) {
+        AiToolExecution e = mapper.selectById(actionId);
+        if (e == null) return null;
+        if (!STATUS_PENDING.equals(e.getStatus())) return null;
+        AiConversation conv = conversationService.getOrThrow(e.getConversationId());
+        if (conv.getUserId() == null || !conv.getUserId().equals(requesterUserId)) return null;
+        e.setStatus(STATUS_CONFIRMED);
+        e.setUserConfirmedAt(LocalDateTime.now());
+        mapper.updateById(e);
+        return e;
+    }
+
+    /** 裸读一行(不做状态/属主校验);resume 路径在 confirmAndLoad 返回 null 时用于诊断。 */
+    public AiToolExecution getRow(Long actionId) {
+        return mapper.selectById(actionId);
     }
 
     /** 执行成功:confirmed → executed。 */
