@@ -87,8 +87,7 @@ export const useAiStore = defineStore('ai', () => {
         break
       case 'execution_result':
         markConfirmation(frame.action_id, frame.ok ? 'executed' : 'error')
-        if (frame.ok) state.value = 'done'
-        else state.value = 'error'
+        state.value = frame.ok ? 'done' : frame.cancelled ? 'idle' : 'error'
         break
       case 'error':
         lastError.value = { code: frame.code, msg: frame.msg }
@@ -176,7 +175,8 @@ export const useAiStore = defineStore('ai', () => {
 
   function cancelAction(actionId: number) {
     markConfirmation(actionId, 'cancelled')
-    sendAiMsg({ kind: 'cancel_action', actionId })
+    state.value = 'idle'
+    sendAiMsg({ kind: 'cancel_action', actionId, convId: convId.value })
   }
 
   function cancelSession() {

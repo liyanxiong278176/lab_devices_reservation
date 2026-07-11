@@ -32,6 +32,7 @@ export type WsServerFrame =
       conv_id: number
       action_id: number
       ok: boolean
+      cancelled?: boolean
       code: string
       msg: string
       data: unknown
@@ -43,7 +44,7 @@ export type WsServerFrame =
 export type WsClientMsg =
   | { kind: 'user_message'; convId: number | null; text: string }
   | { kind: 'confirm_action'; actionId: number }
-  | { kind: 'cancel_action'; actionId: number }
+  | { kind: 'cancel_action'; actionId: number; convId: number | null }
   | { kind: 'resync'; convId: number; lastSeq: number }
   | { kind: 'cancel_session'; convId: number }
 
