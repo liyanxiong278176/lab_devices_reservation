@@ -8,6 +8,7 @@ import com.lab.reservation.mapper.AiConversationMapper;
 import com.lab.reservation.mapper.AiMessageMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Service;
@@ -20,10 +21,10 @@ import java.util.List;
 /**
  * 对话会话 + 消息管理:CRUD + 90 天滚动清理 + 滑动窗口(给 ChatClient prompt 用)。
  *
- * <p>{@link #buildPrompt(Long, String)} 只把历史 user 消息重建为 Spring AI 的
- * {@link UserMessage} 注入 prompt;assistant 段暂不显式重建(后续 Phase
- * 可加 {@code MessageConverter});tool 段同理。这样做可以保持 prompt 体积
- * 由 {@link AiProperties#getContextWindowTurns()} 控制,token 不会爆。
+ * <p>{@link #buildPrompt(Long)} 与 {@link #buildPrompt(Long, String)} 把历史
+ * user / assistant 段重建为 Spring AI 的 {@link UserMessage} / {@link AssistantMessage}
+ * 注入 prompt;tool 段(role=tool)当前 {@link #appendMessage} 不写,跳过。
+ * 这样保持 prompt 体积由 {@link AiProperties#getContextWindowTurns()} 控制,token 不会爆。
  *
  * @author AI Assistant
  * @since 2026-07-08
@@ -77,10 +78,31 @@ public class ConversationService {
     }
 
     /**
-     * 滑动窗口:从最近 {@code contextWindowTurns * 2} 条消息中挑出所有 user 消息,
-     * 按时间正序拼接,最后追加当前输入,组成 ChatClient 的 messages 列表。
+     * 从 DB 重建最近窗口消息(user + assistant),不追加 currentText。
+     *
+     * <p>runLoop 用此版:此时 user 消息已被 AiAssistantService 提前持久化进 DB,
+     * 再传 currentText 追加会导致用户请求重复。
+     */
+    public List<Message> buildPrompt(Long convId) {
+        return buildPromptInternal(convId, false, null);
+    }
+
+    /**
+     * 旧版兼容:从 DB 重建 + 末尾追加 currentText。
+     *
+     * <p>仅当调用方尚未把当前 user 输入持久化时使用(否则会重复)。
      */
     public List<Message> buildPrompt(Long convId, String currentText) {
+        return buildPromptInternal(convId, true, currentText);
+    }
+
+    /**
+     * 滑动窗口:取最近 {@code contextWindowTurns * 2} 条消息(DESC),反转成正序,
+     * 把 user / assistant 段重建为 Spring AI 的 {@link Message}。tool 段当前
+     * {@link #appendMessage} 不写,跳过。{@code appendCurrent} 控制是否末尾追加
+     * currentText(2-arg 重载为 true,1-arg 为 false)。
+     */
+    private List<Message> buildPromptInternal(Long convId, boolean appendCurrent, String currentText) {
         int window = props.getContextWindowTurns();
         int fetch = Math.max(1, window * 2);
         List<AiMessage> recent = msgMapper.selectList(
@@ -93,12 +115,16 @@ public class ConversationService {
 
         List<Message> out = new ArrayList<>();
         for (AiMessage m : recent) {
-            if ("user".equals(m.getRole())) {
-                out.add(new UserMessage(m.getContent() == null ? "" : m.getContent()));
+            String c = m.getContent() == null ? "" : m.getContent();
+            switch (m.getRole()) {
+                case "user" -> out.add(new UserMessage(c));
+                case "assistant" -> out.add(new AssistantMessage(c));
+                default -> { /* tool 段:appendMessage 当前不写 "tool" 角色,跳过 */ }
             }
-            // assistant/tool 暂不显式重建
         }
-        out.add(new UserMessage(currentText));
+        if (appendCurrent && currentText != null) {
+            out.add(new UserMessage(currentText));
+        }
         return out;
     }
 
