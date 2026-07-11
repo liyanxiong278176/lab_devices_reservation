@@ -123,6 +123,15 @@ class ToolLoopOrchestratorTest {
         verify(frameService).push(eq(1L), eq(user), eq("execution_result"), anyMap());
         verify(frameService).push(eq(1L), eq(user), eq("assistant_done"), anyMap());
         assertThat(orch.suspended).doesNotContainKey(1L);
+
+        // 验证 ToolResponseMessage 入 history(round-1 fix 防回归)
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.List<org.springframework.ai.chat.messages.Message>> histCap =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(llm).callOnce(any(), histCap.capture(), any(), anyList());
+        boolean hasToolResp = histCap.getValue().stream()
+                .anyMatch(m -> m instanceof org.springframework.ai.chat.messages.ToolResponseMessage);
+        assertThat(hasToolResp).as("history passed to runTurns must contain the ToolResponseMessage").isTrue();
     }
 
     private ChatResponse resp(String text) {

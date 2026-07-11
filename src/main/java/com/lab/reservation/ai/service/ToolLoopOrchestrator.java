@@ -40,6 +40,14 @@ public class ToolLoopOrchestrator {
     final AiFrameService frameService;
     final SystemPromptBuilder promptBuilder;
 
+    /**
+     * 默认配置(compact、无 indent)的 Jackson ObjectMapper — 用于把 args Map 序列化为
+     * canonical JSON 字符串,以便与 {@link ConfirmationService#create} 内部
+     * {@code toJson(args)} 的输出逐字节一致(argsHash 比对依赖此一致性)。
+     */
+    private static final com.fasterxml.jackson.databind.ObjectMapper CANONICAL_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     /** convId → 挂起的循环状态(写工具等确认)。in-memory,单实例。 */
     final Map<Long, SuspendState> suspended = new ConcurrentHashMap<>();
     /** convId → cancel flag。 */
@@ -173,7 +181,9 @@ public class ToolLoopOrchestrator {
         // msgId 传 null:此时尚未把 assistant 消息落库(message 由 phase2/收尾统一落),
         // 审计行只靠 convId + toolName + args 定位即可
         Long actionId = confirmationService.create(convId, null, call.name(), args);
-        String argsHash = sha256(call.arguments());
+        // 关键:argsHash 必须基于 canonical JSON(与 create() 内部 toJson(args) 同一序列化
+        // 形态),否则 LLM 原始 JSON 与 Jackson canonical 在空格/键序上的差异会触发假 ARGS_CHANGED。
+        String argsHash = sha256(canonicalJson(args));
 
         suspended.put(convId, new SuspendState(turn, new ArrayList<>(history), call.id(), argsHash, user));
 
@@ -271,6 +281,20 @@ public class ToolLoopOrchestrator {
         } catch (Exception e) {
             log.warn("parseArgs failed for {}: {}", json, e.toString());
             return Map.of();
+        }
+    }
+
+    /**
+     * 把 args Map 序列化为 canonical JSON(默认配置 compact、无 indent)。
+     * 与 {@link ConfirmationService#create} 内的 {@code toJson(args)} 输出逐字节一致 ——
+     * 两侧 ObjectMapper 均为默认配置,parseArgs 保留 LinkedHashMap 插入序,键序稳定。
+     * 用于 argsHash 计算,避免 LLM 原始 JSON 与 Jackson canonical 在空格/键序上的差异。
+     */
+    static String canonicalJson(Map<String, Object> args) {
+        try {
+            return CANONICAL_MAPPER.writeValueAsString(args);
+        } catch (Exception e) {
+            return "{}";
         }
     }
 
