@@ -254,6 +254,29 @@ public class ToolLoopOrchestrator {
         runTurns(cc, user, row.getConversationId(), st.history, st.turn);
     }
 
+    /** convId 是否挂起等确认 — 给 AiAssistantService 的 BUSY 守卫用(Task 10)。 */
+    public boolean isSuspended(Long convId) {
+        return suspended.containsKey(convId);
+    }
+
+    /**
+     * 用户取消挂起的写工具确认(Task 7):
+     * <pre>
+     *   1. confirmationService.cancel 推 pending→cancelled(审计落库)
+     *   2. 清 in-memory 挂起态
+     *   3. 置 cancel flag,让任何 in-flight runTurns 迭代下一轮短路
+     *   4. 推 execution_result 帧(ok=false, cancelled=true)给前端关闭 UI
+     * </pre>
+     */
+    public void cancelAction(SecurityUserDetails user, Long actionId, Long convId) {
+        confirmationService.cancel(actionId);
+        suspended.remove(convId);
+        // cancel flag set so any in-flight runTurns iteration short-circuits next turn
+        cancelFlags.computeIfAbsent(convId, k -> new AtomicBoolean(false)).set(true);
+        frameService.push(convId, user, "execution_result",
+                Map.of("action_id", actionId, "ok", false, "cancelled", true));
+    }
+
     /**
      * SuspendState 已丢(实例重启 / 横向扩容落到别的节点):尽力执行 + 落库,
      * 但无法把结果喂回 LLM 续答,只能推一条兜底文案。

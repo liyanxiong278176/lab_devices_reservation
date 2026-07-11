@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,8 +49,9 @@ class ToolLoopOrchestratorTest {
     void setup() {
         orch = new ToolLoopOrchestrator(llm, registry, resolver, conversationService,
                 confirmationService, frameService, promptBuilder);
-        when(user.getUserId()).thenReturn(1L);
-        when(promptBuilder.build(any(), anyLong())).thenReturn("sys");
+        // lenient: cancelAction/isSuspended 不经 runTurns,Strict 模式会判多余
+        lenient().when(user.getUserId()).thenReturn(1L);
+        lenient().when(promptBuilder.build(any(), anyLong())).thenReturn("sys");
     }
 
     @Test
@@ -132,6 +134,23 @@ class ToolLoopOrchestratorTest {
         boolean hasToolResp = histCap.getValue().stream()
                 .anyMatch(m -> m instanceof org.springframework.ai.chat.messages.ToolResponseMessage);
         assertThat(hasToolResp).as("history passed to runTurns must contain the ToolResponseMessage").isTrue();
+    }
+
+    @Test
+    void cancel_action_removes_suspend_and_pushes_cancelled_result() {
+        orch.suspended.put(1L, new ToolLoopOrchestrator.SuspendState(
+                0, new ArrayList<>(), "c1", "hash", user));
+        orch.cancelAction(user, 77L, 1L);
+        assertThat(orch.suspended).doesNotContainKey(1L);
+        verify(confirmationService).cancel(77L);
+        verify(frameService).push(eq(1L), eq(user), eq("execution_result"), anyMap());
+    }
+
+    @Test
+    void is_suspended_reflects_suspended_map() {
+        assertThat(orch.isSuspended(1L)).isFalse();
+        orch.suspended.put(1L, new ToolLoopOrchestrator.SuspendState(0, new ArrayList<>(), "c1", "h", user));
+        assertThat(orch.isSuspended(1L)).isTrue();
     }
 
     private ChatResponse resp(String text) {
