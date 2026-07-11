@@ -1,5 +1,6 @@
 package com.lab.reservation.ai.service;
 
+import com.lab.reservation.entity.AiConversation;
 import com.lab.reservation.entity.AiToolExecution;
 import com.lab.reservation.security.SecurityUserDetails;
 import org.junit.jupiter.api.BeforeEach;
@@ -151,6 +152,23 @@ class ToolLoopOrchestratorTest {
         assertThat(orch.isSuspended(1L)).isFalse();
         orch.suspended.put(1L, new ToolLoopOrchestrator.SuspendState(0, new ArrayList<>(), "c1", "h", user));
         assertThat(orch.isSuspended(1L)).isTrue();
+    }
+
+    @Test
+    void on_expire_removes_suspend_and_pushes_expired_frame() {
+        orch.suspended.put(1L, new ToolLoopOrchestrator.SuspendState(0, new ArrayList<>(), "c1", "h", user));
+        AiToolExecution row = new AiToolExecution();
+        row.setId(77L);
+        row.setConversationId(1L);
+        when(confirmationService.getRow(77L)).thenReturn(row);
+        AiConversation conv = new AiConversation();
+        conv.setUserId(1L);
+        when(conversationService.getOrThrow(1L)).thenReturn(conv);
+
+        orch.onExpire(1L, 77L);
+
+        assertThat(orch.suspended).doesNotContainKey(1L);
+        verify(frameService).pushByUser(eq(1L), eq(1L), eq("confirmation_expired"), anyMap());
     }
 
     private ChatResponse resp(String text) {

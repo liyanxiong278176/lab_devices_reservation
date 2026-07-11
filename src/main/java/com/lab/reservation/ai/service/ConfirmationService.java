@@ -156,10 +156,15 @@ public class ConfirmationService {
     /**
      * 5 分钟超时批量将 pending 转为 expired(由 AiActionTimeoutScheduler 调)。
      *
+     * <p>返回过期后的行(含 conversationId / id)而非单纯计数 — 调用方(scheduler)
+     * 需逐行通知 {@code ToolLoopOrchestrator.onExpire} 清 in-memory 挂起态 + 推
+     * {@code confirmation_expired} 帧。返回 List 而非 int 避免循环依赖:
+     * ConfirmationService 不能反向依赖 Orchestrator。
+     *
      * @param pendingTimeoutMinutes 阈值(分钟) — created_at 早于 now - 此值的 pending 才过期
-     * @return 被置为 expired 的行数
+     * @return 被置为 expired 的行(已 updateById,status=expired)
      */
-    public int expireOldPending(int pendingTimeoutMinutes) {
+    public List<AiToolExecution> expireOldPending(int pendingTimeoutMinutes) {
         LocalDateTime threshold = LocalDateTime.now().minusMinutes(pendingTimeoutMinutes);
         List<AiToolExecution> old = mapper.selectList(
                 new QueryWrapper<AiToolExecution>()
@@ -172,7 +177,7 @@ public class ConfirmationService {
             mapper.updateById(e);
             log.info("AI action expired: id={}", e.getId());
         });
-        return old.size();
+        return old;
     }
 
     private String toJson(Object o) {

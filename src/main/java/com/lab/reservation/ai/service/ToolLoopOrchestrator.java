@@ -260,6 +260,30 @@ public class ToolLoopOrchestrator {
     }
 
     /**
+     * 超时路径(Task 9):写工具确认 5min 未确认 → AiActionTimeoutScheduler 把行置 expired 后
+     * 逐行调此方法。清 in-memory 挂起态(否则会话永久卡 BUSY)+ 推 {@code confirmation_expired}
+     * 帧让前端关闭确认卡片。
+     *
+     * <p>userId 经 row → conversation 解析;解析失败(行不存在 / 会话查不到)仍清挂起态,
+     * 只是 STOMP 不推(用户已不在线或数据完整性异常,pushByUser 内部 null userId 也不推)。
+     */
+    public void onExpire(Long convId, Long actionId) {
+        suspended.remove(convId);
+        AiToolExecution row = confirmationService.getRow(actionId);
+        Long userId = null;
+        if (row != null && row.getConversationId() != null) {
+            try {
+                userId = conversationService.getOrThrow(row.getConversationId()).getUserId();
+            } catch (Exception ignore) {
+                // 会话查不到 / 数据完整性异常:清挂起态已足够,不强推 STOMP
+            }
+        }
+        frameService.pushByUser(convId, userId, "confirmation_expired",
+                Map.of("action_id", actionId, "reason", "PENDING_TIMEOUT"));
+        log.info("expired action {} conv {} suspended cleared", actionId, convId);
+    }
+
+    /**
      * 用户取消挂起的写工具确认(Task 7):
      * <pre>
      *   1. confirmationService.cancel 推 pending→cancelled(审计落库)

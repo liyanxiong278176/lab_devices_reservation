@@ -49,6 +49,18 @@ public class AiFrameService {
      * 持久化列与推送 payload 内容一致(同一 JSON 字符串)。
      */
     public void push(Long convId, SecurityUserDetails user, String type, Map<String, Object> payload) {
+        pushByUser(convId, user.getUserId(), type, payload);
+    }
+
+    /**
+     * 同 {@link #push} 但以 userId 直传 — 给无 SecurityUserDetails 上下文的路径
+     * (如 {@code AiActionTimeoutScheduler} 超时清挂起态)用。
+     *
+     * <p>{@code payload} 会被 copy 一份 mutable 后写 {@code seq} / {@code conv_id} / {@code type};
+     * 持久化列与推送 payload 内容一致(同一 JSON 字符串)。{@code userId} 为 null 时
+     * 仍落库但不推 STOMP(避免 Scheduled 路径造不出合法 user topic)。
+     */
+    public void pushByUser(Long convId, Long userId, String type, Map<String, Object> payload) {
         Long seq = null;
         try {
             seq = redis.opsForValue().increment("ai:ws:seq:" + convId);
@@ -65,18 +77,19 @@ public class AiFrameService {
         mutable.put("type", type);
         mutable.put("seq", seq);
         mutable.put("conv_id", convId);
-        payload = mutable;
 
         AiWsFrame f = new AiWsFrame();
         f.setConversationId(convId);
-        f.setUserId(user.getUserId());
+        f.setUserId(userId);
         f.setFrameSeq(seq);
         f.setFrameType(type);
-        f.setPayload(toJson(payload));
+        f.setPayload(toJson(mutable));
         f.setCreatedAt(LocalDateTime.now());
         mapper.insert(f);
 
-        ws.convertAndSendToUser(String.valueOf(user.getUserId()), "/queue/assistant-stream", payload);
+        if (userId != null) {
+            ws.convertAndSendToUser(String.valueOf(userId), "/queue/assistant-stream", mutable);
+        }
     }
 
     /**

@@ -148,11 +148,11 @@ class ConfirmationServiceTest {
         old.setCreatedAt(java.time.LocalDateTime.now().minusMinutes(10));
         when(mapper.selectList(any())).thenReturn(java.util.List.of(old));
 
-        int n = svc.expireOldPending(5);
+        java.util.List<AiToolExecution> expired = svc.expireOldPending(5);
 
-        assertThat(n).isEqualTo(1);
-        assertThat(old.getStatus()).isEqualTo(ConfirmationService.STATUS_EXPIRED);
-        assertThat(old.getErrorMessage()).isEqualTo("PENDING_TIMEOUT");
+        assertThat(expired).hasSize(1);
+        assertThat(expired.get(0).getStatus()).isEqualTo(ConfirmationService.STATUS_EXPIRED);
+        assertThat(expired.get(0).getErrorMessage()).isEqualTo("PENDING_TIMEOUT");
         verify(mapper).updateById(old);
     }
 
