@@ -86,7 +86,7 @@ export const useAiStore = defineStore('ai', () => {
         markConfirmation(frame.action_id, 'expired')
         break
       case 'execution_result':
-        markConfirmation(frame.action_id, frame.ok ? 'executed' : 'error')
+        markConfirmation(frame.action_id, frame.ok ? 'executed' : (frame.cancelled ? 'cancelled' : 'error'))
         state.value = frame.ok ? 'done' : frame.cancelled ? 'idle' : 'error'
         break
       case 'error':
