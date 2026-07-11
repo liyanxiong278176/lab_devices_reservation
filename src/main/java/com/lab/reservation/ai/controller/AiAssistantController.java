@@ -42,7 +42,7 @@ public class AiAssistantController {
 
     @MessageMapping("/assistant/cancel")
     public void onCancel(WsClientMsg.CancelAction msg, Principal principal) {
-        service.handleCancel(toUser(principal), msg.actionId());
+        service.handleCancel(toUser(principal), msg.actionId(), msg.convId());
     }
 
     @MessageMapping("/assistant/resync")

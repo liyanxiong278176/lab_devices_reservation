@@ -16,7 +16,7 @@ public sealed interface WsClientMsg {
     record ConfirmAction(Long actionId) implements WsClientMsg {}
 
     /** 取消某个待确认动作。 */
-    record CancelAction(Long actionId) implements WsClientMsg {}
+    record CancelAction(Long actionId, Long convId) implements WsClientMsg {}
 
     /** 客户端断线重连后按 lastSeq 重新拉取历史帧。 */
     record Resync(Long convId, Long lastSeq) implements WsClientMsg {}

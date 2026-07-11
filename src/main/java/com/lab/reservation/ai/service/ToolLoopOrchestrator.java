@@ -260,6 +260,18 @@ public class ToolLoopOrchestrator {
     }
 
     /**
+     * 用户主动中断当前会话(Task 10: AiAssistantService.handleCancelSession 委托)。
+     * 置 cancel flag(下次 runTurns 迭代短路 + phase2 doOnNext 跳过 delta)+
+     * 推 cancelled step_update 帧让前端 UI 回 idle。
+     */
+    public void requestCancel(Long convId, SecurityUserDetails user) {
+        cancelFlags.computeIfAbsent(convId, k -> new AtomicBoolean(false)).set(true);
+        frameService.push(convId, user, "step_update",
+                Map.of("step_id", -1, "status", "cancelled", "text", "已取消"));
+        log.info("user {} requested cancel session {}", user.getUserId(), convId);
+    }
+
+    /**
      * 超时路径(Task 9):写工具确认 5min 未确认 → AiActionTimeoutScheduler 把行置 expired 后
      * 逐行调此方法。清 in-memory 挂起态(否则会话永久卡 BUSY)+ 推 {@code confirmation_expired}
      * 帧让前端关闭确认卡片。
