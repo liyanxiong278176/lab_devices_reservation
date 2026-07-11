@@ -1,5 +1,6 @@
 package com.lab.reservation.ai.service;
 
+import com.lab.reservation.entity.AiToolExecution;
 import com.lab.reservation.security.SecurityUserDetails;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -188,6 +189,77 @@ public class ToolLoopOrchestrator {
                 "args", args
         ));
         log.info("write tool {} suspended for conv={} actionId={}", call.name(), convId, actionId);
+    }
+
+    /**
+     * 用户确认后恢复循环(Task 6):
+     * <pre>
+     *   1. confirmAndLoad 原子校验 owner + 推进 pending→confirmed
+     *   2. 取 in-memory SuspendState,校验 args 哈希一致(防 TOCTOU)
+     *   3. dispatch 写工具 → execute 落库 → execution_result 帧
+     *   4. 把 ToolResponseMessage 追加进 history(LLM 续循环时能复述结果)
+     *   5. 复用 runTurns 从挂起轮次续跑 → 无 toolCall 进 phase2
+     * </pre>
+     * SuspendState 丢失(重启 / 别实例)走 fallbackSingleExec:只执行 + 落库,无法续答。
+     */
+    public void resumeFromConfirm(ChatClient cc, SecurityUserDetails user, Long actionId) {
+        AiToolExecution row = confirmationService.confirmAndLoad(actionId, user.getUserId());
+        if (row == null) {
+            frameService.push(null, user, "error",
+                    Map.of("code", "FORBIDDEN", "msg", "无权操作或状态非法"));
+            return;
+        }
+        SuspendState st = suspended.get(row.getConversationId());
+        if (st == null) {
+            fallbackSingleExec(cc, user, actionId, row);
+            return;
+        }
+        if (!st.pendingArgsHash.equals(sha256(row.getArguments()))) {
+            frameService.push(row.getConversationId(), user, "error",
+                    Map.of("code", "ARGS_CHANGED", "msg", "确认参数已变化,请重新发起"));
+            suspended.remove(row.getConversationId());
+            return;
+        }
+        Map<String, ToolCallback> cbMap = callbacksFor(user);
+        ToolCallback cb = cbMap.get(row.getToolName());
+        if (cb == null) {
+            confirmationService.error(actionId, "tool vanished");
+            frameService.push(row.getConversationId(), user, "error",
+                    Map.of("code", "TOOL_EXECUTION_FAILED", "msg", "工具已失效"));
+            suspended.remove(row.getConversationId());
+            return;
+        }
+        frameService.push(row.getConversationId(), user, "step_update",
+                Map.of("status", "running", "text", "执行 " + row.getToolName()));
+        String result = dispatch(cb, row.getArguments());
+        confirmationService.execute(actionId, result);
+        frameService.push(row.getConversationId(), user, "execution_result",
+                Map.of("action_id", actionId, "ok", true, "result", result));
+
+        // 关键:把确认的工具结果入 history,续循环时 LLM 才能准确复述
+        st.history.add(toolResp(st.pendingCallId, row.getToolName(), result));
+        suspended.remove(row.getConversationId());
+
+        // 复用 runTurns 续跑(DRY):从 st.turn 起,history 已含 tool 结果
+        runTurns(cc, user, row.getConversationId(), st.history, st.turn);
+    }
+
+    /**
+     * SuspendState 已丢(实例重启 / 横向扩容落到别的节点):尽力执行 + 落库,
+     * 但无法把结果喂回 LLM 续答,只能推一条兜底文案。
+     */
+    void fallbackSingleExec(ChatClient cc, SecurityUserDetails user, Long actionId, AiToolExecution row) {
+        Map<String, ToolCallback> cbMap = callbacksFor(user);
+        ToolCallback cb = cbMap.get(row.getToolName());
+        boolean ok = cb != null;
+        String result = ok ? dispatch(cb, row.getArguments()) : "{\"error\":\"tool vanished\"}";
+        confirmationService.execute(actionId, result);
+        frameService.push(row.getConversationId(), user, "execution_result",
+                Map.of("action_id", actionId, "ok", ok, "result", result));
+        frameService.push(row.getConversationId(), user, "step_update",
+                Map.of("status", "completed", "text", "完成"));
+        frameService.push(row.getConversationId(), user, "assistant_done",
+                Map.of("text", "操作已完成(会话上下文已失效,无法续答)", "tool_calls", List.of()));
     }
 
     /** 把 LLM 返的 tool arguments JSON 解成 Map(给 confirmationService.create 存参)。 */

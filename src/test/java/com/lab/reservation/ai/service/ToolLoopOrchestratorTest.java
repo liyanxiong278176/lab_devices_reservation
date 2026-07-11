@@ -1,5 +1,6 @@
 package com.lab.reservation.ai.service;
 
+import com.lab.reservation.entity.AiToolExecution;
 import com.lab.reservation.security.SecurityUserDetails;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -91,6 +92,37 @@ class ToolLoopOrchestratorTest {
         // dispatch 未触发(挂起);callback.call 没被调
         verify(frameService, never()).push(eq(1L), eq(user), eq("assistant_done"), anyMap());
         assertThat(orch.suspended).containsKey(1L);
+    }
+
+    @Test
+    void confirm_resumes_appends_tool_response_and_continues_to_phase2() {
+        String argsJson = "{\"deviceId\":1,\"startTime\":\"2026-07-11T14:00:00\",\"endTime\":\"2026-07-11T16:00:00\"}";
+        orch.suspended.put(1L, new ToolLoopOrchestrator.SuspendState(
+                0, new ArrayList<>(List.of(new UserMessage("hi"))), "call_1",
+                ToolLoopOrchestrator.sha256(argsJson), user));
+
+        AiToolExecution row = new AiToolExecution();
+        row.setId(77L);
+        row.setConversationId(1L);
+        row.setToolName("createReservation");
+        row.setArguments(argsJson);
+        row.setStatus("pending");
+        when(confirmationService.confirmAndLoad(77L, 1L)).thenReturn(row);
+
+        // 续循环第二轮 callOnce → 无 toolCall → phase2
+        when(llm.callOnce(any(), anyList(), any(), anyList()))
+                .thenReturn(resp("已为您预约成功,预约号 123"));
+        when(llm.streamFinal(any(), anyList(), any())).thenReturn(Flux.just("已预约"));
+        ToolCallback cb = mock(ToolCallback.class);
+        when(cb.call(anyString())).thenReturn("{\"ok\":true,\"data\":{\"reservation_id\":123}}");
+        when(resolver.resolve(user)).thenReturn(Map.of("createReservation", cb));
+
+        orch.resumeFromConfirm(chatClient, user, 77L);
+
+        verify(confirmationService).execute(eq(77L), any());
+        verify(frameService).push(eq(1L), eq(user), eq("execution_result"), anyMap());
+        verify(frameService).push(eq(1L), eq(user), eq("assistant_done"), anyMap());
+        assertThat(orch.suspended).doesNotContainKey(1L);
     }
 
     private ChatResponse resp(String text) {
