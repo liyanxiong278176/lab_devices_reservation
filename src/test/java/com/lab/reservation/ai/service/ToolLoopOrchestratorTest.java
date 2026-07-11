@@ -71,6 +71,22 @@ class ToolLoopOrchestratorTest {
     }
 
     @Test
+    void empty_response_from_callOnce_pushes_EMPTY_RESPONSE_not_stuck() {
+        // 模拟熔断 fallback:空 content + 无 toolCalls 的 ChatResponse(见 LlmClient.callOnceFallback)
+        ChatResponse empty = new ChatResponse(List.of(new Generation(new AssistantMessage(""))));
+        when(llm.callOnce(any(), anyList(), any(), anyList())).thenReturn(empty);
+        when(conversationService.buildPrompt(anyLong())).thenReturn(List.of(new UserMessage("hi")));
+
+        orch.runLoop(chatClient, user, 1L, "你好");
+
+        // 关键:推 EMPTY_RESPONSE error 帧,不卡 step_running,不进 phase2
+        verify(frameService).push(eq(1L), eq(user), eq("error"),
+                argThat(m -> "EMPTY_RESPONSE".equals(m.get("code"))));
+        verify(frameService, never()).push(eq(1L), eq(user), eq("delta"), anyMap());
+        verify(frameService, never()).push(eq(1L), eq(user), eq("assistant_done"), anyMap());
+    }
+
+    @Test
     void write_tool_suspends_and_pushes_confirmation_required_without_executing() {
         // LLM 第一轮决定调 createReservation(需确认)
         AssistantMessage am = new AssistantMessage("",

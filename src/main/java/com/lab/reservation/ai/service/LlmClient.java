@@ -3,8 +3,10 @@ package com.lab.reservation.ai.service;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
@@ -52,12 +54,17 @@ public class LlmClient {
                 .chatResponse();
     }
 
-    /** 熔断 fallback:返合成空 ChatResponse(content=null,无 toolCalls),编排器走 EMPTY_RESPONSE。 */
+    /**
+     * 熔断 fallback:返合成 ChatResponse,含一条空内容 AssistantMessage(无 toolCalls)。
+     * 编排器 runTurns 见 calls 空 + content 空 → 走 EMPTY_RESPONSE 错误分支。
+     * 注意:不能返 new ChatResponse(List.of()) — getResult() 会返 null,runTurns 的
+     * resp.getResult().getOutput() 直接 NPE,error 帧推不出去,前端卡死。
+     */
     @SuppressWarnings("unused")
     public ChatResponse callOnceFallback(String sys, List<Message> history,
                                          ChatClient cc, List<ToolCallback> tools, Throwable t) {
         log.warn("LLM callOnce fallback: {}", t.getMessage());
-        return new ChatResponse(List.of());
+        return new ChatResponse(List.of(new Generation(new AssistantMessage(""))));
     }
 
     /**
