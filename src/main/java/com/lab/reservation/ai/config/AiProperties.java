@@ -37,9 +37,9 @@ public class AiProperties {
     @Data
     public static class RateLimit {
         /** 桶容量(突发上限)。 */
-        private int capacity = 20;
+        private int capacity = 30;
         /** 每分钟补充令牌数。 */
-        private int refillPerMinute = 20;
+        private int refillPerMinute = 30;
     }
 
     @Data
