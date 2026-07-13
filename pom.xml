@@ -91,14 +91,6 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-vector-store-chroma</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-advisors-vector-store</artifactId>
-        </dependency>
 
         <!-- 限流 / 熔断 -->
         <!-- 计划指定 bucket4j_jdk17-redis:8.10.1,但该 artifactId 在 8.x 是纯聚合 POM

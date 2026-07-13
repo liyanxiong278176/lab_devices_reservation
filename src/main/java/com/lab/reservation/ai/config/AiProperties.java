@@ -4,7 +4,7 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * AI 助手全局配置(限流 / 上下文 / RAG / pending 超时)。
+ * AI 助手全局配置(限流 / 上下文 / pending 超时)。
  *
  * <p>对应 application*.yml 中 {@code ai.assistant.*} 节点。
  *
@@ -31,22 +31,11 @@ public class AiProperties {
      */
     private long pendingTimeoutCheckMs = 60000L;
 
-    /** RAG 检索参数。 */
-    private Rag rag = new Rag();
-
     @Data
     public static class RateLimit {
         /** 桶容量(突发上限)。 */
         private int capacity = 30;
         /** 每分钟补充令牌数。 */
         private int refillPerMinute = 30;
-    }
-
-    @Data
-    public static class Rag {
-        /** 召回 top-K 文档数。 */
-        private int topK = 5;
-        /** 余弦相似度阈值,低于此值的 chunk 不注入 prompt。 */
-        private double similarityThreshold = 0.6;
     }
 }

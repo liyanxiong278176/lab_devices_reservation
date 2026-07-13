@@ -11,29 +11,11 @@ spring:
           temperature: 0.3
           max-tokens: 4096
           stream-usage: true
-      # 嵌入模型:硅基流动(bge-m3 中文 embedding 强)
-      # 注册: https://cloud.siliconflow.cn → API 密钥
-      embedding:
-        base-url: https://api.siliconflow.cn
-        api-key: REPLACE_ME_WITH_SILICONFLOW_API_KEY
-        options:
-          model: BAAI/bge-m3
-          dimensions: 1024
-    vectorstore:
-      chroma:
-        client:
-          host: http://localhost
-          port: 9000
-        collection-name: lab_manuals
-        initialize-schema: true
 
 ai:
   assistant:
     ratelimit:
-      capacity: 20
-      refill-per-minute: 20
+      capacity: 30
+      refill-per-minute: 30
     context-window-turns: 10
     pending-timeout-minutes: 5
-    rag:
-      top-k: 5
-      similarity-threshold: 0.6

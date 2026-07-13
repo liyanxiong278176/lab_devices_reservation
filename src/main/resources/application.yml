@@ -6,14 +6,6 @@ spring:
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
-  ai:
-    vectorstore:
-      chroma:
-        client:
-          host: http://localhost
-          port: 9000
-        collection-name: lab_manuals
-        initialize-schema: true
 server:
   port: 8080
   servlet:
@@ -38,13 +30,10 @@ jwt:
 ai:
   assistant:
     ratelimit:
-      capacity: 20
-      refill-per-minute: 20
+      capacity: 30
+      refill-per-minute: 30
     context-window-turns: 10
     pending-timeout-minutes: 5
-    rag:
-      top-k: 5
-      similarity-threshold: 0.6
 # 熔断器(从 gitignored application-siliconflow.yml 迁来;实例改名 siliconflow→llm 匹配 @CircuitBreaker(name="llm"))
 resilience4j:
   circuitbreaker:

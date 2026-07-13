@@ -34,8 +34,7 @@ class AiEvalDatasetTest {
                 "ReservationTool", "searchMyReservations,createReservation,cancelReservation",
                 "RecommendTool", "recommendDevices",
                 "RepairTool", "submitRepairTicket,takeRepairTicket",
-                "AdminTool", "queryLabReservations",
-                "RagManualTool", "searchDeviceManuals"
+                "AdminTool", "queryLabReservations"
         );
         for (var entry : expected.entrySet()) {
             Class<?> cls = classOrNull(AI_TOOL_PKG + "." + entry.getKey());
@@ -87,8 +86,7 @@ class AiEvalDatasetTest {
                 "DeviceTool.searchDevices", "DeviceTool.getDeviceDetails",
                 "ReservationTool.searchMyReservations",
                 "RecommendTool.recommendDevices",
-                "AdminTool.queryLabReservations",
-                "RagManualTool.searchDeviceManuals"
+                "AdminTool.queryLabReservations"
         };
         for (String qualified : readTools) {
             int dot = qualified.lastIndexOf('.');
@@ -110,7 +108,7 @@ class AiEvalDatasetTest {
         Set<String> seen = new HashSet<>();
         for (String className : new String[]{
                 "DeviceTool", "ReservationTool", "RecommendTool",
-                "RepairTool", "AdminTool", "RagManualTool"
+                "RepairTool", "AdminTool"
         }) {
             Class<?> cls = classOrNull(AI_TOOL_PKG + "." + className);
             assertThat(cls).isNotNull();
@@ -125,8 +123,8 @@ class AiEvalDatasetTest {
             }
         }
         assertThat(seen)
-                .as("must see at least 10 annotated methods")
-                .hasSizeGreaterThanOrEqualTo(10);
+                .as("must see at least 9 annotated methods")
+                .hasSizeGreaterThanOrEqualTo(9);
     }
 
     private static Class<?> classOrNull(String name) {
