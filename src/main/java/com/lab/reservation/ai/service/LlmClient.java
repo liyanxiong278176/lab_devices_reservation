@@ -35,6 +35,12 @@ import java.util.List;
 @Service
 public class LlmClient {
 
+    private final OpenAiApiFactory apiFactory;
+
+    public LlmClient(OpenAiApiFactory apiFactory) {
+        this.apiFactory = apiFactory;
+    }
+
     /**
      * 阶段1:工具决策。{@code internalToolExecutionEnabled=false} 让模型只返回 toolCalls
      * 不自动执行,编排器手动 dispatch + 拦截写工具确认。
@@ -83,7 +89,7 @@ public class LlmClient {
      */
     public boolean testConnection(String baseUrl, String apiKey, String model) {
         try {
-            OpenAiApi api = OpenAiApi.builder().baseUrl(baseUrl).apiKey(apiKey).build();
+            OpenAiApi api = apiFactory.build(baseUrl, apiKey);
             OpenAiChatOptions opt = OpenAiChatOptions.builder().model(model).build();
             OpenAiChatModel m = OpenAiChatModel.builder().openAiApi(api).defaultOptions(opt).build();
             String reply = ChatClient.create(m).prompt().user("hi").call().content();

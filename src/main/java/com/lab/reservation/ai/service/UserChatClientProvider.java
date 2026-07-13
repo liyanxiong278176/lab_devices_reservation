@@ -40,6 +40,7 @@ public class UserChatClientProvider {
     private final CryptoUtil crypto;
     private final ObjectProvider<ChatClient> defaultClientProvider;
     private final Environment env;
+    private final OpenAiApiFactory apiFactory;
 
     /** userId → 缓存条目。final + 内联初始化 → 不进 RequiredArgsConstructor 参数。 */
     private final ConcurrentHashMap<Long, Entry> cache = new ConcurrentHashMap<>();
@@ -80,7 +81,7 @@ public class UserChatClientProvider {
     }
 
     private ChatClient build(String baseUrl, String apiKey, String model, Double temperature) {
-        OpenAiApi api = OpenAiApi.builder().baseUrl(baseUrl).apiKey(apiKey).build();
+        OpenAiApi api = apiFactory.build(baseUrl, apiKey);
         OpenAiChatOptions.Builder ob = OpenAiChatOptions.builder().model(model);
         if (temperature != null) {
             ob.temperature(temperature);   // null → 不设,用模型默认(别把 null 塞进 builder)

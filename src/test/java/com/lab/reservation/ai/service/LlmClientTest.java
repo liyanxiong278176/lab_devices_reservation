@@ -24,8 +24,9 @@ import static org.mockito.Mockito.when;
 class LlmClientTest {
 
     @Mock(answer = Answers.RETURNS_DEEP_STUBS) ChatClient chatClient;
+    @Mock OpenAiApiFactory apiFactory;
 
-    LlmClient llm = new LlmClient();
+    LlmClient llm = new LlmClient(apiFactory);
 
     @Test
     void callOnce_returns_chatResponse() {

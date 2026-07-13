@@ -2,6 +2,7 @@ package com.lab.reservation.ai.service;
 
 import com.lab.reservation.ai.config.CryptoUtil;
 import com.lab.reservation.entity.UserAiCredential;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -9,6 +10,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
@@ -17,6 +19,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -27,6 +30,14 @@ class UserChatClientProviderTest {
     @Mock CryptoUtil crypto;
     @Mock ObjectProvider<ChatClient> defaultClientProvider;
     @Mock Environment env;
+    @Mock OpenAiApiFactory apiFactory;
+
+    @BeforeEach
+    void stubFactory() {
+        // mock factory default 返 null → 让 builder 进 null 报 IAE。这里给个空 api 让 build() 走通。
+        OpenAiApi empty = OpenAiApi.builder().baseUrl("https://x").apiKey("k").build();
+        when(apiFactory.build(anyString(), anyString())).thenReturn(empty);
+    }
 
     private UserAiCredential row(String cipher) {
         UserAiCredential r = new UserAiCredential();
@@ -42,7 +53,7 @@ class UserChatClientProviderTest {
     void noKeyInProdReturnsEmpty() {
         when(credService.getRow(1L)).thenReturn(null);
         when(env.acceptsProfiles(any(Profiles.class))).thenReturn(false);
-        UserChatClientProvider p = new UserChatClientProvider(credService, crypto, defaultClientProvider, env);
+        UserChatClientProvider p = new UserChatClientProvider(credService, crypto, defaultClientProvider, env, apiFactory);
         assertEquals(Optional.empty(), p.resolve(1L));
     }
 
@@ -52,7 +63,7 @@ class UserChatClientProviderTest {
         when(credService.getRow(1L)).thenReturn(null);
         when(env.acceptsProfiles(any(Profiles.class))).thenReturn(true);
         when(defaultClientProvider.getIfAvailable()).thenReturn(def);
-        UserChatClientProvider p = new UserChatClientProvider(credService, crypto, defaultClientProvider, env);
+        UserChatClientProvider p = new UserChatClientProvider(credService, crypto, defaultClientProvider, env, apiFactory);
         Optional<ChatClient> cc = p.resolve(1L);
         assertTrue(cc.isPresent());
         assertSame(def, cc.get());
@@ -63,7 +74,7 @@ class UserChatClientProviderTest {
         when(credService.getRow(1L)).thenReturn(row("C"));
         when(crypto.decrypt("C")).thenReturn("sk-real");
         when(crypto.keyHash("sk-real")).thenReturn("h1");
-        UserChatClientProvider p = new UserChatClientProvider(credService, crypto, defaultClientProvider, env);
+        UserChatClientProvider p = new UserChatClientProvider(credService, crypto, defaultClientProvider, env, apiFactory);
         Optional<ChatClient> a = p.resolve(1L);
         Optional<ChatClient> b = p.resolve(1L);
         assertTrue(a.isPresent());
@@ -76,7 +87,7 @@ class UserChatClientProviderTest {
         when(credService.getRow(1L)).thenReturn(row("C"));
         when(crypto.decrypt("C")).thenReturn("sk-real");
         when(crypto.keyHash("sk-real")).thenReturn("h1", "h2");  // simulate key change between calls
-        UserChatClientProvider p = new UserChatClientProvider(credService, crypto, defaultClientProvider, env);
+        UserChatClientProvider p = new UserChatClientProvider(credService, crypto, defaultClientProvider, env, apiFactory);
         ChatClient a = p.resolve(1L).orElseThrow();
         ChatClient b = p.resolve(1L).orElseThrow();
         assertNotSame(a, b);                           // rebuilt because keyHash differs
