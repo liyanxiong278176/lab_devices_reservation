@@ -86,7 +86,7 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Spring AI: 硅基流动(OpenAI 兼容协议) + Chroma 向量库 + RAG 顾问 -->
+        <!-- Spring AI: OpenAI 兼容协议(deepseek/openai/siliconflow/glm/minimax/custom) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>

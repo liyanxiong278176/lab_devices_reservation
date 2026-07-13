@@ -74,6 +74,8 @@ watch(() => store.credential, syncFromStore, { deep: true })
           <el-option label="DeepSeek" value="deepseek" />
           <el-option label="OpenAI" value="openai" />
           <el-option label="硅基流动" value="siliconflow" />
+          <el-option label="GLM(智谱)" value="glm" />
+          <el-option label="MiniMax" value="minimax" />
           <el-option label="自定义" value="custom" />
         </el-select>
       </el-form-item>
