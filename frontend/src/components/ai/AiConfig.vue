@@ -8,10 +8,10 @@ const emit = defineEmits<{ (e: 'saved'): void }>()
 const store = useAiConfigStore()
 
 const form = reactive({
-  provider: 'deepseek' as AiProvider,
-  baseUrl: PROVIDER_PRESETS.deepseek.baseUrl,
+  provider: 'xiaomi' as AiProvider,
+  baseUrl: PROVIDER_PRESETS.xiaomi.baseUrl,
   apiKey: '',
-  model: PROVIDER_PRESETS.deepseek.model,
+  model: PROVIDER_PRESETS.xiaomi.model,
   temperature: 0.3,
 })
 
@@ -76,6 +76,7 @@ watch(() => store.credential, syncFromStore, { deep: true })
           <el-option label="硅基流动" value="siliconflow" />
           <el-option label="GLM(智谱)" value="glm" />
           <el-option label="MiniMax" value="minimax" />
+          <el-option label="Xiaomi MiMo" value="xiaomi" />
           <el-option label="自定义" value="custom" />
         </el-select>
       </el-form-item>
