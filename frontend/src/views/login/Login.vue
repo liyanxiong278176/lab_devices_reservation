@@ -13,8 +13,8 @@ const userStore = useUserStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const form = reactive({
-  username: 'admin',
-  password: 'admin123',
+  username: '',
+  password: '',
 })
 
 const rules: FormRules = {
@@ -133,11 +133,6 @@ const { reveal: _loginReveal } = useStagger(rootRef, { delay: 80 })
             登录
           </GradientButton>
         </el-form>
-
-        <footer class="login-card__hint">
-          <span>演示账号</span>
-          <code>admin / admin123</code>
-        </footer>
       </div>
     </section>
   </main>
@@ -434,28 +429,6 @@ const { reveal: _loginReveal } = useStagger(rootRef, { delay: 80 })
     margin-top: 8px;
     height: 44px;
     font-size: 15px;
-  }
-
-  &__hint {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 24px;
-    padding-top: 20px;
-    border-top: 1px solid var(--border-subtle);
-    font-size: 12px;
-    color: var(--text-tertiary);
-
-    code {
-      padding: 2px 8px;
-      border-radius: var(--radius-control);
-      background: var(--bg-sunken);
-      border: 1px solid var(--border-subtle);
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: var(--accent-bright);
-    }
   }
 }
 

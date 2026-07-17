@@ -89,10 +89,19 @@ export const useAiStore = defineStore('ai', () => {
         markConfirmation(frame.action_id, frame.ok ? 'executed' : (frame.cancelled ? 'cancelled' : 'error'))
         state.value = frame.ok ? 'done' : frame.cancelled ? 'idle' : 'error'
         break
-      case 'error':
+      case 'error': {
         lastError.value = { code: frame.code, msg: frame.msg }
-        state.value = 'error'
+        // 清掉 send() 推入的空 assistant 占位消息(typing dots 的载体):
+        // AssistantMessage 的转圈动画只看 message.text 是否为空,留着这条空气包就会一直转,
+        // 即便后续配置好 apikey 也不停。state 回 idle(无任何 UI 依赖 'error' 态),
+        // 这样用户配置后重新输入发送即可正常走 sending → 回复。
+        const last = messages.value[messages.value.length - 1]
+        if (last && last.role === 'assistant' && !last.text) {
+          messages.value.pop()
+        }
+        state.value = 'idle'
         break
+      }
       case 'ping':
         // heartbeat, no-op
         break

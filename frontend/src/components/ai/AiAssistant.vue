@@ -74,6 +74,13 @@ watch(
   (v) => {
     if (v) {
       nextTick(() => inputRef.value?.focus())
+      // 面板(380×560)比小球大:展开时若已拖动过,把位置 clamp 进面板尺寸,避免超出视口
+      if (pos.value) {
+        pos.value = {
+          right: Math.max(0, Math.min(pos.value.right, window.innerWidth - 380)),
+          bottom: Math.max(0, Math.min(pos.value.bottom, window.innerHeight - 560)),
+        }
+      }
     }
   },
 )
@@ -89,12 +96,88 @@ function onSuggestionClick(value: string) {
   inputText.value = value
   send()
 }
+
+// ============ 拖动:小球 + 面板 header 可用鼠标自由移动 ============
+// 位置用 right/bottom 模型(贴视口右下角锚点);null 时落回 CSS 默认 right/bottom:24px。
+// 不持久化:刷新/重登回右下角(用户确认)。
+const assistantRef = ref<HTMLElement | null>(null)
+const pos = ref<{ right: number; bottom: number } | null>(null)
+let isDragging = false
+let suppressClick = false
+let dragStart = { mx: 0, my: 0, r: 0, b: 0, w: 0, h: 0, moved: false }
+
+const assistantStyle = computed(() =>
+  pos.value ? { right: `${pos.value.right}px`, bottom: `${pos.value.bottom}px` } : {},
+)
+
+function onDragStart(e: MouseEvent) {
+  if (e.button !== 0) return // 只响应左键
+  const el = assistantRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  if (!pos.value) {
+    // 首次拖动:把当前右下角锚点(right/bottom)固化成数值,之后用数值定位
+    pos.value = {
+      right: window.innerWidth - rect.right,
+      bottom: window.innerHeight - rect.bottom,
+    }
+  }
+  dragStart = {
+    mx: e.clientX,
+    my: e.clientY,
+    r: pos.value.right,
+    b: pos.value.bottom,
+    w: rect.width,
+    h: rect.height,
+    moved: false,
+  }
+  isDragging = true
+  e.preventDefault()
+  window.addEventListener('mousemove', onDragMove)
+  window.addEventListener('mouseup', onDragUp)
+}
+
+function onDragMove(e: MouseEvent) {
+  if (!isDragging || !pos.value) return
+  const dx = e.clientX - dragStart.mx
+  const dy = e.clientY - dragStart.my
+  if (Math.abs(dx) > 5 || Math.abs(dy) > 5) dragStart.moved = true // 阈值:区分拖动与点击
+  // 鼠标右移 → 容器右移 → 离右边距离(right)减小;clamp 在视口内
+  const nr = Math.max(0, Math.min(dragStart.r - dx, window.innerWidth - dragStart.w))
+  const nb = Math.max(0, Math.min(dragStart.b - dy, window.innerHeight - dragStart.h))
+  pos.value = { right: nr, bottom: nb }
+}
+
+function onDragUp() {
+  if (dragStart.moved) suppressClick = true // 拖动过:吞掉紧随的 click,避免误开面板
+  isDragging = false
+  window.removeEventListener('mousemove', onDragMove)
+  window.removeEventListener('mouseup', onDragUp)
+}
+
+// 小球:按住拖动;轻点(未超阈值)才打开面板
+function onBallMouseDown(e: MouseEvent) {
+  onDragStart(e)
+}
+function onBallClick() {
+  if (suppressClick) {
+    suppressClick = false
+    return
+  }
+  open()
+}
+
+// 面板 header 拖动;点设置/关闭按钮区域不触发,保留按钮原生点击
+function onHeaderMouseDown(e: MouseEvent) {
+  if ((e.target as HTMLElement).closest('.ai-header-actions')) return
+  onDragStart(e)
+}
 </script>
 
 <template>
-  <div class="ai-assistant">
+  <div ref="assistantRef" class="ai-assistant" :style="assistantStyle">
     <Transition name="ai-ball">
-      <div v-if="!store.expanded" class="ai-ball" @click="open" title="AI 助手">
+      <div v-if="!store.expanded" class="ai-ball" @mousedown="onBallMouseDown" @click="onBallClick" title="AI 助手">
         <el-icon><ChatLineSquare /></el-icon>
         <span v-if="store.lastError" class="ai-ball-dot" />
       </div>
@@ -102,7 +185,7 @@ function onSuggestionClick(value: string) {
 
     <Transition name="ai-drawer">
       <div v-if="store.expanded" class="ai-drawer">
-        <header class="ai-header">
+        <header class="ai-header" @mousedown="onHeaderMouseDown">
           <div class="ai-title">
             <el-icon><ChatLineSquare /></el-icon>
             <span>AI 助手</span>
@@ -206,7 +289,7 @@ function onSuggestionClick(value: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  cursor: grab;
   box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
   color: #fff;
   font-size: 22px;
@@ -243,6 +326,8 @@ function onSuggestionClick(value: string) {
   justify-content: space-between;
   padding: 12px 14px;
   border-bottom: 1px solid var(--border-subtle, #1f2937);
+  cursor: grab;
+  user-select: none;
 }
 .ai-title {
   display: flex;
