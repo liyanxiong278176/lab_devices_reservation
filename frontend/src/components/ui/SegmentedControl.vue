@@ -153,7 +153,7 @@ function onKeydown(e: KeyboardEvent, i: number) {
     background: var(--bg-elevated);
     border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
     border-radius: var(--radius-pill);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    box-shadow: var(--shadow-soft-lighter);
     transform: translateX(calc(var(--i, 0) * 100%));
     transition: transform var(--d-med) var(--ease-out-expo);
     pointer-events: none;

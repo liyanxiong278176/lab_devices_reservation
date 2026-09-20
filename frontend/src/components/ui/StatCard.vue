@@ -93,20 +93,21 @@ const trendSign = computed(() => (props.trend?.dir === 'down' ? '-' : '+'))
   display: flex;
   align-items: flex-start;
   gap: 16px;
-  padding: 20px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-soft-light);
+  padding: 4px 0 18px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-default);
+  border-radius: 0;
+  box-shadow: none;
   transition:
     transform var(--d-med) var(--ease-out-expo),
     box-shadow var(--d-med) var(--ease-out-expo),
     border-color var(--d-med) var(--ease-out-expo);
 
   &:hover {
-    transform: translateY(-2px);
-    border-color: var(--border-strong);
-    box-shadow: var(--shadow-soft);
+    transform: none;
+    border-color: var(--accent);
+    box-shadow: none;
   }
 
   // icon chip:青色 rgba(.12) 底 + 青色图标,圆角 8px,~36px
@@ -148,7 +149,7 @@ const trendSign = computed(() => (props.trend?.dir === 'down' ? '-' : '+'))
   &__value {
     color: var(--text-primary);
     font-family: var(--font-mono);
-    font-size: 36px;
+    font-size: 42px;
     font-weight: 600;
     line-height: 1.1;
     letter-spacing: -0.02em;

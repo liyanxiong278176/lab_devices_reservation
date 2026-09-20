@@ -1,6 +1,6 @@
 // =============================================================================
 // _motion.scss — 动效 token + 通用 keyframes / 工具类
-// 颜色 token 不在此声明(见 theme.dark.scss / theme.scss),仅动效相关变量。
+// 颜色 token 不在此声明(见 theme.scss),仅动效相关变量。
 // 配套:useCountUp / useStagger / v-reduced-motion(命中 reduced-motion 时由指令兜底禁用)。
 // =============================================================================
 
@@ -78,9 +78,9 @@
 .shimmer {
   background: linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0.04) 25%,
-    rgba(255, 255, 255, 0.12) 37%,
-    rgba(255, 255, 255, 0.04) 63%
+    color-mix(in srgb, var(--bg-sunken) 72%, transparent) 25%,
+    color-mix(in srgb, var(--bg-surface) 92%, transparent) 37%,
+    color-mix(in srgb, var(--bg-sunken) 72%, transparent) 63%
   );
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite linear;
@@ -102,7 +102,7 @@
   pointer-events: none;
   z-index: 0;
   background:
-    radial-gradient(circle at 20% 30%, rgba(64, 224, 208, 0.05), transparent 55%),
+    radial-gradient(circle at 20% 30%, color-mix(in srgb, var(--accent) 4%, transparent), transparent 55%),
     radial-gradient(circle at 80% 70%, color-mix(in srgb, var(--accent) 4%, transparent), transparent 50%);
   animation: aurora 12s var(--ease-out-expo) infinite;
   will-change: transform, opacity;

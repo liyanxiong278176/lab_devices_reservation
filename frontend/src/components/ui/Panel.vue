@@ -34,8 +34,8 @@ withDefaults(
     border-color var(--d-med) var(--ease-out-expo);
 
   &:hover {
-    transform: translateY(-2px);
-    border-color: var(--border-strong);
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--accent) 24%, var(--border-default));
     box-shadow: var(--shadow-soft);
   }
 

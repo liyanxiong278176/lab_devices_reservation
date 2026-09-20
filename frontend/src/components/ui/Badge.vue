@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Badge — 深色调徽标
+// Badge — 主题自适应徽标
 // 包 el-badge,透传 $attrs(value/is-dot/hidden/type/max 等直达)
 // variant:accent/success/warning/danger/info → 覆盖 --el-badge-bg-color(状态色)
 //   文字色统一 --text-on-accent(#04141a 深字压状态色底,WCAG 对比足)

@@ -100,7 +100,7 @@ test.describe.serial('普通用户与管理员真实页面完整链路', () => {
     await expect(userPage.getByText('已通过')).toBeVisible()
 
     await userPage.getByRole('menuitem', { name: '提交报修', exact: true }).click()
-    await expect(userPage.getByText('提交报修')).toBeVisible()
+    await expect(userPage.getByRole('heading', { name: '提交报修', exact: true })).toBeVisible()
     await userPage.locator('.rsubmit__el-form .el-select').click()
     await userPage.getByRole('option', { name: new RegExp(fixture.device_name) }).click()
     await userPage.getByPlaceholder('一句话描述故障').fill('E2E 设备故障')

@@ -35,20 +35,16 @@ withDefaults(
     border-color var(--d-med) var(--ease-out-expo);
 
   &:hover {
-    transform: translateY(-4px);
-    border-color: var(--accent);
-    box-shadow: var(--glow-accent);
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--accent) 32%, var(--border-default));
+    box-shadow: var(--shadow-soft);
   }
 
   &--accent {
-    box-shadow:
-      inset 0 1px 0 var(--accent),
-      var(--shadow-soft-light);
+    box-shadow: inset 0 1px 0 var(--accent), var(--shadow-soft-light);
 
     &:hover {
-      box-shadow:
-        inset 0 1px 0 var(--accent),
-        var(--glow-accent);
+      box-shadow: inset 0 1px 0 var(--accent), var(--shadow-soft);
     }
   }
 }

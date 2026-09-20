@@ -464,3 +464,155 @@ const { reveal: _loginReveal } = useStagger(rootRef, { delay: 80 })
   }
 }
 </style>
+
+<style scoped lang="scss">
+/* Product landing treatment: the existing form contract stays untouched, but
+ * the visual layer becomes warm, spacious and editorial in light mode. */
+.login-page {
+  grid-template-columns: minmax(0, 1.12fr) minmax(420px, 0.88fr);
+  background: var(--bg-base);
+}
+
+.login-hero {
+  justify-content: space-between;
+  padding: clamp(48px, 7vw, 112px);
+  color: var(--text-primary);
+  background:
+    radial-gradient(circle at 12% 14%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 26rem),
+    linear-gradient(145deg, var(--bg-elevated), var(--bg-base));
+  border-right: 1px solid var(--border-subtle);
+}
+
+.login-hero__aura {
+  filter: blur(72px);
+  opacity: 0.55;
+}
+
+.login-hero__aura--cyan {
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 16%, transparent), transparent 65%);
+}
+
+.login-hero__aura--blue {
+  background: radial-gradient(circle, color-mix(in srgb, var(--status-success) 12%, transparent), transparent 65%);
+}
+
+.login-hero__aura--haze {
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent-bright) 12%, transparent), transparent 60%);
+}
+
+.login-hero__grid {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--text-primary) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--text-primary) 5%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 30% 40%, #000 20%, transparent 72%);
+  -webkit-mask-image: radial-gradient(ellipse at 30% 40%, #000 20%, transparent 72%);
+}
+
+.login-hero__brand {
+  max-width: 620px;
+}
+
+.login-hero__logo-mark {
+  gap: 11px;
+  padding: 0;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  font-size: 13px;
+  letter-spacing: 0.16em;
+}
+
+.login-hero__logo-dot {
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  border: 1.5px solid var(--accent);
+  box-shadow: inset 0 0 0 4px var(--bg-elevated), 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.login-hero__title {
+  max-width: 620px;
+  margin-top: 32px;
+  color: var(--text-primary);
+  background: none;
+  font-size: clamp(46px, 5.3vw, 82px);
+  letter-spacing: -0.06em;
+  -webkit-text-fill-color: currentColor;
+}
+
+.login-hero__tagline {
+  max-width: 480px;
+  color: var(--text-secondary);
+  font-size: 16px;
+}
+
+.login-hero__chip {
+  min-width: 226px;
+  padding: 13px 16px;
+  background: color-mix(in srgb, var(--bg-surface) 86%, transparent);
+  border-color: var(--border-default);
+  box-shadow: var(--shadow-soft-light);
+  backdrop-filter: blur(16px) saturate(115%);
+}
+
+.login-form-wrap {
+  padding: clamp(28px, 6vw, 88px);
+  background: var(--bg-base);
+}
+
+.login-card {
+  max-width: 460px;
+  padding: clamp(34px, 5vw, 58px);
+  background: var(--bg-surface);
+  border-color: var(--border-default);
+  border-radius: var(--radius-hero);
+  box-shadow: var(--shadow-floating);
+}
+
+.login-card__head {
+  margin-bottom: 34px;
+}
+
+.login-card__title {
+  font-size: 36px;
+  letter-spacing: -0.05em;
+}
+
+.login-card__subtitle {
+  margin-top: 10px;
+  color: var(--text-tertiary);
+}
+
+.login-card :deep(.el-form-item) {
+  margin-bottom: 22px;
+}
+
+.login-card__submit {
+  height: 48px;
+  margin-top: 10px;
+  border-radius: 14px;
+  font-size: 15px;
+}
+
+@media (max-width: 1024px) {
+  .login-page {
+    grid-template-columns: 1fr;
+  }
+
+  .login-hero {
+    min-height: 360px;
+    padding: 48px 8vw;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .login-hero__chip {
+    display: none;
+  }
+
+  .login-form-wrap {
+    min-height: 620px;
+  }
+}
+</style>

@@ -2,18 +2,19 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Bell, Expand, Fold } from '@element-plus/icons-vue'
+import { Bell, Expand, Fold, Moon, Sunny } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
 import { useNotificationStore } from '@/stores/notification'
+import { useThemeStore } from '@/stores/theme'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const appStore = useAppStore()
 const notifStore = useNotificationStore()
+const themeStore = useThemeStore()
 
-// 通知未读数轮询：单体 v2 使用轻量 HTTP 兜底，避免浏览器长连接影响页面稳定性。
 let notifTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   notifStore.loadUnread()
@@ -29,14 +30,11 @@ interface MenuItem {
   icon?: string
 }
 
-// Build the menu from routes that declare meta.title; filter by role intersection
-// when meta.roles is set (no roles meta ⇒ show to everyone).
 const menuItems = computed<MenuItem[]>(() => {
   const root = router.options.routes.find((r) => r.path === '/')
   const children = root?.children || []
   return children
     .filter((c) => c.meta?.title)
-    // hidden 路由（设备详情/建预约/预约详情）不进侧边栏菜单
     .filter((c) => !(c.meta as Record<string, unknown>)?.hidden)
     .filter((c) => {
       const need = c.meta?.roles as string[] | undefined
@@ -51,353 +49,516 @@ const menuItems = computed<MenuItem[]>(() => {
 })
 
 const activeMenu = computed(() => route.path)
-
-const displayName = computed(
-  () => userStore.realName || userStore.username || '用户',
-)
+const displayName = computed(() => userStore.realName || userStore.username || '用户')
+const themeLabel = computed(() => (themeStore.isDark ? '切换浅色' : '切换深色'))
 
 function onLogout() {
   userStore.logout()
   ElMessage.success('已退出登录')
   router.push('/login')
 }
+
+function toggleTheme() {
+  themeStore.toggle()
+}
 </script>
 
 <template>
-  <el-container class="layout">
-    <el-aside :width="appStore.sidebarCollapsed ? '64px' : '220px'" class="layout__aside">
+  <el-container
+    class="layout"
+    :class="{ 'layout--rail': appStore.sidebarCollapsed, 'layout--expanded': !appStore.sidebarCollapsed }"
+  >
+    <el-aside
+      :width="appStore.sidebarCollapsed ? '88px' : '248px'"
+      class="layout__aside"
+    >
       <div class="layout__brand">
-        <span class="layout__pulse-dot" aria-hidden="true"></span>
-        <span v-if="!appStore.sidebarCollapsed" class="layout__brand-text">实验室预约</span>
+        <span class="layout__brand-mark" aria-hidden="true">
+          <span class="layout__brand-ring"></span>
+          <span class="layout__brand-signal"></span>
+        </span>
+        <span v-if="!appStore.sidebarCollapsed" class="layout__brand-copy">
+          <strong>LABFLOW</strong>
+          <small>实验室预约</small>
+        </span>
       </div>
+
+      <div v-if="!appStore.sidebarCollapsed" class="layout__nav-caption">WORKSPACE</div>
       <el-menu
         :default-active="activeMenu"
         :collapse="appStore.sidebarCollapsed"
         router
         class="layout__menu"
       >
-        <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
-          <el-icon v-if="item.icon">
-            <component :is="item.icon" />
-          </el-icon>
-          <template #title>{{ item.title }}</template>
+        <el-menu-item
+          v-for="item in menuItems"
+          :key="item.path"
+          :index="item.path"
+          :aria-label="item.title"
+        >
+          <el-icon v-if="item.icon"><component :is="item.icon" /></el-icon>
+          <template v-if="!appStore.sidebarCollapsed" #title>{{ item.title }}</template>
         </el-menu-item>
       </el-menu>
+
+      <div class="layout__aside-note" :title="appStore.sidebarCollapsed ? '实验室运营空间' : undefined">
+        <span class="layout__aside-note-dot"></span>
+        <span v-if="!appStore.sidebarCollapsed">实验室运营空间</span>
+      </div>
     </el-aside>
 
     <el-container class="layout__body">
       <el-header class="layout__header">
         <div class="layout__header-left">
-          <el-icon class="layout__collapse" @click="appStore.toggleSidebar()">
-            <Fold v-if="!appStore.sidebarCollapsed" />
-            <Expand v-else />
-          </el-icon>
-          <span class="layout__title">实验室预约系统</span>
-        </div>
-        <div class="layout__header-right">
-          <el-badge
-            :value="notifStore.unread"
-            :hidden="notifStore.unread === 0"
-            :max="99"
-            class="layout__notif"
+          <button
+            type="button"
+            class="layout__collapse"
+            :aria-label="appStore.sidebarCollapsed ? '展开导航' : '收起导航'"
+            @click="appStore.toggleSidebar()"
           >
-            <el-icon class="layout__bell" @click="router.push('/notifications')">
-              <Bell />
-            </el-icon>
-          </el-badge>
-          <span class="layout__user">{{ displayName }}</span>
+            <el-icon><Fold v-if="!appStore.sidebarCollapsed" /><Expand v-else /></el-icon>
+          </button>
+          <div class="layout__context">
+            <span class="layout__eyebrow">LABFLOW / WORKSPACE</span>
+            <span class="layout__title">实验室预约系统</span>
+          </div>
+        </div>
+
+        <div class="layout__header-right">
+          <button
+            type="button"
+            class="layout__theme-toggle"
+            :aria-label="themeLabel"
+            :title="themeLabel"
+            @click="toggleTheme"
+          >
+            <el-icon><Sunny v-if="themeStore.isDark" /><Moon v-else /></el-icon>
+            <span>{{ themeStore.isDark ? '浅色' : '深色' }}</span>
+          </button>
+
+          <button
+            type="button"
+            class="layout__icon-button"
+            aria-label="打开通知"
+            @click="router.push('/notifications')"
+          >
+            <el-badge
+              :value="notifStore.unread"
+              :hidden="notifStore.unread === 0"
+              :max="99"
+            >
+              <el-icon><Bell /></el-icon>
+            </el-badge>
+          </button>
+
+          <div class="layout__user" :title="displayName">
+            <span class="layout__user-mark">{{ displayName.slice(0, 1) }}</span>
+            <span class="layout__user-name">{{ displayName }}</span>
+          </div>
           <el-button text @click="onLogout">退出登录</el-button>
         </div>
       </el-header>
 
       <el-main class="layout__main">
-        <router-view />
+        <div class="layout__canvas">
+          <router-view />
+        </div>
       </el-main>
     </el-container>
-
-    <a
-      class="layout__credit"
-      href="https://deerflow.tech"
-      target="_blank"
-      rel="noreferrer"
-    >
-      Created By Deerflow
-    </a>
   </el-container>
 </template>
 
 <style scoped lang="scss">
-// ============================================================================
-// MainLayout 深色科技壳 (spec §4)
-// 全部走 token(--bg-*/--border-*/--text-*/--accent/--font-display),
-// 不留任何 Cal.com 浅色硬编码(#e5e7eb/#f8f9fa/#ffffff/#111111 已全部清除)。
-// script setup 零改;仅 template 加脉冲点 span + 氛围光层,scoped style 全量重写。
-// ============================================================================
-
-// 品牌脉冲点(logo 替代):青色 + CSS 脉冲动画(GPU only:opacity/scale)
-@keyframes layout-pulse {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
-    transform: scale(1);
-  }
-  70% {
-    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent);
-    transform: scale(1.08);
-  }
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
-    transform: scale(1);
-  }
-}
-
 .layout {
-  height: 100vh;
-  position: relative;
-  // 独立栈:sticky 顶栏 backdrop-filter 在此栈内透出 App.vue 全局 .aurora-bg 辉光
-  z-index: 0;
+  min-height: 100vh;
+  background: transparent;
 }
 
-// ---- 侧栏:比主区更深的 sunken 底 + 右侧 hairline ----------------------------
 .layout__aside {
   position: relative;
-  z-index: 1;
-  background: var(--bg-sunken);
-  border-right: 1px solid var(--border-default);
-  transition: width var(--d-med) var(--ease-out-expo);
-  overflow: hidden;
-}
-
-// 品牌区:Space Grotesk 展示字 + 青色脉冲点 logo
-.layout__brand {
-  height: 60px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 20px;
-  font-family: var(--font-display);
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border-subtle);
-  white-space: nowrap;
-}
-
-.layout__brand-text {
-  // 折叠时由父 aside width 收窄自然裁切,这里仅保证不换行
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-// 青色脉冲点(折叠态也保留作 logo)
-.layout__pulse-dot {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  animation: layout-pulse 2.4s var(--ease-out-expo) infinite;
-  will-change: transform, box-shadow;
-}
-
-// ---- Element Plus 菜单:覆盖 --el-menu-* 暗色变量 ---------------------------
-.layout__menu {
-  // EP 菜单暗色变量覆盖(变量直接写在组件根,EP 内部 var() 自动继承)
-  --el-menu-bg-color: transparent;
-  --el-menu-text-color: var(--text-secondary);
-  --el-menu-hover-bg-color: var(--bg-elevated);
-  --el-menu-hover-text-color: var(--text-primary);
-  --el-menu-active-color: var(--accent);
-  border-right: none;
-  background: transparent;
-  padding: 8px;
-}
-
-// 菜单项:圆角 + hover 抬升面
-:deep(.el-menu-item) {
-  height: 44px;
-  line-height: 44px;
-  margin: 2px 0;
-  border-radius: var(--radius-control);
-  color: var(--text-secondary);
-  transition:
-    background var(--d-fast) var(--ease-out-expo),
-    color var(--d-fast) var(--ease-out-expo);
-
-  &:hover {
-    background: var(--bg-elevated);
-    color: var(--text-primary);
-  }
-
-  .el-icon {
-    color: inherit;
-  }
-}
-
-// active 项:抬升面 + 青色字/图标(覆盖 EP 默认底部 border 指示)。
-// 左侧青色竖条已按反馈移除——选中态由底色+青字足够区分,竖条被嫌无用。
-:deep(.el-menu-item.is-active) {
-  position: relative;
-  background: var(--bg-elevated);
-  color: var(--accent);
-
-  .el-icon {
-    color: var(--accent);
-  }
-}
-
-// ---- 主体列(让 sticky header 在此列内生效) --------------------------------
-.layout__body {
-  position: relative;
-  z-index: 1;
-  // 让 header sticky 有滚动容器可粘:el-main 自带 overflow:auto
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-}
-
-// ---- 顶栏:半透明毛玻璃 + sticky + 底 hairline ------------------------------
-.layout__header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  // 半透明底 + 毛玻璃:透出底层氛围光
-  background: color-mix(in srgb, var(--bg-surface) 72%, transparent); // --bg-surface 透明化
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
-  border-bottom: 1px solid var(--border-default);
-}
-
-.layout__header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.layout__collapse {
-  font-size: 20px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  transition: color var(--d-fast) var(--ease-out-expo);
-
-  &:hover {
-    color: var(--accent);
-  }
-}
-
-.layout__title {
-  font-family: var(--font-display);
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-}
-
-.layout__header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.layout__notif {
-  margin-right: 4px;
-}
-
-// 未读徽章走青色(token 已把 --el-color-primary 桥到 --accent,这里兜底锁字色)
-:deep(.layout__notif .el-badge__content) {
-  background: var(--accent);
-  color: var(--text-on-accent);
-  border: none;
-}
-
-.layout__bell {
-  font-size: 20px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  transition: color var(--d-fast) var(--ease-out-expo);
-
-  &:hover {
-    color: var(--accent);
-  }
-}
-
-// 用户名:作在线状态 pill(左侧青色点 = 在环暗示)
-.layout__user {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-
-  &::before {
-    content: '';
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: var(--radius-pill);
-    background: var(--accent);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
-  }
-}
-
-// 退出按钮深色调(text 按钮走 EP,hover 由 token 自动变青)
-:deep(.el-button.is-text) {
-  color: var(--text-secondary);
-
-  &:hover {
-    color: var(--accent);
-    background: transparent;
-  }
-}
-
-// ---- 主区:透明(让 App.vue 全局 .aurora-bg 极光透出;底色由 body var(--bg-base) 兜底)
-.layout__main {
-  min-height: 0;
-  padding: 24px;
-  background: transparent;
-  color: var(--text-primary);
-}
-
-.layout__credit {
-  position: fixed;
-  right: 20px;
-  bottom: 12px;
   z-index: 20;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-height: 100vh;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--bg-surface) 84%, transparent);
+  border-right: 1px solid var(--border-subtle);
+  box-shadow: 12px 0 38px color-mix(in srgb, var(--text-primary) 4%, transparent);
+  backdrop-filter: blur(22px) saturate(120%);
+  transition: width var(--d-med) var(--ease-out-expo), background-color var(--d-med) var(--ease-out-expo);
+}
+
+.layout__brand {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 86px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.layout__brand-mark {
+  position: relative;
+  display: inline-grid;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-surface));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.layout__brand-ring {
+  width: 17px;
+  height: 17px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+}
+
+.layout__brand-signal {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.layout__brand-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.layout__brand-copy strong {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.16em;
+}
+
+.layout__brand-copy small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.layout__nav-caption {
+  padding: 26px 24px 10px;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: 10px;
-  letter-spacing: 0.04em;
-  opacity: 0.58;
-  text-decoration: none;
-  transition: color var(--d-fast) var(--ease-out-expo), opacity var(--d-fast) var(--ease-out-expo);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
 
-  &:hover {
-    color: var(--accent);
-    opacity: 1;
+.layout__menu {
+  flex: 1;
+  width: 100%;
+  padding: 0 12px;
+  border-right: 0;
+}
+
+:deep(.layout__menu .el-menu-item) {
+  height: 46px;
+  margin: 4px 0;
+  padding: 0 13px !important;
+  border-radius: 14px;
+  color: var(--text-tertiary);
+  transition: background-color var(--d-fast) var(--ease-out-expo), color var(--d-fast) var(--ease-out-expo), transform var(--d-fast) var(--ease-out-expo);
+}
+
+:deep(.layout__menu .el-menu-item:hover) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  transform: translateX(2px);
+}
+
+:deep(.layout__menu .el-menu-item.is-active) {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+:deep(.layout__menu .el-menu-item.is-active::before) {
+  position: absolute;
+  left: 0;
+  width: 3px;
+  height: 22px;
+  border-radius: 0 999px 999px 0;
+  background: var(--accent);
+  content: '';
+}
+
+:deep(.layout__menu .el-menu-item .el-icon) {
+  margin-right: 12px;
+  color: inherit;
+  font-size: 18px;
+}
+
+.layout--rail .layout__menu {
+  padding-inline: 12px;
+}
+
+.layout--rail :deep(.layout__menu .el-menu-item) {
+  justify-content: center;
+  padding-inline: 0 !important;
+}
+
+.layout--rail :deep(.layout__menu .el-menu-item .el-icon) {
+  margin-right: 0;
+}
+
+.layout__aside-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 62px;
+  padding: 0 24px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.layout--rail .layout__aside-note {
+  justify-content: center;
+  padding: 0;
+}
+
+.layout__aside-note-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--status-success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-success) 12%, transparent);
+}
+
+.layout__body {
+  min-width: 0;
+  min-height: 100vh;
+  background: transparent;
+}
+
+.layout__header {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 86px;
+  padding: 0 clamp(24px, 4vw, 64px);
+  background: color-mix(in srgb, var(--bg-base) 78%, transparent);
+  border-bottom: 1px solid var(--border-subtle);
+  backdrop-filter: blur(20px) saturate(125%);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+}
+
+.layout__header-left,
+.layout__header-right,
+.layout__context,
+.layout__user,
+.layout__theme-toggle,
+.layout__icon-button {
+  display: flex;
+  align-items: center;
+}
+
+.layout__header-left {
+  gap: 16px;
+  min-width: 0;
+}
+
+.layout__collapse,
+.layout__theme-toggle,
+.layout__icon-button {
+  justify-content: center;
+  border: 0;
+  cursor: pointer;
+}
+
+.layout__collapse {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  transition: color var(--d-fast) var(--ease-out-expo), background-color var(--d-fast) var(--ease-out-expo), transform var(--d-fast) var(--ease-out-expo);
+}
+
+.layout__collapse:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  transform: translateY(-1px);
+}
+
+.layout__context {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.layout__eyebrow {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.13em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.layout__title {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.layout__header-right {
+  gap: 10px;
+  min-width: 0;
+}
+
+.layout__theme-toggle {
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-surface) 75%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  transition: color var(--d-fast) var(--ease-out-expo), border-color var(--d-fast) var(--ease-out-expo), background-color var(--d-fast) var(--ease-out-expo), transform var(--d-fast) var(--ease-out-expo);
+}
+
+.layout__theme-toggle:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border-default));
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-surface));
+  transform: translateY(-1px);
+}
+
+.layout__icon-button {
+  width: 38px;
+  height: 38px;
+  color: var(--text-secondary);
+  background: transparent;
+  border-radius: 12px;
+  transition: color var(--d-fast) var(--ease-out-expo), background-color var(--d-fast) var(--ease-out-expo);
+}
+
+.layout__icon-button:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+:deep(.layout__icon-button .el-badge__content) {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: 2px solid var(--bg-base);
+}
+
+.layout__user {
+  gap: 8px;
+  max-width: 180px;
+  padding: 4px 10px 4px 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+}
+
+.layout__user-mark {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  flex: none;
+  border-radius: 50%;
+  color: var(--text-on-accent);
+  background: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.layout__user-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layout__main {
+  min-height: 0;
+  padding: clamp(28px, 4vw, 60px) clamp(24px, 4vw, 64px) 64px;
+  background: transparent;
+}
+
+.layout__canvas {
+  width: min(100%, 1440px);
+  margin: 0 auto;
+}
+
+@media (max-width: 1120px) {
+  .layout__header {
+    padding-inline: 28px;
+  }
+
+  .layout__main {
+    padding-inline: 28px;
+  }
+
+  .layout__theme-toggle span,
+  .layout__user-name {
+    display: none;
+  }
+
+  .layout__theme-toggle {
+    width: 38px;
+    padding: 0;
   }
 }
 
-// ============================================================================
-// prefers-reduced-motion 兜底(spec §6.1 铁律):命中则关脉冲动画
-// ============================================================================
-@media (prefers-reduced-motion: reduce) {
-  .layout__pulse-dot {
-    animation: none;
+@media (max-width: 760px) {
+  .layout__header {
+    height: 72px;
+    padding-inline: 18px;
   }
+
+  .layout__main {
+    padding: 24px 18px 48px;
+  }
+
+  .layout__title {
+    font-size: 14px;
+  }
+
+  .layout__user,
+  .layout__header-right > :deep(.el-button) {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
   .layout__aside,
+  .layout__menu :deep(.el-menu-item),
   .layout__collapse,
-  .layout__bell,
-  :deep(.el-menu-item) {
+  .layout__theme-toggle,
+  .layout__icon-button {
     transition: none;
   }
 }

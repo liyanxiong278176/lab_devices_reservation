@@ -55,8 +55,8 @@ defineOptions({ inheritAttrs: false })
 }
 
 .lab-tag.lab-tag--info {
-  --el-tag-bg-color: rgba(96, 165, 250, 0.12);
-  --el-tag-border-color: rgba(96, 165, 250, 0.3);
+  --el-tag-bg-color: color-mix(in srgb, var(--status-info) 12%, transparent);
+  --el-tag-border-color: color-mix(in srgb, var(--status-info) 30%, transparent);
   --el-tag-text-color: var(--status-info);
   --el-tag-hover-color: var(--status-info);
 }

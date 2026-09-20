@@ -24,7 +24,7 @@ defineOptions({ inheritAttrs: false })
 
   &:hover,
   &:focus {
-    background: color-mix(in srgb, var(--accent) 6%, transparent) !important;
+    background: color-mix(in srgb, var(--accent) 7%, transparent) !important;
     color: var(--accent) !important;
     border-color: var(--accent) !important;
   }

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { ArrowRight } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
 import { dashboardMe, type DashboardMeVO } from '@/api/dashboard'
 import StatCard from '@/components/ui/StatCard.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -17,6 +19,7 @@ import {
 
 const loading = ref(false)
 const data = ref<DashboardMeVO | null>(null)
+const router = useRouter()
 
 // 图表网格错峰入场容器(spec §6.2):首次进入视口时,内部 [data-stagger] 图表卡
 // 按 60ms 错峰 fade+rise;reduced-motion 由 useStagger 内部短路(守铁律 §6.1)。
@@ -55,6 +58,22 @@ onMounted(load)
   <div v-loading="loading" class="dash">
     <div class="dashboard-aura" aria-hidden="true" />
     <PageHeader title="我的仪表盘" subtitle="个人预约与报修概览" />
+
+    <section class="dashboard-intro">
+      <div>
+        <span class="dashboard-intro__eyebrow">PERSONAL LAB / TODAY</span>
+        <h2>把下一次实验安排好。</h2>
+        <p>先选设备和日期，再用一条清晰的预约记录锁定你的实验计划。</p>
+      </div>
+      <div class="dashboard-intro__actions">
+        <button type="button" @click="router.push({ name: 'devices' })">
+          浏览设备 <ArrowRight />
+        </button>
+        <button type="button" @click="router.push({ name: 'reservation-mine' })">
+          查看预约 <ArrowRight />
+        </button>
+      </div>
+    </section>
 
     <!-- 数字卡片 -->
     <el-row :gutter="16" class="dash__row">
@@ -118,6 +137,69 @@ onMounted(load)
   }
 }
 
+.dashboard-intro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 0 0 30px;
+  padding: 22px 0 26px;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.dashboard-intro__eyebrow {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+}
+
+.dashboard-intro h2 {
+  margin: 10px 0 6px;
+  font-family: var(--font-display);
+  font-size: clamp(24px, 3vw, 38px);
+  letter-spacing: -.04em;
+}
+
+.dashboard-intro p {
+  max-width: 540px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.dashboard-intro__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dashboard-intro__actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  transition: color var(--motion-fast), border-color var(--motion-fast), background var(--motion-fast);
+}
+
+.dashboard-intro__actions button:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--border-accent);
+}
+
+.dashboard-intro__actions svg { width: 14px; }
+
 // 图表网格(错峰入场容器)
 .chart-grid {
   // 仅作 useStagger 容器(ref);内部 [data-stagger] 由 _motion.scss 兜底初始态。
@@ -171,5 +253,9 @@ onMounted(load)
   background:
     radial-gradient(ellipse 60% 100% at 20% 0%, color-mix(in srgb, var(--accent-blue) 9%, transparent), transparent 70%),
     radial-gradient(ellipse 50% 100% at 80% 10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 65%);
+}
+
+@media (max-width: 760px) {
+  .dashboard-intro { align-items: flex-start; flex-direction: column; }
 }
 </style>

@@ -3,7 +3,7 @@
 // 数据/筛选/分页/路由逻辑零改——仅换展示层 + 接 R1 ui 组件。
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search } from '@element-plus/icons-vue'
+import { Cpu, Search } from '@element-plus/icons-vue'
 import { searchDevices } from '@/api/device'
 import type { DeviceQuery, DeviceStatus, DeviceVO } from '@/types/device'
 import type { Page } from '@/types/common'
@@ -139,6 +139,14 @@ onMounted(load)
         data-stagger
       >
         <GlowCard as="article" class="device-card" @click="goDetail(row)">
+          <div class="device-card__media">
+            <img v-if="row.imageUrl" :src="row.imageUrl" :alt="row.name" />
+            <div v-else class="device-card__placeholder" aria-hidden="true">
+              <Cpu />
+              <span>{{ row.categoryName || 'LAB DEVICE' }}</span>
+            </div>
+            <span class="device-card__id">设备 {{ String(row.id).padStart(2, '0') }}</span>
+          </div>
           <div class="device-card__top">
             <StatusDot :status="row.status" :label="true" />
             <div class="device-card__top-right">
@@ -265,6 +273,68 @@ onMounted(load)
   flex-direction: column;
   gap: 12px;
   height: 100%;
+
+  &__media {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 148px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 42%),
+      linear-gradient(135deg, color-mix(in srgb, var(--bg-sunken) 86%, var(--accent)), var(--bg-sunken));
+    border: 1px solid var(--border-subtle);
+    border-radius: calc(var(--radius-card) - 5px);
+
+    &::after {
+      content: '';
+      position: absolute;
+      inset: 14px;
+      border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+      border-radius: 50%;
+      transform: rotate(-12deg) scaleX(1.5);
+      pointer-events: none;
+    }
+
+    img {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      height: 148px;
+      object-fit: cover;
+      filter: saturate(.78) contrast(.98);
+    }
+  }
+
+  &__placeholder {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    gap: 8px;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+
+    svg { width: 42px; height: 42px; stroke-width: 1.1; }
+  }
+
+  &__id {
+    position: absolute;
+    right: 11px;
+    bottom: 10px;
+    z-index: 2;
+    padding: 4px 7px;
+    color: var(--text-tertiary);
+    background: color-mix(in srgb, var(--bg-surface) 76%, transparent);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: .04em;
+    backdrop-filter: blur(10px);
+  }
 
   &__top {
     display: flex;

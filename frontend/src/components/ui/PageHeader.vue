@@ -56,9 +56,8 @@ function goBack() {
 .page-header {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid var(--border-subtle);
+  gap: 14px;
+  padding-bottom: 8px;
 
   &__breadcrumb {
     font-size: 13px;
@@ -126,16 +125,17 @@ function goBack() {
     margin: 0;
     font-family: var(--font-display);
     font-weight: 600;
-    font-size: 28px;
+    font-size: clamp(30px, 3.2vw, 44px);
     line-height: 1.2;
-    letter-spacing: -0.5px;
+    letter-spacing: -0.045em;
     color: var(--text-primary);
   }
 
   &__subtitle {
     margin: 0;
-    font-size: 14px;
-    line-height: 1.5;
+    max-width: 680px;
+    font-size: 15px;
+    line-height: 1.65;
     color: var(--text-secondary);
   }
 

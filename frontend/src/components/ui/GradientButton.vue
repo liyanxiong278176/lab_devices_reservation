@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // GradientButton — 主 CTA
 // 包 el-button,透传 $attrs(type/size/loading/disabled/click 等直达 el-button)
-// 青→蓝渐变背景 + 辉光阴影 + hover 增亮 brightness(1.08)+ active scale(.98)
+// Signal-blue primary action with a quiet lift; the visual system avoids
+// large gradients so the action remains clear in both appearances.
 defineOptions({ inheritAttrs: false })
 </script>
 
@@ -13,12 +14,12 @@ defineOptions({ inheritAttrs: false })
 
 <style scoped lang="scss">
 .gradient-btn {
-  background: var(--grad-accent) !important;
+  background: var(--accent) !important;
   color: var(--text-on-accent) !important;
   border: none !important;
   border-radius: var(--radius-control);
   font-weight: 600;
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 18%, transparent);
   transition:
     filter var(--d-fast) var(--ease-out-expo),
     transform var(--d-fast) var(--ease-out-expo),
@@ -26,10 +27,10 @@ defineOptions({ inheritAttrs: false })
 
   &:hover,
   &:focus {
-    background: var(--grad-accent) !important;
+    background: var(--accent-bright) !important;
     color: var(--text-on-accent) !important;
-    filter: brightness(1.08);
-    box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 35%, transparent);
+    filter: none;
+    box-shadow: 0 11px 24px color-mix(in srgb, var(--accent) 25%, transparent);
   }
 
   &:active {

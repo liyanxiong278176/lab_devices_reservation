@@ -48,19 +48,17 @@ import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import 'vue-echarts/style.css'
 // 自托管字体(离线,答辩不依赖外网)— 仅引需要的 weight
-import '@fontsource/inter/400.css'
-import '@fontsource/inter/500.css'
-import '@fontsource/inter/600.css'
-import '@fontsource/space-grotesk/600.css'
 import '@fontsource/jetbrains-mono/400.css'
-// 本项目深色 token(必须在 EP 暗色 css-vars 之后,--el-* 覆盖才生效)
-import './styles/theme.dark.scss'
+import '@fontsource-variable/plus-jakarta-sans/wght.css'
+// 统一浅色/深色 token。主题由用户显式切换，默认浅色。
+import './styles/theme.scss'
 // 动效 token + 通用 keyframes/工具类(在颜色 token 之后加载)
 import './styles/_motion.scss'
 import App from './App.vue'
 import router from './router'
 import { vPermission } from './directives/permission'
 import { useUserStore } from './stores/user'
+import { useThemeStore } from './stores/theme'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -120,10 +118,11 @@ app
   .use(ElMessage)
   .use(ElMessageBox)
   .use(ElNotification)
-// 固定全站深色:挂载前给 <html> 加 .dark class(EP 暗色 css-vars 由该 class 激活)
-// 同时加 .js class:作为 [data-stagger] 初始态隐藏的 gate(JS 没跑则内容可见,无障碍/健壮)
-document.documentElement.classList.add('dark')
+// 主题由本地偏好驱动，首次默认为 light；同时加 .js class 作为
+// [data-stagger] 初始态隐藏的 gate(JS 没跑则内容可见,无障碍/健壮)。
 document.documentElement.classList.add('js')
+const themeStore = useThemeStore()
+themeStore.init()
 
 // 持久化的 token 在,但角色/权限可能与服务端脱节(刷新后,或 localStorage 是旧形状
 // 没有 roles)。挂载前水合一次 /auth/me:① 服务端改角色后刷新不卡旧角色;② 旧 persist
