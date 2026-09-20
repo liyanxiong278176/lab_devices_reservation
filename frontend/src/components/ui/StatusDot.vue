@@ -5,7 +5,14 @@
 // 走 prefers-reduced-motion 时脉冲自动关(本组件内本地守卫,不依赖全局 _motion.scss)。
 import { computed } from 'vue'
 
-type Status = 'IDLE' | 'IN_USE' | 'MAINTENANCE' | 'BROKEN'
+type Status =
+  | 'IDLE'
+  | 'IN_USE'
+  | 'MAINTENANCE'
+  | 'BROKEN'
+  | 'DISABLED'
+  | 'OFFLINE'
+  | 'RETIRED'
 
 const props = withDefaults(
   defineProps<{
@@ -26,6 +33,9 @@ const DEFAULT_LABELS: Record<Status, string> = {
   IN_USE: '使用中',
   MAINTENANCE: '维护中',
   BROKEN: '故障',
+  DISABLED: '已停用',
+  OFFLINE: '离线',
+  RETIRED: '已退役',
 }
 
 // IDLE → idle,IN_USE → in-use(kebab 以匹配 CSS modifier 约定)
@@ -94,6 +104,15 @@ const role = computed(() => (props.label ? undefined : 'img'))
 }
 
 .status-dot--broken {
+  --dot-color: var(--status-danger);
+}
+
+.status-dot--disabled,
+.status-dot--retired {
+  --dot-color: var(--text-tertiary);
+}
+
+.status-dot--offline {
   --dot-color: var(--status-danger);
 }
 

@@ -1,8 +1,48 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
-import ElementPlus from 'element-plus'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+import { ElAlert } from 'element-plus/es/components/alert/index'
+import { ElBadge } from 'element-plus/es/components/badge/index'
+import { ElButton } from 'element-plus/es/components/button/index'
+import { ElCheckbox } from 'element-plus/es/components/checkbox/index'
+import { ElCol } from 'element-plus/es/components/col/index'
+import { ElContainer } from 'element-plus/es/components/container/index'
+import { ElDatePicker } from 'element-plus/es/components/date-picker/index'
+import { ElDialog } from 'element-plus/es/components/dialog/index'
+import { ElDrawer } from 'element-plus/es/components/drawer/index'
+import { ElDropdown } from 'element-plus/es/components/dropdown/index'
+import { ElForm } from 'element-plus/es/components/form/index'
+import { ElIcon } from 'element-plus/es/components/icon/index'
+import { ElInput } from 'element-plus/es/components/input/index'
+import { ElInputNumber } from 'element-plus/es/components/input-number/index'
+import { ElLoading } from 'element-plus/es/components/loading/index'
+import { ElMenu } from 'element-plus/es/components/menu/index'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
+import { ElNotification } from 'element-plus/es/components/notification/index'
+import { ElPagination } from 'element-plus/es/components/pagination/index'
+import { ElRadio } from 'element-plus/es/components/radio/index'
+import { ElRow } from 'element-plus/es/components/row/index'
+import { ElSelect } from 'element-plus/es/components/select/index'
+import { ElSwitch } from 'element-plus/es/components/switch/index'
+import { ElTable } from 'element-plus/es/components/table/index'
+import { ElTabs } from 'element-plus/es/components/tabs/index'
+import { ElTag } from 'element-plus/es/components/tag/index'
+import { ElTreeSelect } from 'element-plus/es/components/tree-select/index'
+import {
+  Bell,
+  Calendar,
+  Checked,
+  Cpu,
+  MagicStick,
+  OfficeBuilding,
+  Odometer,
+  SetUp,
+  Setting,
+  Tools,
+  UserFilled,
+  Warning,
+} from '@element-plus/icons-vue'
 import 'element-plus/dist/index.css'
 // EP 暗色基础变量(必须在 dist/index.css 之后、theme.dark.scss 之前,让本项目 token 覆盖 EP 默认暗色)
 import 'element-plus/theme-chalk/dark/css-vars.css'
@@ -20,21 +60,66 @@ import './styles/_motion.scss'
 import App from './App.vue'
 import router from './router'
 import { vPermission } from './directives/permission'
-import { setupEcharts } from './composables/useEcharts'
 import { useUserStore } from './stores/user'
-
-// 一次性注册 echarts 按需模块（驾驶舱图表依赖）。
-setupEcharts()
 
 const app = createApp(App)
 const pinia = createPinia()
 pinia.use(piniaPluginPersistedstate)
-for (const [k, v] of Object.entries(ElementPlusIconsVue)) {
-  app.component(k, v as any)
-}
 // 注册 v-permission 指令（按权限码裁剪元素）
 app.directive('permission', vPermission)
-app.use(pinia).use(router).use(ElementPlus)
+// 侧栏图标来自路由 meta.icon，是动态组件名；只注册导航实际使用的图标，
+// 避免恢复旧版“全量注册所有图标”带来的 bundle 膨胀。
+const navigationIcons = {
+  Bell,
+  Calendar,
+  Checked,
+  Cpu,
+  MagicStick,
+  OfficeBuilding,
+  Odometer,
+  SetUp,
+  Setting,
+  Tools,
+  UserFilled,
+  Warning,
+}
+for (const [name, icon] of Object.entries(navigationIcons)) {
+  app.component(name, icon)
+}
+// 只安装实际使用的 Element Plus 组件。组件插件会同时注册自己的子组件，
+// 例如 Container 会带上 Aside/Header/Main，Table 会带上 TableColumn，
+// 这样保留模板兼容性的同时避免把整套组件实现打进首屏 bundle。
+app
+  .use(pinia)
+  .use(router)
+  .use(ElAlert)
+  .use(ElBadge)
+  .use(ElButton)
+  .use(ElCheckbox)
+  .use(ElCol)
+  .use(ElContainer)
+  .use(ElDatePicker)
+  .use(ElDialog)
+  .use(ElDrawer)
+  .use(ElDropdown)
+  .use(ElForm)
+  .use(ElIcon)
+  .use(ElInput)
+  .use(ElInputNumber)
+  .use(ElMenu)
+  .use(ElPagination)
+  .use(ElRadio)
+  .use(ElRow)
+  .use(ElSelect)
+  .use(ElSwitch)
+  .use(ElTable)
+  .use(ElTabs)
+  .use(ElTag)
+  .use(ElTreeSelect)
+  .use(ElLoading)
+  .use(ElMessage)
+  .use(ElMessageBox)
+  .use(ElNotification)
 // 固定全站深色:挂载前给 <html> 加 .dark class(EP 暗色 css-vars 由该 class 激活)
 // 同时加 .js class:作为 [data-stagger] 初始态隐藏的 gate(JS 没跑则内容可见,无障碍/健壮)
 document.documentElement.classList.add('dark')

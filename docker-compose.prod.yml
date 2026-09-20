@@ -6,7 +6,7 @@
 # 默认值策略：所有 ${VAR} 都有 :-default 兜底
 #   - 不写 .env 也能起来（适合"先跑起来再说"）
 #   - 想要强密码：在项目根写 .env 文件覆盖即可
-#   - 4G 机器内存分配：mysql 512M / redis 128M / app 768M / frontend 64M
+#   - 4G 机器内存分配：mysql 512M / redis 128M / qdrant 256M / app 768M / frontend 64M
 # ============================================================
 name: labprod
 
@@ -44,23 +44,36 @@ services:
     ports:
       - "0.0.0.0:6379:6379"
     mem_limit: 128m
+  qdrant:
+    image: qdrant/qdrant:v1.14.1
+    restart: unless-stopped
+    volumes: ["qdrant_data:/qdrant/storage"]
+    expose: ["6333"]
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:6333/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
   app:
     build: .
     restart: unless-stopped
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
+      qdrant: { condition: service_healthy }
     environment:
-      DB_PASSWORD: ${DB_PASSWORD:-LabSecurePwd2026}
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-prod-this-must-be-at-least-32-bytes-long}
-      # AI per-user key:master key 加密用户存 DB 的 chat key,必需(prod 禁用 dev 派生 key)。
-      # 生成:openssl rand -base64 32,写进服务器 .env。chat key 零进服务器(用户在 UI 自配)。
-      AI_MASTER_KEY: ${AI_MASTER_KEY:?set AI_MASTER_KEY in .env (run openssl rand -base64 32)}
-      # RAG/chroma 已从 prod 撤(prod=chat-only)。embedding/vectorstore 默认 none,
-      # 走 application-prod.yml 的 ${VAR:none} 兜底;休眠 RAG 代码 gated on vectorstore.type=none。
+      LAB_ENVIRONMENT: prod
+      LAB_DEBUG: "false"
+      LAB_MYSQL_DSN: mysql+asyncmy://root:${DB_PASSWORD:-LabSecurePwd2026}@mysql:3306/lab_reservation?charset=utf8mb4
+      LAB_REDIS_URL: redis://redis:6379/0
+      LAB_QDRANT_URL: http://qdrant:6333
+      LAB_JWT_SECRET: ${JWT_SECRET:-change-this-production-secret-at-least-32-characters}
+      LAB_CORS_ORIGINS: '["http://localhost"]'
+      LAB_ENABLE_WORKERS: "true"
     mem_limit: 768m
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:8080/api/actuator/health 2>/dev/null | grep -q '\"status\":\"UP\"' || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/v2/live >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -75,3 +88,4 @@ services:
 volumes:
   mysql_data:
   redis_data:
+  qdrant_data:

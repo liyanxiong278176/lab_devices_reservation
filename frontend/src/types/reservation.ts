@@ -17,6 +17,10 @@ export interface ReservationVO {
   userId: number
   deviceId: number
   purpose: string
+  deviceName?: string
+  startDate?: string
+  endDate?: string
+  dates?: string[]
   /** ISO LocalDateTime: yyyy-MM-ddTHH:mm:ss */
   startTime: string
   endTime: string
@@ -28,11 +32,32 @@ export interface ReservationVO {
 /** 创建预约参数（对齐 dto/reservation/ReservationCreateDTO）。 */
 export interface ReservationCreatePayload {
   deviceId: number
-  /** ISO LocalDateTime */
-  startTime: string
-  /** ISO LocalDateTime */
-  endTime: string
+  startDate: string
+  endDate: string
   purpose: string
+  commitMode?: 'all_or_nothing' | 'available_only'
+  dates?: string[]
+}
+
+export interface ReservationConflictVO {
+  date: string
+  reason: string
+  reservation_id?: number | null
+  status?: string | null
+}
+
+export interface ReservationPreflightVO {
+  device: import('./device').DeviceVO
+  requested_dates: string[]
+  available_dates: string[]
+  conflicts: ReservationConflictVO[]
+  all_available: boolean
+}
+
+export interface ReservationCreateResultVO {
+  created: ReservationVO[]
+  skipped_conflicts: ReservationConflictVO[]
+  batch_id?: string | null
 }
 
 /** 我的预约查询参数（对齐 dto/reservation/ReservationQueryDTO）。 */
@@ -40,6 +65,7 @@ export interface ReservationQuery {
   status?: ReservationStatus | ''
   page?: number
   size?: number
+  cursor?: number | null
 }
 
 export type { Page }

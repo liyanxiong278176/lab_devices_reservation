@@ -6,7 +6,7 @@
 //   - 全量走 token,scoped scss,JetBrains Mono 数字
 import { computed, ref, toRef, type Component } from 'vue'
 import { useIntersectionObserver } from '@vueuse/core'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+import { Bell, Calendar, Clock, Monitor, Tools, Warning } from '@element-plus/icons-vue'
 import { useCountUp } from '@/composables/useCountUp'
 
 interface Trend {
@@ -41,16 +41,19 @@ useIntersectionObserver(rootEl, ([entry]) => {
 })
 
 // 数字动画;active=inView(进入视口才激活;命中 reduced-motion 时 useCountUp 内部直跳)
-// holdWhenInactive=true:卡片未滚入视口前 hold 在初值 0,滚入后才 count-up,
-// 否则一挂载就跳 target,等 inView 翻 true 时 from===to 不会有入场滚动。
-const display = useCountUp(toRef(props, 'value'), { active: inView, holdWhenInactive: true })
+// 异步数据到达前卡片初值为 0；数据到达后即使 IntersectionObserver 尚未回调，
+// 也必须先展示真实值，不能因为入场动画状态把仪表盘指标永久留在 0。
+// 在视口内继续使用 count-up；未进入视口时直接同步目标值，保证异步接口数据可见。
+const display = useCountUp(toRef(props, 'value'), { active: inView, holdWhenInactive: false })
 
 const formatted = computed(() => display.value.toFixed(props.decimals))
+
+const iconMap = { Bell, Calendar, Clock, Monitor, Tools, Warning }
 
 // 动态解析 EP icon 名 → 组件(名不存在时降级为 null,不渲染 chip)
 const iconComp = computed<Component | null>(() => {
   if (!props.icon) return null
-  return (ElementPlusIconsVue as Record<string, Component>)[props.icon] ?? null
+  return iconMap[props.icon as keyof typeof iconMap] ?? null
 })
 
 // trend 文字:up 显示 +delta,down 显示 -delta(箭头另由 dir 决定)

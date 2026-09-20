@@ -7,6 +7,7 @@ import dayjs from 'dayjs'
 import { myRepairs } from '@/api/repair'
 import type { RepairReportVO, RepairStatus } from '@/types/repair'
 import type { Page } from '@/types/common'
+import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import { useStagger } from '@/composables/useStagger'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import GlowCard from '@/components/ui/GlowCard.vue'
@@ -26,6 +27,11 @@ interface TimelineItem {
 const loading = ref(false)
 const page = ref<Page<RepairReportVO>>({ records: [], total: 0, size: 10, current: 1 })
 const query = ref<{ page: number; size: number }>({ page: 1, size: 9 })
+const cursorPager = useCursorPageChain<RepairReportVO>((cursor) => myRepairs(
+  1,
+  query.value.size,
+  cursor,
+))
 
 // 卡片错峰容器(同 R5 reservation/Mine):首次进入视口 60ms 错峰 fade+rise
 const listRef = ref<HTMLElement | null>(null)
@@ -34,7 +40,7 @@ const { reveal } = useStagger(listRef, { delay: 60 })
 async function load() {
   loading.value = true
   try {
-    page.value = await myRepairs(query.value.page, query.value.size)
+    page.value = await cursorPager.load(query.value.page)
   } catch {
     // 拦截器已提示
   } finally {
@@ -51,7 +57,8 @@ function onPageChange(p: number) {
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 // ---- 状态 → Tag variant 语义色(spec: PENDING=warning / PROCESSING=accent /

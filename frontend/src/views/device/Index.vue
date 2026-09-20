@@ -12,6 +12,7 @@ import PageHeader from '@/components/ui/PageHeader.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import GlowCard from '@/components/ui/GlowCard.vue'
 import StatusDot from '@/components/ui/StatusDot.vue'
+import Tag from '@/components/ui/Tag.vue'
 import TextButton from '@/components/ui/TextButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 
@@ -24,8 +25,6 @@ const query = reactive<DeviceQuery>({
   size: 24,
   keyword: '',
   status: '',
-  minPrice: undefined,
-  maxPrice: undefined,
 })
 
 const loading = ref(false)
@@ -67,8 +66,6 @@ function onSearch() {
 function onReset() {
   query.keyword = ''
   query.status = ''
-  query.minPrice = undefined
-  query.maxPrice = undefined
   query.categoryId = undefined
   query.labId = undefined
   onSearch()
@@ -106,7 +103,7 @@ onMounted(load)
   <div class="device-page">
     <PageHeader title="设备浏览" :subtitle="subtitle" />
 
-    <!-- 筛选区:状态 SegmentedControl + 关键词 + 价格区间 + 重置 -->
+    <!-- 筛选区:状态 SegmentedControl + 关键词 + 重置 -->
     <div class="device-page__filter">
       <SegmentedControl
         :model-value="query.status ?? ''"
@@ -124,21 +121,6 @@ onMounted(load)
           :prefix-icon="Search"
           @keyup.enter="onSearch"
           @clear="onSearch"
-        />
-        <el-input-number
-          v-model="query.minPrice"
-          class="device-page__price"
-          :min="0"
-          placeholder="最低"
-          controls-position="right"
-        />
-        <span class="device-page__dash">—</span>
-        <el-input-number
-          v-model="query.maxPrice"
-          class="device-page__price"
-          :min="0"
-          placeholder="最高"
-          controls-position="right"
         />
         <TextButton @click="onReset">重置</TextButton>
       </div>
@@ -159,9 +141,12 @@ onMounted(load)
         <GlowCard as="article" class="device-card" @click="goDetail(row)">
           <div class="device-card__top">
             <StatusDot :status="row.status" :label="true" />
-            <span class="device-card__price">
-              ¥{{ row.pricePerHour ?? '—' }}<small>/时</small>
-            </span>
+            <div class="device-card__top-right">
+              <Tag :variant="row.needApproval === 1 ? 'warning' : 'success'" size="small">
+                {{ row.needApproval === 1 ? '需负责人审批' : '自动确认' }}
+              </Tag>
+              <span class="device-card__price">最多 {{ row.maxReservationDays ?? '—' }} 天</span>
+            </div>
           </div>
 
           <h3 class="device-card__title">
@@ -286,6 +271,14 @@ onMounted(load)
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+  }
+
+  &__top-right {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
   }
 
   &__price {

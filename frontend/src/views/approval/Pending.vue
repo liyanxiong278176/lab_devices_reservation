@@ -10,6 +10,7 @@ import dayjs from 'dayjs'
 import { approve, batchApprove, pendingApprovals, reject } from '@/api/approval'
 import type { ApprovalItemVO } from '@/types/approval'
 import type { Page } from '@/types/common'
+import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import { useNotificationStore } from '@/stores/notification'
 import { useStagger } from '@/composables/useStagger'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -25,6 +26,11 @@ const notifStore = useNotificationStore()
 const loading = ref(false)
 const page = ref<Page<ApprovalItemVO>>({ records: [], total: 0, size: 9, current: 1 })
 const query = ref<{ page: number; size: number }>({ page: 1, size: 9 })
+const cursorPager = useCursorPageChain<ApprovalItemVO>((cursor) => pendingApprovals(
+  1,
+  query.value.size,
+  cursor,
+))
 
 // 批量通过:选中 id 集合(原 selection: ApprovalItemVO[] → 简化为 id[],
 // batchApprove 仍接收 ids,契约不变)
@@ -45,7 +51,7 @@ const { reveal } = useStagger(listRef, { delay: 60 })
 async function load() {
   loading.value = true
   try {
-    page.value = await pendingApprovals(query.value.page, query.value.size)
+    page.value = await cursorPager.load(query.value.page)
     // 翻页/重载后清掉离开当前页的选中,避免跨页误批量
     const live = new Set(page.value.records.map((r) => r.id))
     selectedIds.value = selectedIds.value.filter((id) => live.has(id))
@@ -66,12 +72,13 @@ async function load() {
 
 function onPageChange(p: number) {
   query.value.page = p
-  load()
+  void load()
 }
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 // ---- 选择(批量通过用)-----------------------------------------------------
@@ -104,6 +111,7 @@ async function onApprove(row: ApprovalItemVO) {
   try {
     await approve(row.id)
     ElMessage.success('已通过')
+    cursorPager.reset()
     await load()
     notifStore.loadUnread()
   } catch {
@@ -147,6 +155,7 @@ async function onRejectConfirm(row: ApprovalItemVO) {
     ElMessage.success('已驳回')
     rejectingId.value = null
     rejectReason.value = ''
+    cursorPager.reset()
     await load()
     notifStore.loadUnread()
   } catch {
@@ -165,6 +174,7 @@ async function onBatchApprove() {
     await batchApprove([...selectedIds.value])
     ElMessage.success(`已批量通过 ${selectedIds.value.length} 条`)
     selectedIds.value = []
+    cursorPager.reset()
     await load()
     notifStore.loadUnread()
   } catch {
@@ -173,7 +183,7 @@ async function onBatchApprove() {
 }
 
 function fmt(t?: string): string {
-  return t ? dayjs(t).format('YYYY-MM-DD HH:mm') : '—'
+  return t ? dayjs(t).format('YYYY-MM-DD') : '—'
 }
 
 /** 申请人姓名优先 realName,fallback username。 */
@@ -186,15 +196,8 @@ function avatarChar(row: ApprovalItemVO): string {
   return applicantName(row).charAt(0).toUpperCase()
 }
 
-/** 时长(slotCount × 15min)→ "X 小时 Y 分"。 */
 function durationLabel(slots?: number): string {
-  if (!slots || slots <= 0) return '—'
-  const mins = slots * 15
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  if (h === 0) return `${m} 分`
-  if (m === 0) return `${h} 小时`
-  return `${h} 小时 ${m} 分`
+  return slots && slots > 0 ? `${slots} 天` : '—'
 }
 
 const subtitle = computed(() => `共 ${page.value.total} 条待处理`)
@@ -267,7 +270,7 @@ onMounted(load)
           <div class="approval__meta">
             <span class="approval__chip">{{ durationLabel(row.slotCount) }}</span>
             <span class="approval__chip approval__chip--muted">
-              {{ row.slotCount ?? 0 }} 时段
+              自然日预约
             </span>
           </div>
 
@@ -350,7 +353,7 @@ onMounted(load)
         <EmptyState
           icon="Checked"
           title="暂无待审批申请"
-          description="所有预约申请都已处理完毕。"
+          description="当前没有需要负责人处理的预约；自动确认设备的预约不会出现在这里。"
         />
       </div>
     </div>

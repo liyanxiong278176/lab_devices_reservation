@@ -3,6 +3,7 @@
 // 标题用 Space Grotesk(--font-display),底部 1px hairline(--border-subtle)
 // back=true 时标题左侧渲染返回箭头(返回上一级 router.back),用于钻取详情/表单页。
 import { useRouter } from 'vue-router'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import { readSpaDepth } from '@/router'
 
 defineProps<{

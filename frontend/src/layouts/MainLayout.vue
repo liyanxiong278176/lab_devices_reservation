@@ -2,12 +2,10 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Bell } from '@element-plus/icons-vue'
+import { Bell, Expand, Fold } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
 import { useNotificationStore } from '@/stores/notification'
-import { connectWs, disconnectWs } from '@/composables/useWebSocket'
-import AiAssistant from '@/components/ai/AiAssistant.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -15,16 +13,14 @@ const userStore = useUserStore()
 const appStore = useAppStore()
 const notifStore = useNotificationStore()
 
-// 通知未读数轮询（S1 兜底）+ S3 STOMP 长连接
+// 通知未读数轮询：单体 v2 使用轻量 HTTP 兜底，避免浏览器长连接影响页面稳定性。
 let notifTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   notifStore.loadUnread()
   notifTimer = setInterval(() => notifStore.loadUnread(), 30000)
-  connectWs()
 })
 onUnmounted(() => {
   if (notifTimer) clearInterval(notifTimer)
-  disconnectWs()
 })
 
 interface MenuItem {
@@ -61,7 +57,6 @@ const displayName = computed(
 )
 
 function onLogout() {
-  disconnectWs()
   userStore.logout()
   ElMessage.success('已退出登录')
   router.push('/login')
@@ -120,7 +115,14 @@ function onLogout() {
       </el-main>
     </el-container>
 
-    <AiAssistant />
+    <a
+      class="layout__credit"
+      href="https://deerflow.tech"
+      target="_blank"
+      rel="noreferrer"
+    >
+      Created By Deerflow
+    </a>
   </el-container>
 </template>
 
@@ -250,6 +252,8 @@ function onLogout() {
   z-index: 1;
   // 让 header sticky 有滚动容器可粘:el-main 自带 overflow:auto
   min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
 // ---- 顶栏:半透明毛玻璃 + sticky + 底 hairline ------------------------------
@@ -358,9 +362,29 @@ function onLogout() {
 
 // ---- 主区:透明(让 App.vue 全局 .aurora-bg 极光透出;底色由 body var(--bg-base) 兜底)
 .layout__main {
+  min-height: 0;
   padding: 24px;
   background: transparent;
   color: var(--text-primary);
+}
+
+.layout__credit {
+  position: fixed;
+  right: 20px;
+  bottom: 12px;
+  z-index: 20;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  opacity: 0.58;
+  text-decoration: none;
+  transition: color var(--d-fast) var(--ease-out-expo), opacity var(--d-fast) var(--ease-out-expo);
+
+  &:hover {
+    color: var(--accent);
+    opacity: 1;
+  }
 }
 
 // ============================================================================

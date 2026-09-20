@@ -2,6 +2,13 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as authApi from '@/api/auth'
 
+// v2 后端以角色做接口鉴权，/auth/me 当前只返回角色，不返回旧版权限表。
+// 前端操作按钮需要和后端的实际角色能力保持一致，避免管理员能进入页面却看不到操作按钮。
+const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
+  SYS_ADMIN: ['device:approve', 'device:manage', 'repair:handle'],
+  LAB_ADMIN: ['device:approve', 'device:manage', 'repair:handle'],
+}
+
 export const useUserStore = defineStore(
   'user',
   () => {
@@ -13,26 +20,26 @@ export const useUserStore = defineStore(
     const roles = ref<string[]>([])
     const permissions = ref<string[]>([])
 
-    function applyUserInfo(info: authApi.UserInfoVO | undefined) {
-      if (!info) return
-      userId.value = info.id
-      username.value = info.username
-      realName.value = info.realName
-      roles.value = info.roles || []
-      permissions.value = info.permissions || []
+  function applyUserInfo(info: authApi.UserInfoVO | undefined) {
+    if (!info) return
+    userId.value = info.id
+    username.value = info.username
+    realName.value = info.real_name || info.username
+    roles.value = info.roles || []
+    permissions.value = []
     }
 
     async function login(payload: { username: string; password: string }) {
       const data = await authApi.login(payload)
-      accessToken.value = data.accessToken
-      refreshToken.value = data.refreshToken
-      // LoginVO.userInfo carries { id, username, realName, roles, permissions }
-      applyUserInfo(data.userInfo)
+      accessToken.value = data.access_token
+      refreshToken.value = data.refresh_token
+      await fetchMe()
     }
 
     async function refresh() {
       const d = await authApi.refresh(refreshToken.value)
-      accessToken.value = d.accessToken
+      accessToken.value = d.access_token
+      refreshToken.value = d.refresh_token
     }
 
     async function fetchMe() {
@@ -64,7 +71,9 @@ export const useUserStore = defineStore(
       permissions.value = []
     }
 
-    const hasPerm = (code: string) => permissions.value.includes(code)
+    const hasPerm = (code: string) =>
+      permissions.value.includes(code) ||
+      roles.value.some((role) => ROLE_PERMISSIONS[role]?.includes(code) ?? false)
     const hasRole = (r: string) => roles.value.includes(r)
 
     return {

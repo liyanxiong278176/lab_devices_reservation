@@ -8,6 +8,7 @@ import dayjs from 'dayjs'
 import { listRepairs, rejectRepair, resolveRepair, takeRepair } from '@/api/repair'
 import type { RepairReportVO, RepairStatus } from '@/types/repair'
 import type { Page } from '@/types/common'
+import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import { useNotificationStore } from '@/stores/notification'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
@@ -22,6 +23,12 @@ const loading = ref(false)
 const page = ref<Page<RepairReportVO>>({ records: [], total: 0, size: 10, current: 1 })
 const activeStatus = ref<RepairStatus | ''>('')
 const query = ref<{ page: number; size: number }>({ page: 1, size: 10 })
+const cursorPager = useCursorPageChain<RepairReportVO>((cursor) => listRepairs(
+  activeStatus.value,
+  1,
+  query.value.size,
+  cursor,
+))
 
 // 处理对话框:resolve / reject 共用,靠 mode 区分
 const handleVisible = ref(false)
@@ -42,7 +49,7 @@ const statusTabs: { label: string; value: RepairStatus | '' }[] = [
 async function load() {
   loading.value = true
   try {
-    page.value = await listRepairs(activeStatus.value, query.value.page, query.value.size)
+    page.value = await cursorPager.load(query.value.page)
   } catch {
     // 拦截器已提示
   } finally {
@@ -53,7 +60,8 @@ async function load() {
 function onTabChange(v: string | number) {
   activeStatus.value = (v as RepairStatus | '') ?? ''
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 function onPageChange(p: number) {
@@ -63,13 +71,15 @@ function onPageChange(p: number) {
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 async function onTake(row: RepairReportVO) {
   try {
     await takeRepair(row.id)
     ElMessage.success('已受理')
+    cursorPager.reset()
     await load()
     notifStore.loadUnread()
   } catch {
@@ -107,6 +117,7 @@ async function onHandleConfirm() {
       ElMessage.success('已驳回')
     }
     handleVisible.value = false
+    cursorPager.reset()
     await load()
     notifStore.loadUnread()
   } catch {

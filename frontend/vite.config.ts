@@ -9,23 +9,21 @@ export default defineConfig({
   // sockjs-client@1.6.1 是 Node 时代老库，顶层引用全局 `global`，浏览器无此全局 →
   // `ReferenceError: global is not defined`（登录后导航到 MainLayout 时连带加载即崩，
   // 导致 router.push('/dashboard') 中断、停在登录页）。用 globalThis polyfill：
-  // define 覆盖源码与 prod 构建，optimizeDeps.esbuildOptions.define 覆盖 dev 预打包依赖，双通道确保生效。
+  // define 覆盖源码、依赖预构建与 prod 构建，确保 sockjs-client 在浏览器中可用。
   define: {
     global: 'globalThis',
-  },
-  optimizeDeps: {
-    esbuildOptions: {
-      define: { global: 'globalThis' },
-    },
   },
   server: {
     port: 5173,
     proxy: {
-      // AI 助手与通知共用 /api/ws SockJS 端点,必须 ws upgrade 透传,
-      // 否则浏览器跨源 ws upgrade 到 :8080 被 CORS 拒,且 vite 缺 ws:true 也不会升级。
-      '/api': { target: 'http://localhost:8080', changeOrigin: true, ws: true },
-      '/ws': { target: 'http://localhost:8080', ws: true, changeOrigin: true },
+      // v2 FastAPI 单体服务；SSE 走普通 HTTP，保留 /ws 代理给通知兼容层。
+      '/api': { target: 'http://localhost:8000', changeOrigin: true, ws: true },
+      '/ws': { target: 'http://localhost:8000', ws: true, changeOrigin: true },
     },
   },
-  test: { environment: 'jsdom', globals: true },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    exclude: ['e2e/**', '**/node_modules/**', '**/dist/**'],
+  },
 })

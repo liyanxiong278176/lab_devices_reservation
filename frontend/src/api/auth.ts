@@ -8,24 +8,21 @@ export interface LoginPayload {
 export interface UserInfoVO {
   id: number
   username: string
-  realName: string
+  real_name: string | null
+  college_id: number | null
   roles: string[]
-  permissions: string[]
 }
 
-export interface LoginVO {
-  accessToken: string
-  refreshToken: string
-  expiresIn: number
-  userInfo: UserInfoVO
+export interface TokenVO {
+  access_token: string
+  refresh_token: string
+  token_type: string
+  expires_in: number
 }
 
-export const login = (data: LoginPayload) => request.post<unknown, LoginVO>('/auth/login', data)
+export const login = (data: LoginPayload) => request.post<unknown, TokenVO>('/auth/login', data)
 
-// 后端 AuthController.refresh 用 @RequestParam（query/form 参数），非 JSON body
 export const refresh = (refreshToken: string) =>
-  request.post<unknown, { accessToken: string }>('/auth/refresh', null, {
-    params: { refreshToken },
-  })
+  request.post<unknown, TokenVO>('/auth/refresh', { refresh_token: refreshToken })
 
 export const getMe = () => request.get<unknown, UserInfoVO>('/auth/me')

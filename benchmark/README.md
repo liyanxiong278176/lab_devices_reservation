@@ -1,4 +1,6 @@
-# 实验设备预约平台 —— JMeter 压测
+# 实验设备预约平台 —— 压测与并发验证
+
+当前运行时已经切换到 FastAPI `/api/v2`。优先使用 `backend/benchmarks/reservation_concurrency.py` 验证自然日预约的并发一致性；本文件下方的旧 JMeter 脚本仍针对历史 Spring Boot `/api` 接口，仅作为旧版本对照，不代表当前 v2 契约。
 
 Phase 4 论文实测。三场景脚本 + 一键运行 + 真实数据，用于验证「防超约」与读取接口性能。
 

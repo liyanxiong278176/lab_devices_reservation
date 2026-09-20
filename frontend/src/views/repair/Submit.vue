@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 提交报修页(R5 重构):PageHeader + GlowCard 表单 + GradientButton 提交 / GhostButton 取消。
-// 数据来源(API)/校验/提交跳转逻辑零改——仅换展示层。
+// 表单校验与 /api/v2 报修请求契约保持一致。
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -15,6 +15,9 @@ import GhostButton from '@/components/ui/GhostButton.vue'
 
 const router = useRouter()
 
+const MIN_TITLE_LENGTH = 2
+const MAX_IMAGE_URLS = 6
+
 const formRef = ref<FormInstance>()
 const form = ref({
   deviceId: undefined as number | undefined,
@@ -26,14 +29,34 @@ const submitting = ref(false)
 const devices = ref<DeviceVO[]>([])
 
 const rules: FormRules = {
-  deviceId: [{ required: true, message: '请选择设备', trigger: 'change' }],
-  title: [{ required: true, message: '请输入标题', trigger: 'blur' }],
+  deviceId: [
+    { required: true, message: '请选择设备', trigger: ['change', 'blur'] },
+  ],
+  title: [
+    { required: true, message: '请输入标题', trigger: ['blur', 'change'] },
+    {
+      min: MIN_TITLE_LENGTH,
+      max: 200,
+      message: `标题长度为 ${MIN_TITLE_LENGTH}-200 个字符`,
+      trigger: ['blur', 'change'],
+    },
+  ],
 }
 
 async function loadDevices() {
   try {
-    const page = await searchDevices({ page: 1, size: 200, status: 'IDLE' })
-    devices.value = page.records
+    // The v2 endpoint caps page_size at 100. Load the remaining pages in
+    // parallel so the repair selector still contains every visible idle
+    // device instead of failing on page entry or silently truncating options.
+    const pageSize = 100
+    const firstPage = await searchDevices({ page: 1, size: pageSize, status: 'IDLE' })
+    const totalPages = firstPage.pages ?? Math.ceil(firstPage.total / pageSize)
+    const remainingPages = await Promise.all(
+      Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) =>
+        searchDevices({ page: index + 2, size: pageSize, status: 'IDLE' }),
+      ),
+    )
+    devices.value = [firstPage, ...remainingPages].flatMap((item) => item.records)
   } catch {
     // 拦截器已提示
   }
@@ -42,15 +65,35 @@ async function loadDevices() {
 async function onSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
+
+  // Keep the client-side guard aligned with RepairCreateRequest.  This also
+  // covers whitespace-only titles and protects against a select value being
+  // missing when a user clicks submit before the form has finished updating.
+  const deviceId = form.value.deviceId
+  const title = form.value.title.trim()
+  if (typeof deviceId !== 'number' || !Number.isInteger(deviceId) || deviceId <= 0) {
+    ElMessage.warning('请选择需要报修的设备')
+    return
+  }
+  if (title.length < MIN_TITLE_LENGTH) {
+    ElMessage.warning(`标题至少填写 ${MIN_TITLE_LENGTH} 个字符`)
+    return
+  }
+
+  const imageUrls = form.value.imageUrlsText
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (imageUrls.length > MAX_IMAGE_URLS) {
+    ElMessage.warning(`图片 URL 最多填写 ${MAX_IMAGE_URLS} 个`)
+    return
+  }
+
   submitting.value = true
   try {
-    const imageUrls = form.value.imageUrlsText
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
     await createRepair({
-      deviceId: form.value.deviceId!,
-      title: form.value.title.trim(),
+      deviceId,
+      title,
       description: form.value.description.trim() || undefined,
       imageUrls: imageUrls.length ? imageUrls : undefined,
     })

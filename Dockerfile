@@ -1,17 +1,13 @@
-# stage1: build
-FROM maven:3.9-eclipse-temurin-17 AS builder
-WORKDIR /build
-# 中国网络：容器内直连 Maven Central 会超时，先注入阿里云镜像 settings
-COPY .mvn/docker-settings.xml /root/.m2/settings.xml
-# 先 copy pom 跑依赖解析（利用 Docker 层缓存）
-COPY pom.xml .
-RUN mvn -B dependency:go-offline
-COPY src ./src
-RUN mvn -B package -DskipTests
+# FastAPI runtime. The Java implementation is no longer the application entrypoint;
+# backend/ is the canonical Python service for the v2 rewrite.
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+WORKDIR /app/backend
 
-# stage2: runtime
-FROM eclipse-temurin:17-jre-jammy
-WORKDIR /app
-COPY --from=builder /build/target/*.jar app.jar
-EXPOSE 8080
-ENTRYPOINT ["java","-jar","/app/app.jar","--spring.profiles.active=prod"]
+COPY backend/pyproject.toml backend/uv.lock ./
+RUN uv sync --frozen --no-dev
+COPY backend ./
+
+ENV LAB_ENVIRONMENT=prod
+ENV LAB_ENABLE_WORKERS=true
+EXPOSE 8000
+CMD ["uv", "run", "--no-dev", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

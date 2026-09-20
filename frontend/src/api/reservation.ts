@@ -2,10 +2,54 @@ import request from './request'
 import type { Page } from '@/types/common'
 import type {
   ReservationCreatePayload,
+  ReservationCreateResultVO,
+  ReservationPreflightVO,
   ReservationQuery,
   ReservationStatus,
   ReservationVO,
 } from '@/types/reservation'
+
+interface V2Reservation {
+  id: number
+  device_id: number
+  device_name: string
+  user_id: number
+  purpose?: string
+  start_date: string
+  end_date: string
+  dates: string[]
+  status: ReservationStatus
+  batch_id?: string | null
+  need_approval: boolean
+  created_at?: string
+}
+
+interface V2ReservationPage {
+  items: V2Reservation[]
+  total: number
+  page: number
+  page_size: number
+  next_cursor?: number | null
+  has_more?: boolean
+}
+
+function mapReservation(item: V2Reservation): ReservationVO {
+  return {
+    id: item.id,
+    userId: item.user_id,
+    deviceId: item.device_id,
+    deviceName: item.device_name,
+    purpose: item.purpose || '',
+    startDate: item.start_date,
+    endDate: item.end_date,
+    dates: item.dates,
+    startTime: `${item.start_date}T00:00:00`,
+    endTime: `${item.end_date}T23:59:59`,
+    slotCount: item.dates.length,
+    status: item.status,
+    createdAt: item.created_at,
+  }
+}
 
 /**
  * 预约接口（对齐 ReservationController）。
@@ -19,7 +63,22 @@ import type {
  *  - GET  /reservations/{id}        → 详情（本人或管理员）
  */
 export const createReservation = (data: ReservationCreatePayload) =>
-  request.post<unknown, number>('/reservations', data)
+  request.post<unknown, ReservationCreateResultVO>('/reservations', {
+    device_id: data.deviceId,
+    start_date: data.startDate,
+    end_date: data.endDate,
+    purpose: data.purpose,
+    commit_mode: data.commitMode || 'all_or_nothing',
+    ...(data.dates ? { dates: data.dates } : {}),
+  })
+
+export const preflightReservation = (data: ReservationCreatePayload) =>
+  request.post<unknown, ReservationPreflightVO>('/reservations/preflight', {
+    device_id: data.deviceId,
+    start_date: data.startDate,
+    end_date: data.endDate,
+    purpose: data.purpose || '设备使用',
+  })
 
 export const cancelReservation = (id: number) =>
   request.post<unknown, void>(`/reservations/${id}/cancel`)
@@ -28,14 +87,31 @@ export const checkInReservation = (id: number) =>
   request.post<unknown, void>(`/reservations/${id}/check-in`)
 
 export const checkOutReservation = (id: number) =>
-  request.post<unknown, void>(`/reservations/${id}/check-out`)
+  request.post<unknown, void>(`/reservations/${id}/return`)
 
-export const myReservations = (q: ReservationQuery = {}) =>
-  request.get<unknown, Page<ReservationVO>>('/reservations/mine', { params: q })
+export const myReservations = async (q: ReservationQuery = {}): Promise<Page<ReservationVO>> => {
+  const data = await request.get<unknown, V2ReservationPage>('/reservations/mine', {
+    params: {
+      page: q.page,
+      page_size: q.size,
+      cursor: q.cursor || undefined,
+      status: q.status || undefined,
+    },
+  })
+  return {
+    records: data.items.map(mapReservation),
+    total: data.total,
+    size: data.page_size,
+    current: data.page,
+    pages: Math.ceil(data.total / data.page_size),
+    nextCursor: data.next_cursor,
+    hasMore: data.has_more,
+  }
+}
 
 /** 按状态查询我的预约（便捷重载）。 */
 export const myReservationsByStatus = (status: ReservationStatus | '', page = 1, size = 10) =>
   myReservations({ status, page, size })
 
 export const getReservation = (id: number) =>
-  request.get<unknown, ReservationVO>(`/reservations/${id}`)
+  request.get<unknown, V2Reservation>(`/reservations/${id}`).then(mapReservation)

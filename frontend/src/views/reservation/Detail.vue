@@ -59,17 +59,7 @@ async function load() {
 }
 
 function fmt(t?: string): string {
-  return t ? dayjs(t).format('YYYY-MM-DD HH:mm') : '—'
-}
-
-/** 时长(slotCount × 15min)→ "X 小时 Y 分"。 */
-function durationLabel(slots: number): string {
-  const mins = slots * 15
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  if (h === 0) return `${m} 分`
-  if (m === 0) return `${h} 小时`
-  return `${h} 小时 ${m} 分`
+  return t ? dayjs(t).format('YYYY-MM-DD') : '—'
 }
 
 // ---- 状态 → Tag variant 映射 ------------------------------------------------
@@ -144,7 +134,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
     items.push({
       id: 'checkin',
       title: '等待签到',
-      desc: `预约时段开始:${fmt(r.startTime)}`,
+      desc: `预约首日:${fmt(r.startDate || r.startTime)}`,
       status: 'current',
     })
   } else if (s === 'NO_SHOW') {
@@ -159,7 +149,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
     items.push({
       id: 'checkin',
       title: '已签到使用',
-      time: fmt(r.startTime),
+      time: fmt(r.startDate || r.startTime),
       status: 'done',
     })
   } else {
@@ -167,7 +157,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
     items.push({
       id: 'checkin',
       title: '已签到',
-      time: fmt(r.startTime),
+      time: fmt(r.startDate || r.startTime),
       status: 'done',
     })
   }
@@ -177,14 +167,14 @@ const timelineItems = computed<TimelineItem[]>(() => {
     items.push({
       id: 'checkout',
       title: '使用中,待归还',
-      desc: `预计 ${fmt(r.endTime)} 结束`,
+      desc: `预约末日:${fmt(r.endDate || r.endTime)}`,
       status: 'current',
     })
   } else if (s === 'COMPLETED') {
     items.push({
       id: 'checkout',
       title: '已归还完成',
-      time: fmt(r.endTime),
+      time: fmt(r.endDate || r.endTime),
       status: 'done',
     })
   } else if (s === 'VIOLATED') {
@@ -212,10 +202,10 @@ const specRows = computed(() => {
   const deviceName = device.value?.name || `设备 #${r.deviceId}`
   return [
     { label: '设备', value: deviceName },
-    { label: '开始时间', value: fmt(r.startTime) },
-    { label: '结束时间', value: fmt(r.endTime) },
-    { label: '时长', value: durationLabel(r.slotCount) },
-    { label: '时段数', value: `${r.slotCount} 个(每段 15 分钟)` },
+    { label: '开始日期', value: fmt(r.startDate || r.startTime) },
+    { label: '结束日期', value: fmt(r.endDate || r.endTime) },
+    { label: '预约天数', value: `${r.slotCount} 天` },
+    { label: '计费粒度', value: '自然日' },
     { label: '申请人', value: `用户 #${r.userId}` },
   ]
 })

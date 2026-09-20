@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 通知中心(R6 重构):PageHeader + SegmentedControl(全部/未读)+ 通知行列表
 // 未读左侧 2px 青色指示条 + 已读弱化(--text-tertiary)+ 点击未读标记已读 + 空态。
-// 数据/筛选/markRead/markAllRead/未读计数——逻辑零改,仅换展示层。
+// 已读操作同时更新当前列表和全局未读徽标，避免必须刷新页面才能看到最新状态。
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
@@ -79,7 +79,10 @@ async function onMarkRead(row: NotificationVO) {
   try {
     await markRead(row.id)
     row.isRead = 1
-    notifStore.loadUnread()
+    notifStore.decreaseUnread()
+    // 保留当前行，只更新已读样式；避免用户点击后通知突然从当前列表消失。
+    // 切换筛选条件或手动刷新时，再按服务端最新状态重新查询。
+    await notifStore.loadUnread()
   } catch {
     // 拦截器已提示
   }
@@ -89,8 +92,11 @@ async function onMarkAllRead() {
   try {
     await markAllRead()
     ElMessage.success('已全部标记为已读')
-    await load()
-    notifStore.loadUnread()
+    page.value.records.forEach((row) => {
+      row.isRead = 1
+    })
+    notifStore.clearUnread()
+    await notifStore.loadUnread()
   } catch {
     // 拦截器已提示
   }
@@ -104,10 +110,14 @@ function onRowClick(row: NotificationVO) {
 function typeLabel(t: string): string {
   switch (t) {
     case 'APPROVAL':
+    case 'RESERVATION_APPROVED':
+    case 'RESERVATION_REJECTED':
       return '审批'
     case 'RESERVATION':
+    case 'RESERVATION_CREATED':
       return '预约'
     case 'REPAIR':
+    case 'REPAIR_UPDATE':
       return '报修'
     case 'SYSTEM':
       return '系统'
@@ -120,10 +130,14 @@ function typeLabel(t: string): string {
 function typeVariant(t: string): 'default' | 'success' | 'warning' | 'danger' | 'info' | 'accent' {
   switch (t) {
     case 'APPROVAL':
+    case 'RESERVATION_APPROVED':
+    case 'RESERVATION_REJECTED':
       return 'warning'
     case 'RESERVATION':
+    case 'RESERVATION_CREATED':
       return 'accent'
     case 'REPAIR':
+    case 'REPAIR_UPDATE':
       return 'danger'
     case 'SYSTEM':
       return 'info'

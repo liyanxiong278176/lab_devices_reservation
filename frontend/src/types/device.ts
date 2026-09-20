@@ -1,7 +1,7 @@
 import type { Page } from './common'
 
 /** 设备状态枚举（与后端 DeviceStatus 一致）。 */
-export type DeviceStatus = 'IDLE' | 'IN_USE' | 'MAINTENANCE'
+export type DeviceStatus = 'IDLE' | 'IN_USE' | 'MAINTENANCE' | 'DISABLED' | 'OFFLINE' | 'RETIRED'
 
 /** 后端 DeviceVO（vo/device/DeviceVO.java）。 */
 export interface DeviceVO {
@@ -19,6 +19,7 @@ export interface DeviceVO {
   /** 0/1 — 是否需审批 */
   needApproval: number
   maxReservationHours?: number | string
+  maxReservationDays?: number
   pricePerHour?: number | string
   tags?: string[]
   description?: string
@@ -50,6 +51,7 @@ export interface DeviceQuery {
   page?: number
   size?: number
   keyword?: string
+  search?: string
   categoryId?: number
   labId?: number
   status?: DeviceStatus | ''
@@ -57,6 +59,13 @@ export interface DeviceQuery {
   needApproval?: number
   minPrice?: number | string
   maxPrice?: number | string
+}
+
+export interface DeviceAvailabilityVO {
+  date: string
+  available: boolean
+  reservationId?: number | null
+  status?: string | null
 }
 
 export type { Page }

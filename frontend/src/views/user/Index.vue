@@ -7,7 +7,9 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import dayjs from 'dayjs'
+import { listColleges } from '@/api/college'
 import { createUser, deleteUser, listUsers, patchUserStatus, updateUser } from '@/api/user'
+import type { CollegeVO } from '@/types/college'
 import type { UserCreatePayload, UserQuery, UserVO } from '@/types/user'
 import type { Page } from '@/types/common'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -19,6 +21,7 @@ import Tag from '@/components/ui/Tag.vue'
 const loading = ref(false)
 const page = ref<Page<UserVO>>({ records: [], total: 0, size: 10, current: 1 })
 const query = ref<UserQuery>({ page: 1, size: 10, username: '', realName: '' })
+const colleges = ref<CollegeVO[]>([])
 
 // 角色选项(表单下拉用)
 const roleOptions = [
@@ -76,6 +79,7 @@ const form = ref({
   userType: 'STUDENT',
   deptName: '',
   roleCodes: [] as string[],
+  collegeId: undefined as number | undefined,
 })
 
 const rules: FormRules = {
@@ -92,12 +96,29 @@ const rules: FormRules = {
       trigger: 'blur',
     },
   ],
+  collegeId: [
+    {
+      validator: (_r, _v, cb) => {
+        if (!form.value.collegeId && !form.value.roleCodes.includes('SYS_ADMIN')) {
+          cb(new Error('业务用户必须绑定学院'))
+        } else {
+          cb()
+        }
+      },
+      trigger: 'change',
+    },
+  ],
 }
 
 async function load() {
   loading.value = true
   try {
-    page.value = await listUsers(query.value)
+    const [users, availableColleges] = await Promise.all([
+      listUsers(query.value),
+      listColleges(),
+    ])
+    page.value = users
+    colleges.value = availableColleges
   } catch {
     // 拦截器已提示
   } finally {
@@ -130,6 +151,7 @@ function resetForm() {
     userType: 'STUDENT',
     deptName: '',
     roleCodes: [],
+    collegeId: undefined,
   }
 }
 
@@ -152,6 +174,7 @@ function openEdit(row: UserVO) {
     userType: row.userType || 'STUDENT',
     deptName: row.deptName || '',
     roleCodes: row.roles || [],
+    collegeId: row.collegeId ?? undefined,
   }
   drawerVisible.value = true
 }
@@ -167,6 +190,7 @@ function buildPayload(): UserCreatePayload {
     userType: f.userType,
     deptName: f.deptName || undefined,
     roleCodes: f.roleCodes,
+    collegeId: f.collegeId,
   }
 }
 
@@ -315,6 +339,11 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
+        <el-table-column label="所属学院" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ colleges.find((college) => college.id === row.collegeId)?.name || '全局' }}
+          </template>
+        </el-table-column>
         <el-table-column label="创建时间" width="120">
           <template #default="{ row }">{{ fmt(row.createdAt) }}</template>
         </el-table-column>
@@ -391,6 +420,21 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="院系">
           <el-input v-model="form.deptName" />
+        </el-form-item>
+        <el-form-item label="所属学院" prop="collegeId">
+          <el-select
+            v-model="form.collegeId"
+            clearable
+            placeholder="系统管理员可不绑定学院"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="college in colleges"
+              :key="college.id"
+              :label="`${college.name} (${college.code})`"
+              :value="college.id"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="角色">
           <el-select v-model="form.roleCodes" multiple placeholder="分配角色" style="width: 100%">

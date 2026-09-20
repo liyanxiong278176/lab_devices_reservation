@@ -24,24 +24,20 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-  chroma:
-    image: chromadb/chroma:1.0.0
-    container_name: lab-chroma
+  qdrant:
+    image: qdrant/qdrant:v1.14.1
+    container_name: lab-qdrant
     restart: unless-stopped
     volumes:
-      - chroma_data:/chroma/chroma
+      - qdrant_data:/qdrant/storage
     ports:
-      - "127.0.0.1:9000:8000"
-    environment:
-      - IS_PERSISTENT=TRUE
-      - PERSIST_DIRECTORY=/chroma/chroma
-      - ANONYMIZED_TELEMETRY=FALSE
+      - "6333:6333"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/api/v2/heartbeat"]
-      interval: 30s
+      test: ["CMD-SHELL", "curl -fsS http://localhost:6333/readyz || exit 1"]
+      interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 10
 volumes:
   mysql_data:
   redis_data:
-  chroma_data:
+  qdrant_data:

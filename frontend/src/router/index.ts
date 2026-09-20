@@ -20,6 +20,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '仪表盘', icon: 'Odometer' },
       },
       {
+        path: 'ai',
+        name: 'ai-workbench',
+        component: () => import('@/views/ai/Workbench.vue'),
+        meta: { title: 'AI 工作台', icon: 'MagicStick' },
+      },
+      {
         path: 'devices',
         name: 'devices',
         component: () => import('@/views/device/Index.vue'),
@@ -35,7 +41,8 @@ const routes: RouteRecordRaw[] = [
         path: 'recommendations',
         name: 'recommendations',
         component: () => import('@/views/recommendation/Index.vue'),
-        meta: { title: '为你推荐', icon: 'MagicStick', roles: ['STUDENT'] },
+        // 保留推荐页路由，但不放入本轮确定的普通用户主菜单。
+        meta: { title: '为你推荐', icon: 'MagicStick', roles: ['STUDENT'], hidden: true },
       },
       {
         path: 'reservations/create',
@@ -47,7 +54,7 @@ const routes: RouteRecordRaw[] = [
         path: 'reservations/mine',
         name: 'reservation-mine',
         component: () => import('@/views/reservation/Mine.vue'),
-        meta: { title: '我的预约', icon: 'Calendar' },
+        meta: { title: '我的预约', icon: 'Calendar', roles: ['STUDENT'] },
       },
       {
         path: 'reservations/:id',
@@ -71,13 +78,13 @@ const routes: RouteRecordRaw[] = [
         path: 'repairs/submit',
         name: 'repair-submit',
         component: () => import('@/views/repair/Submit.vue'),
-        meta: { title: '提交报修', icon: 'Warning' },
+        meta: { title: '提交报修', icon: 'Warning', roles: ['STUDENT'] },
       },
       {
         path: 'repairs/mine',
         name: 'repair-mine',
         component: () => import('@/views/repair/Mine.vue'),
-        meta: { title: '我的报修', icon: 'Tools' },
+        meta: { title: '我的报修', icon: 'Tools', roles: ['STUDENT'] },
       },
       {
         path: 'repairs',
@@ -96,6 +103,12 @@ const routes: RouteRecordRaw[] = [
         name: 'users',
         component: () => import('@/views/user/Index.vue'),
         meta: { title: '用户管理', icon: 'UserFilled', roles: ['SYS_ADMIN'] },
+      },
+      {
+        path: 'organization',
+        name: 'organization',
+        component: () => import('@/views/organization/Index.vue'),
+        meta: { title: '组织管理', icon: 'OfficeBuilding', roles: ['SYS_ADMIN'] },
       },
     ],
   },

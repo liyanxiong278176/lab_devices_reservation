@@ -14,6 +14,7 @@ import {
 } from '@/api/reservation'
 import type { ReservationQuery, ReservationStatus, ReservationVO } from '@/types/reservation'
 import type { Page } from '@/types/common'
+import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import { reservationStatusTag } from '@/composables/useDeviceStatus'
 import { useStagger } from '@/composables/useStagger'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -30,6 +31,12 @@ const activeStatus = ref<ReservationStatus | ''>('')
 const query = ref<ReservationQuery>({ page: 1, size: 9 })
 const loading = ref(false)
 const page = ref<Page<ReservationVO>>({ records: [], total: 0, size: 9, current: 1 })
+const cursorPager = useCursorPageChain<ReservationVO>((cursor) => myReservations({
+  page: 1,
+  size: query.value.size,
+  status: activeStatus.value,
+  cursor,
+}))
 
 // SegmentedControl 选项:沿用既有 8 状态 + 全部,1:1 映射后端 status,
 // 不做多状态聚合(避免改 API 单状态契约 / 避免客户端过滤破坏分页)。
@@ -49,10 +56,10 @@ const tabs: { label: string; value: ReservationStatus | '' }[] = [
 const listRef = ref<HTMLElement | null>(null)
 const { reveal } = useStagger(listRef, { delay: 60 })
 
-async function load() {
+async function load(targetPage = query.value.page || 1) {
   loading.value = true
   try {
-    page.value = await myReservations({ ...query.value, status: activeStatus.value })
+    page.value = await cursorPager.load(targetPage)
   } catch {
     // 拦截器已提示
   } finally {
@@ -65,18 +72,20 @@ async function load() {
 function onStatusChange(v: string | number) {
   activeStatus.value = (v as ReservationStatus | '') ?? ''
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 function onPageChange(p: number) {
   query.value.page = p
-  load()
+  void load(p)
 }
 
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 // ---- 状态 → Tag variant 映射(把既有 reservationStatusTag 的 type 桥到 Tag)------
@@ -119,7 +128,8 @@ async function onCancel(row: ReservationVO) {
   try {
     await cancelReservation(row.id)
     ElMessage.success('已取消')
-    load()
+    cursorPager.reset()
+    await load()
   } catch {
     // 拦截器已提示
   }
@@ -129,7 +139,8 @@ async function onCheckIn(row: ReservationVO) {
   try {
     await checkInReservation(row.id)
     ElMessage.success('签到成功')
-    load()
+    cursorPager.reset()
+    await load()
   } catch {
     // 拦截器已提示(时间窗 / 状态不符等由后端返回)
   }
@@ -148,7 +159,8 @@ async function onCheckOut(row: ReservationVO) {
   try {
     await checkOutReservation(row.id)
     ElMessage.success('归还成功')
-    load()
+    cursorPager.reset()
+    await load()
   } catch {
     // 拦截器已提示
   }
@@ -159,17 +171,7 @@ function goDetail(row: ReservationVO) {
 }
 
 function fmt(t?: string): string {
-  return t ? dayjs(t).format('YYYY-MM-DD HH:mm') : '—'
-}
-
-/** 时长(slotCount × 15min)→ "X 小时 Y 分" 简洁展示。 */
-function durationLabel(slots: number): string {
-  const mins = slots * 15
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  if (h === 0) return `${m} 分`
-  if (m === 0) return `${h} 小时`
-  return `${h} 小时 ${m} 分`
+  return t ? dayjs(t).format('YYYY-MM-DD') : '—'
 }
 
 const subtitle = computed(() => `共 ${page.value.total} 条预约`)
@@ -218,21 +220,19 @@ onMounted(load)
             <div class="mine__card-time">
               <div class="mine__card-time-row">
                 <span class="mine__card-time-dot mine__card-time-dot--start" />
-                <span class="mine__card-time-text">{{ fmt(row.startTime) }}</span>
+                <span class="mine__card-time-text">{{ fmt(row.startDate || row.startTime) }}</span>
               </div>
               <div class="mine__card-time-line" aria-hidden="true" />
               <div class="mine__card-time-row">
                 <span class="mine__card-time-dot mine__card-time-dot--end" />
-                <span class="mine__card-time-text">{{ fmt(row.endTime) }}</span>
+                <span class="mine__card-time-text">{{ fmt(row.endDate || row.endTime) }}</span>
               </div>
             </div>
 
             <div class="mine__card-meta">
-              <span class="mine__card-chip">
-                {{ durationLabel(row.slotCount) }}
-              </span>
+              <span class="mine__card-chip">共 {{ row.slotCount }} 天</span>
               <span class="mine__card-chip mine__card-chip--muted">
-                {{ row.slotCount }} 时段
+                自然日预约
               </span>
             </div>
 

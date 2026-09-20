@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import {
   createDevice,
@@ -44,8 +45,7 @@ const form = ref({
   imageUrl: '',
   status: 'IDLE' as DeviceStatus,
   needApproval: 0,
-  maxReservationHours: '' as number | string,
-  pricePerHour: '' as number | string,
+  maxReservationDays: '' as number | string,
   tagsText: '',
   description: '',
 })
@@ -59,18 +59,26 @@ const rules: FormRules = {
 // 修改状态快捷下拉(只取 label/value;Tag variant 由 statusVariant 决定,不在此冗余)
 const statusOptions: { label: string; value: DeviceStatus }[] = [
   { label: '空闲', value: 'IDLE' },
-  { label: '使用中', value: 'IN_USE' },
   { label: '维护中', value: 'MAINTENANCE' },
+  { label: '已停用', value: 'DISABLED' },
+  { label: '离线', value: 'OFFLINE' },
+  { label: '已退役', value: 'RETIRED' },
 ]
 
 function statusMeta(s: DeviceStatus) {
-  return statusOptions.find((o) => o.value === s) || statusOptions[0]
+  return (
+    statusOptions.find((o) => o.value === s) || {
+      label: s === 'IN_USE' ? '使用中' : s,
+      value: s,
+    }
+  )
 }
 
-// 状态 → Tag variant 语义色(IDLE 中性 / IN_USE 青色 / MAINTENANCE 琥珀)
-function statusVariant(s: DeviceStatus): 'default' | 'accent' | 'warning' {
+// 状态 → Tag variant 语义色；IN_USE 由预约流程产生，不出现在负责人快捷修改项中。
+function statusVariant(s: DeviceStatus): 'default' | 'accent' | 'warning' | 'danger' {
   if (s === 'IN_USE') return 'accent'
   if (s === 'MAINTENANCE') return 'warning'
+  if (s === 'OFFLINE') return 'danger'
   return 'default'
 }
 
@@ -121,8 +129,7 @@ function resetForm() {
     imageUrl: '',
     status: 'IDLE',
     needApproval: 0,
-    maxReservationHours: '',
-    pricePerHour: '',
+    maxReservationDays: '',
     tagsText: '',
     description: '',
   }
@@ -148,8 +155,7 @@ function openEdit(row: DeviceVO) {
     imageUrl: row.imageUrl || '',
     status: row.status,
     needApproval: row.needApproval,
-    maxReservationHours: row.maxReservationHours ?? '',
-    pricePerHour: row.pricePerHour ?? '',
+    maxReservationDays: row.maxReservationDays ?? '',
     tagsText: (row.tags || []).join(', '),
     description: row.description || '',
   }
@@ -171,8 +177,7 @@ function buildPayload() {
     specs: f.specs || undefined,
     imageUrl: f.imageUrl || undefined,
     needApproval: f.needApproval,
-    maxReservationHours: f.maxReservationHours === '' ? undefined : f.maxReservationHours,
-    pricePerHour: f.pricePerHour === '' ? undefined : f.pricePerHour,
+    maxReservationDays: f.maxReservationDays === '' ? undefined : f.maxReservationDays,
     tags: tags.length ? tags : undefined,
     description: f.description || undefined,
   }
@@ -303,7 +308,7 @@ onMounted(() => {
             <span v-else class="dmanage__muted">否</span>
           </template>
         </el-table-column>
-        <el-table-column prop="pricePerHour" label="单价/时" width="100" align="right" />
+        <el-table-column prop="maxReservationDays" label="最长预约/天" width="110" align="right" />
         <el-table-column label="创建时间" width="120">
           <template #default="{ row }">{{ fmt(row.createdAt) }}</template>
         </el-table-column>
@@ -390,11 +395,8 @@ onMounted(() => {
         <el-form-item label="需审批">
           <el-switch v-model="form.needApproval" :active-value="1" :inactive-value="0" />
         </el-form-item>
-        <el-form-item label="最长预约/时">
-          <el-input v-model="form.maxReservationHours" placeholder="如 4" />
-        </el-form-item>
-        <el-form-item label="单价/时">
-          <el-input v-model="form.pricePerHour" placeholder="如 10.00" />
+        <el-form-item label="最长预约/天">
+          <el-input-number v-model="form.maxReservationDays" :min="1" :max="31" />
         </el-form-item>
         <el-form-item label="标签">
           <el-input v-model="form.tagsText" placeholder="多个标签用英文逗号分隔" />

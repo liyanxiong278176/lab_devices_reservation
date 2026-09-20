@@ -7,6 +7,8 @@ export interface UserVO {
   email?: string
   userType?: string
   deptName?: string
+  collegeId?: number | null
+  collegeName?: string
   /** 0 禁用 / 1 启用 */
   status: number
   roles: string[]
@@ -24,6 +26,7 @@ export interface UserCreatePayload {
   userType?: string
   deptName?: string
   roleCodes?: string[]
+  collegeId?: number
 }
 
 /** 用户列表分页检索参数（dto/user/UserQueryDTO.java）。 */

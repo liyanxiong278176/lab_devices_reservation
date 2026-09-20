@@ -30,4 +30,22 @@ describe('usePermission', () => {
     expect(hasRole('USER')).toBe(true)
     expect(hasRole('ADMIN')).toBe(false)
   })
+
+  it('管理员角色默认拥有业务操作权限', () => {
+    const u = useUserStore()
+    u.roles = ['SYS_ADMIN']
+    const { hasPerm } = usePermission()
+    expect(hasPerm('device:approve')).toBe(true)
+    expect(hasPerm('device:manage')).toBe(true)
+    expect(hasPerm('repair:handle')).toBe(true)
+  })
+
+  it('普通用户不会继承管理员操作权限', () => {
+    const u = useUserStore()
+    u.roles = ['STUDENT']
+    const { hasPerm } = usePermission()
+    expect(hasPerm('device:approve')).toBe(false)
+    expect(hasPerm('device:manage')).toBe(false)
+    expect(hasPerm('repair:handle')).toBe(false)
+  })
 })

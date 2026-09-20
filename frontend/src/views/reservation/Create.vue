@@ -1,206 +1,146 @@
 <script setup lang="ts">
-// 建预约页(R5 重构):多步 stepper + 实时摘要 + 渐变提交。
-// 数据/校验/提交逻辑零改——沿用既有 range 检查 + form.validate + createReservation,
-// 仅换展示层:el-steps(深色青色进度)+ 双列布局(主表单 / sticky GlowCard 实时摘要)
-// + 底部 GradientButton 提交 / GhostButton 上一步-取消。
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import { Calendar, Check, CircleClose, Cpu, Refresh } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
-import { getDevice } from '@/api/device'
-import { createReservation } from '@/api/reservation'
-import type { DeviceVO } from '@/types/device'
-import type { ReservationCreatePayload } from '@/types/reservation'
+import { deviceAvailability, getDevice } from '@/api/device'
+import { createReservation, preflightReservation } from '@/api/reservation'
+import type { DeviceAvailabilityVO, DeviceVO } from '@/types/device'
+import type { ReservationCreatePayload, ReservationPreflightVO } from '@/types/reservation'
 import PageHeader from '@/components/ui/PageHeader.vue'
-import GlowCard from '@/components/ui/GlowCard.vue'
 import GradientButton from '@/components/ui/GradientButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
 import StatusDot from '@/components/ui/StatusDot.vue'
 
 const route = useRoute()
 const router = useRouter()
-
 const formRef = ref<FormInstance>()
+const loading = ref(false)
+const preflightLoading = ref(false)
 const submitting = ref(false)
-const deviceLoading = ref(false)
 const device = ref<DeviceVO | null>(null)
-
-// [startTime, endTime] — datetimerange(value-format="x" → 时间戳字符串)
-const range = ref<[Date, Date] | null>(null)
-const form = reactive({
-  purpose: '',
-})
+const preflight = ref<ReservationPreflightVO | null>(null)
+const availabilityDays = ref<DeviceAvailabilityVO[]>([])
+const availabilityLoading = ref(false)
+const selectedDates = ref<[string, string] | null>(null)
+const form = ref({ purpose: '' })
 
 const rules: FormRules = {
-  purpose: [{ required: true, message: '请填写使用用途', trigger: 'blur' }],
+  purpose: [{ required: true, min: 2, message: '请填写至少 2 个字的使用用途', trigger: 'blur' }],
 }
 
 const deviceId = computed(() => Number(route.query.deviceId))
+const dateRange = computed(() => selectedDates.value ? selectedDates.value.join(' 至 ') : '尚未选择')
+const conflictCount = computed(() => preflight.value?.conflicts.length || 0)
+const availabilityMap = computed(() => new Map(availabilityDays.value.map((day) => [day.date, day])))
+const canSubmit = computed(() => Boolean(
+  device.value &&
+  selectedDates.value &&
+  form.value.purpose.trim() &&
+  !preflightLoading.value &&
+  preflight.value?.all_available,
+))
 
-// ---- stepper 状态 --------------------------------------------------------
-// 既有页是单表单无 stepper,按内容自然分段造 3 步:选时段 / 填用途 / 确认提交。
-// 0=选时段 / 1=填用途 / 2=确认提交
-const active = ref(0)
-const steps = [
-  { title: '选择时段', description: '设备 + 起止时间' },
-  { title: '填写用途', description: '说明本次使用' },
-  { title: '确认提交', description: '复核并提交' },
-]
+function todayStart() {
+  return dayjs().startOf('day')
+}
+
+function isDisabledDate(value: Date) {
+  const current = dayjs(value)
+  if (current.isBefore(todayStart(), 'day')) return true
+  const day = availabilityMap.value.get(current.format('YYYY-MM-DD'))
+  return day ? !day.available : false
+}
+
+function selectAvailableDate(value: string) {
+  if (!selectedDates.value || selectedDates.value[0] !== selectedDates.value[1]) {
+    selectedDates.value = [value, value]
+    return
+  }
+  const start = dayjs(selectedDates.value[0])
+  const picked = dayjs(value)
+  selectedDates.value = picked.isBefore(start, 'day')
+    ? [value, selectedDates.value[0]]
+    : [selectedDates.value[0], value]
+}
+
+async function loadAvailability() {
+  if (!device.value) return
+  availabilityLoading.value = true
+  try {
+    const start = todayStart()
+    const span = Math.min(device.value.maxReservationDays || 31, 31)
+    availabilityDays.value = await deviceAvailability(
+      device.value.id,
+      start.format('YYYY-MM-DD'),
+      start.add(span - 1, 'day').format('YYYY-MM-DD'),
+    )
+  } finally {
+    availabilityLoading.value = false
+  }
+}
 
 async function loadDevice() {
-  if (!deviceId.value || Number.isNaN(deviceId.value)) return
-  deviceLoading.value = true
+  if (!deviceId.value) return
+  loading.value = true
   try {
     device.value = await getDevice(deviceId.value)
-  } catch {
-    // 拦截器已提示
+    await loadAvailability()
   } finally {
-    deviceLoading.value = false
+    loading.value = false
   }
 }
 
-function toIso(d: Date): string {
-  // 后端接收 LocalDateTime（ISO yyyy-MM-ddTHH:mm:ss）
-  return dayjs(d).format('YYYY-MM-DDTHH:mm:ss')
-}
-
-// ---- 时间约束:只禁过去,不卡工作时段(后端一并放宽,见 SlotCalculatorService) ----
-// 小时不限制:用户可选 0-23 任意时。后端 15 分钟对齐仍由 :step 控制。
-const disabledHours = (): number[] => []
-const disabledMinutes = (_hour: number): number[] => []
-// 仅禁"今天之前":可预约当天及以后任意时间
-const disabledDate = (date: Date): boolean => {
-  return dayjs(date).isBefore(dayjs().startOf('day'))
-}
-
-// ---- 实时摘要 computed(纯展示派生,不改逻辑)----------------------------
-const startLabel = computed(() =>
-  range.value && range.value[0]
-    ? dayjs(range.value[0]).format('MM-DD HH:mm')
-    : '—',
-)
-const endLabel = computed(() =>
-  range.value && range.value[1]
-    ? dayjs(range.value[1]).format('MM-DD HH:mm')
-    : '—',
-)
-const durationHours = computed(() => {
-  if (!range.value || range.value.length !== 2 || !range.value[0] || !range.value[1]) return 0
-  const ms = dayjs(range.value[1]).valueOf() - dayjs(range.value[0]).valueOf()
-  return ms > 0 ? ms / 3_600_000 : 0
-})
-const durationLabel = computed(() => {
-  const h = durationHours.value
-  if (!h) return '—'
-  const hh = Math.floor(h)
-  const m = Math.round((h - hh) * 60)
-  return m > 0 ? `${hh} 时 ${m} 分` : `${hh} 时`
-})
-const pricePerHourNum = computed(() => {
-  const p = device.value?.pricePerHour
-  if (p == null || p === '') return 0
-  const n = Number(p)
-  return Number.isFinite(n) ? n : 0
-})
-// 设备单次最长预约时长(spec 建预约行 UI 提示)—— 与后端 device.max_reservation_hours 同源
-const maxReservationHoursNum = computed(() => {
-  const v = device.value?.maxReservationHours
-  if (v == null || v === '') return 0
-  const n = Number(v)
-  return Number.isFinite(n) ? n : 0
-})
-const maxReservationLabel = computed(() => {
-  const h = maxReservationHoursNum.value
-  if (!h) return null
-  // 24h/天取整,向上取整(25h = 2 天,贴近用户直觉)
-  const days = h >= 24 ? Math.ceil(h / 24) : 0
-  return days > 0 ? `${days} 天` : `${h} 时`
-})
-// 选了超长时段:UI 即时红字 + 阻断下一步 / 提交
-const overLimit = computed(() => {
-  const max = maxReservationHoursNum.value
-  return max > 0 && durationHours.value > max
-})
-// 费用估算 = 单价 × 时长(spec §7 建预约行:实时摘要费用估算)
-const costEstimate = computed(() => {
-  if (!durationHours.value || !pricePerHourNum.value) return null
-  return Math.round(pricePerHourNum.value * durationHours.value * 100) / 100
-})
-const needsApproval = computed(() => device.value?.needApproval === 1)
-
-// ---- 步进 + 校验(沿既有 onSubmit 校验顺序,拆到对应步)------------------
-function next() {
-  if (active.value === 0) {
-    // 步 1 → 2:需选时段(等价 onSubmit 中的 range 检查)
-    if (!range.value || range.value.length !== 2) {
-      ElMessage.warning('请选择预约起止时间')
-      return
-    }
-    // 仅校验起止时间顺序(后端还会再校)
-    if (dayjs(range.value[1]).isBefore(dayjs(range.value[0]))) {
-      ElMessage.warning('结束时间需晚于开始时间')
-      return
-    }
-    // 前置超上限拦截(后端 ReservationServiceImpl EXCEED_MAX_DURATION 兜底)
-    if (overLimit.value) {
-      ElMessage.warning(`该设备单次最长可预约 ${maxReservationLabel.value},当前已超`)
-      return
-    }
-    active.value = 1
+async function runPreflight() {
+  if (!device.value || !selectedDates.value) {
+    preflight.value = null
     return
   }
-  if (active.value === 1) {
-    // 步 2 → 3:需校验用途(等价 onSubmit 中的 form.validate)
-    formRef.value?.validate((valid) => {
-      if (valid) active.value = 2
+  preflightLoading.value = true
+  try {
+    preflight.value = await preflightReservation({
+      deviceId: device.value.id,
+      startDate: selectedDates.value[0],
+      endDate: selectedDates.value[1],
+      purpose: form.value.purpose || '设备使用',
     })
-    return
+  } finally {
+    preflightLoading.value = false
   }
 }
 
-function prev() {
-  // 步 0 的"上一步"语义=取消;其余步退一步
-  if (active.value === 0) {
-    onCancel()
-    return
-  }
-  active.value -= 1
-}
+watch([selectedDates, () => device.value?.id], () => {
+  void runPreflight()
+})
 
 async function onSubmit() {
-  // 最终提交:保留既有校验顺序(range → deviceId → validate → API),零改。
-  if (!formRef.value) return
-  if (!range.value || range.value.length !== 2) {
-    ElMessage.warning('请选择预约起止时间')
+  if (!formRef.value || !selectedDates.value || !device.value) {
+    ElMessage.warning('请选择设备和完整的预约日期')
     return
   }
-  if (overLimit.value) {
-    ElMessage.warning(`该设备单次最长可预约 ${maxReservationLabel.value},当前已超`)
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
+  if (!preflight.value) await runPreflight()
+  if (!preflight.value?.all_available) {
+    ElMessage.warning('存在冲突日期，请重新选择一段完全可用的连续日期')
     return
   }
-  if (!deviceId.value) {
-    ElMessage.warning('缺少设备信息')
-    return
-  }
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-    submitting.value = true
+  submitting.value = true
+  try {
     const payload: ReservationCreatePayload = {
-      deviceId: deviceId.value,
-      startTime: toIso(range.value![0]),
-      endTime: toIso(range.value![1]),
-      purpose: form.purpose,
+      deviceId: device.value.id,
+      startDate: selectedDates.value[0],
+      endDate: selectedDates.value[1],
+      purpose: form.value.purpose.trim(),
+      commitMode: 'all_or_nothing',
     }
-    try {
-      const newId = await createReservation(payload)
-      ElMessage.success(`预约提交成功（#${newId}）`)
-      router.push({ name: 'reservation-mine' })
-    } catch {
-      // 拦截器已提示（含冲突/防超约错误）
-    } finally {
-      submitting.value = false
-    }
-  })
+    const result = await createReservation(payload)
+    ElMessage.success(`已提交 ${result.created.length} 条预约`)
+    await router.push({ name: 'reservation-mine' })
+  } finally {
+    submitting.value = false
+  }
 }
 
 function onCancel() {
@@ -211,488 +151,105 @@ onMounted(loadDevice)
 </script>
 
 <template>
-  <div class="reserve-create">
-    <PageHeader
-      back
-      title="新建预约"
-      subtitle="选择时段并填写用途,提交后系统将进行冲突检测"
-    />
+  <div class="reserve-create-v2">
+    <PageHeader back title="预约设备" subtitle="按自然日选择连续使用区间，系统会先完成冲突预检" />
 
-    <!-- 多步 stepper:深色 + 青色进度(覆盖 --el-step 状态色 + 连线) -->
-    <el-steps
-      :active="active"
-      finish-status="finish"
-      process-status="process"
-      align-center
-      class="reserve-create__steps"
-    >
-      <el-step
-        v-for="s in steps"
-        :key="s.title"
-        :title="s.title"
-        :description="s.description"
-      />
-    </el-steps>
-
-    <!-- 双列:主表单 / sticky 实时摘要 -->
-    <div class="reserve-create__grid">
-      <!-- 左:主表单区(设备信息 + 当前步表单) -->
-      <div v-loading="deviceLoading" class="reserve-create__main">
-        <!-- 设备信息(常驻,三步都看得到) -->
-        <section v-if="device" class="reserve-create__device">
-          <div class="reserve-create__device-head">
-            <h2 class="reserve-create__device-name">{{ device.name }}</h2>
-            <StatusDot :status="device.status" :label="true" />
+    <div v-loading="loading" class="reserve-create-v2__grid">
+      <section class="reserve-create-v2__main">
+        <div class="reserve-create-v2__device panel-card">
+          <div class="device-mark"><Cpu /></div>
+          <div>
+            <span class="eyebrow">SELECTED DEVICE</span>
+            <h2>{{ device?.name || '加载设备中…' }}</h2>
+            <p>{{ [device?.brand, device?.model, device?.labName].filter(Boolean).join(' · ') || '设备信息' }}</p>
           </div>
-          <p class="reserve-create__device-sub">
-            {{ device.brand }} {{ device.model }}
-            <span v-if="device.labName"> · {{ device.labName }}</span>
-            <span> · 单价 ¥{{ device.pricePerHour ?? '—' }}/时</span>
-            <span v-if="maxReservationLabel"> · 单次最大预约使用时间 {{ maxReservationLabel }}</span>
-          </p>
-        </section>
+          <StatusDot v-if="device" :status="device.status" :label="true" />
+        </div>
 
-        <el-form
-          ref="formRef"
-          :model="form"
-          :rules="rules"
-          label-position="top"
-          @submit.prevent
-        >
-          <!-- 步 1:选择时段 -->
-          <div v-show="active === 0" class="reserve-create__step">
-            <el-form-item
-              label="预约时段(现在及以后,15 分钟对齐)"
-              required
-            >
-              <el-date-picker
-                v-model="range"
-                type="datetimerange"
-                range-separator="至"
-                start-placeholder="开始时间"
-                end-placeholder="结束时间"
-                format="YYYY-MM-DD HH:mm"
-                value-format="x"
-                :step="{ hours: 1, minutes: 15, seconds: 0 }"
-                :disabled-hours="disabledHours"
-                :disabled-minutes="disabledMinutes"
-                :disabled-date="disabledDate"
-                style="width: 100%; max-width: 520px"
-              />
-              <p v-if="maxReservationLabel" class="reserve-create__range-hint">
-                本设备单次最大预约使用时间 {{ maxReservationLabel }}
-              </p>
-              <p v-if="overLimit" class="reserve-create__range-warn">
-                已超过本设备单次上限({{ maxReservationLabel }}),请缩短时段
-              </p>
-            </el-form-item>
-          </div>
-
-          <!-- 步 2:填写用途 -->
-          <div v-show="active === 1" class="reserve-create__step">
-            <el-form-item label="使用用途" prop="purpose">
-              <el-input
-                v-model="form.purpose"
-                type="textarea"
-                :rows="5"
-                placeholder="请简述本次预约的使用用途"
-                maxlength="300"
-                show-word-limit
-              />
-            </el-form-item>
-          </div>
-
-          <!-- 步 3:确认 -->
-          <div v-show="active === 2" class="reserve-create__step">
-            <div class="reserve-create__confirm">
-              <h3 class="reserve-create__confirm-title">请确认预约信息</h3>
-              <dl class="reserve-create__confirm-grid">
-                <div class="reserve-create__confirm-row">
-                  <dt>设备</dt>
-                  <dd>{{ device?.name ?? '—' }}</dd>
-                </div>
-                <div class="reserve-create__confirm-row">
-                  <dt>起止时间</dt>
-                  <dd>{{ startLabel }} → {{ endLabel }}</dd>
-                </div>
-                <div class="reserve-create__confirm-row">
-                  <dt>时长</dt>
-                  <dd>{{ durationLabel }}</dd>
-                </div>
-                <div class="reserve-create__confirm-row">
-                  <dt>用途</dt>
-                  <dd>{{ form.purpose || '—' }}</dd>
-                </div>
-                <div class="reserve-create__confirm-row">
-                  <dt>费用估算</dt>
-                  <dd>
-                    <span class="reserve-create__confirm-cost">
-                      {{ costEstimate != null ? `¥${costEstimate}` : '—' }}
-                    </span>
-                  </dd>
-                </div>
-              </dl>
+        <el-form ref="formRef" :model="form" :rules="rules" label-position="top" class="panel-card reserve-form">
+          <div class="form-heading"><span class="eyebrow">RESERVATION WINDOW</span><span class="date-note"><Calendar /> 仅精确到天</span></div>
+          <el-form-item label="预约日期" required>
+            <el-date-picker
+              v-model="selectedDates"
+              type="daterange"
+              value-format="YYYY-MM-DD"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              :disabled-date="isDisabledDate"
+              :clearable="false"
+              class="date-picker"
+            />
+          </el-form-item>
+          <div class="availability-calendar" :class="{ 'is-loading': availabilityLoading }">
+            <div class="availability-calendar__head">
+              <span>近期可用日期</span>
+              <span class="availability-calendar__legend"><i class="is-available" />可用 <i class="is-conflict" />不可用</span>
+            </div>
+            <div class="availability-calendar__days">
+              <button
+                v-for="day in availabilityDays"
+                :key="day.date"
+                type="button"
+                class="availability-calendar__day"
+                :class="{ 'is-available': day.available, 'is-conflict': !day.available, 'is-selected': selectedDates?.includes(day.date) }"
+                :disabled="!day.available"
+                @click="selectAvailableDate(day.date)"
+              >
+                <strong>{{ dayjs(day.date).format('MM-DD') }}</strong>
+                <small>{{ day.available ? '可用' : '冲突' }}</small>
+              </button>
             </div>
           </div>
+          <el-form-item label="使用用途" prop="purpose">
+            <el-input v-model="form.purpose" type="textarea" :rows="4" maxlength="500" show-word-limit placeholder="例如：完成材料拉伸实验并采集三组数据" />
+          </el-form-item>
         </el-form>
-      </div>
 
-      <!-- 右:sticky 实时摘要 GlowCard -->
-      <aside class="reserve-create__aside">
-        <GlowCard accent class="reserve-create__summary">
-          <h3 class="reserve-create__summary-title">实时摘要</h3>
-          <dl class="reserve-create__summary-grid">
-            <div class="reserve-create__summary-row">
-              <dt>设备</dt>
-              <dd>{{ device?.name ?? '未选择' }}</dd>
-            </div>
-            <div class="reserve-create__summary-row">
-              <dt>开始</dt>
-              <dd>{{ startLabel }}</dd>
-            </div>
-            <div class="reserve-create__summary-row">
-              <dt>结束</dt>
-              <dd>{{ endLabel }}</dd>
-            </div>
-            <div class="reserve-create__summary-row">
-              <dt>时长</dt>
-              <dd>{{ durationLabel }}</dd>
-            </div>
-            <div class="reserve-create__summary-row">
-              <dt>单次上限</dt>
-              <dd>{{ maxReservationLabel ?? '—' }}</dd>
-            </div>
-            <div class="reserve-create__summary-row reserve-create__summary-row--accent">
-              <dt>费用估算</dt>
-              <dd>{{ costEstimate != null ? `¥${costEstimate}` : '—' }}</dd>
-            </div>
-          </dl>
-
-          <div class="reserve-create__summary-status">
-            <span
-              class="reserve-create__summary-badge"
-              :class="needsApproval ? 'is-warn' : 'is-ok'"
-            >
-              {{ needsApproval ? '提交后需审批' : '免审批 · 提交后直接生效' }}
-            </span>
+        <section class="preflight-card panel-card" :class="{ 'is-conflict': conflictCount > 0, 'is-loading': preflightLoading }">
+          <div class="preflight-card__head">
+            <div><span class="eyebrow">AVAILABILITY PREFLIGHT</span><h3>可用性检查</h3></div>
+            <el-icon v-loading="preflightLoading"><Refresh /></el-icon>
           </div>
-        </GlowCard>
-      </aside>
-    </div>
+          <div v-if="!selectedDates" class="preflight-empty"><Calendar />选择日期后自动检查</div>
+          <template v-else-if="preflight">
+            <div class="preflight-summary">
+              <span class="summary-good"><Check /> {{ preflight.available_dates.length }} 天可用</span>
+              <span v-if="conflictCount" class="summary-bad"><CircleClose /> {{ conflictCount }} 天冲突</span>
+            </div>
+            <div v-if="conflictCount" class="conflict-tip">存在冲突日期，连续区间不能提交；请重新选择一段完全可用的日期。</div>
+            <ul v-if="conflictCount" class="conflict-list">
+              <li v-for="conflict in preflight.conflicts" :key="conflict.date"><strong>{{ conflict.date }}</strong><span>{{ conflict.reason }}</span></li>
+            </ul>
+          </template>
+        </section>
+      </section>
 
-    <!-- 底部操作栏 -->
-    <div class="reserve-create__actionbar">
-      <GhostButton @click="prev">
-        {{ active === 0 ? '取消' : '上一步' }}
-      </GhostButton>
-      <GradientButton v-if="active < 2" @click="next">下一步</GradientButton>
-      <GradientButton v-else :loading="submitting" @click="onSubmit">
-        提交预约
-      </GradientButton>
+      <aside class="reserve-create-v2__aside">
+        <section class="summary-card panel-card">
+          <span class="eyebrow">BOOKING SUMMARY</span>
+          <h3>预约摘要</h3>
+          <dl><dt>设备</dt><dd>{{ device?.name || '—' }}</dd><dt>日期</dt><dd>{{ dateRange }}</dd><dt>学院范围</dt><dd>仅当前学院</dd><dt>审批</dt><dd>{{ device?.needApproval ? '负责人审批' : '自动确认' }}</dd></dl>
+          <div class="summary-card__rule"></div>
+          <p class="summary-card__hint summary-card__approval-hint">
+            {{ device?.needApproval ? '提交后会进入负责人待审批列表。' : '该设备提交后会直接确认，不会出现在管理员待审批列表。' }}
+          </p>
+          <p class="summary-card__hint">提交后仍会在数据库唯一键层做最终并发校验。</p>
+          <GradientButton :loading="submitting" :disabled="!canSubmit" class="submit-button" @click="onSubmit">提交预约</GradientButton>
+          <GhostButton class="cancel-button" @click="onCancel">取消</GhostButton>
+        </section>
+      </aside>
     </div>
   </div>
 </template>
 
 <style scoped lang="scss">
-// ============================================================================
-// Create.vue 深色科技风(spec §7 建预约行)
-// 全量走 token,scoped scss。结构:PageHeader / el-steps / 双列(主表单+sticky 摘要)/ 底部操作栏。
-// ============================================================================
-
-.reserve-create {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding-bottom: 8px;
-
-  // ---- el-steps 容器 -----------------------------------------------------
-  &__steps {
-    // 给 stepper 一个卡面底,跟整体深色卡风一致(参考 Detail 的 Panel/tabs 包裹)
-    padding: 18px 24px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-card);
-    box-shadow: var(--shadow-soft-light);
-  }
-
-  // ---- 双列网格:主表单 / sticky 摘要 -------------------------------------
-  &__grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
-    gap: 24px;
-    align-items: start;
-
-    @media (max-width: 960px) {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  &__main {
-    // 左主列:设备信息 + 当前步表单
-    min-width: 0;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-card);
-    box-shadow: var(--shadow-soft-light);
-    padding: 28px;
-  }
-
-  &__aside {
-    // 右 sticky 摘要:随左列滚动吸顶
-    position: sticky;
-    top: 16px;
-
-    @media (max-width: 960px) {
-      position: static;
-    }
-  }
-
-  // ---- 设备信息块(主列顶部,常驻)----------------------------------------
-  &__device {
-    padding-bottom: 20px;
-    margin-bottom: 24px;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  &__device-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  &__device-name {
-    margin: 0;
-    font-family: var(--font-display);
-    font-size: 18px;
-    font-weight: 600;
-    line-height: 1.3;
-    color: var(--text-primary);
-  }
-
-  &__device-sub {
-    margin: 6px 0 0;
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
-
-  // ---- 步容器 ------------------------------------------------------------
-  &__step {
-    min-height: 220px;
-  }
-
-  // ---- 步 3:确认网格(复用摘要样式但不依赖 sticky)------------------------
-  &__confirm-title {
-    margin: 0 0 16px;
-    font-family: var(--font-display);
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  &__confirm-grid,
-  &__summary-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    margin: 0;
-  }
-
-  &__confirm-row,
-  &__summary-row {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border-subtle);
-
-    &:last-child {
-      border-bottom: none;
-    }
-
-    dt {
-      margin: 0;
-      font-size: 11px;
-      font-weight: 500;
-      color: var(--text-tertiary);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      flex-shrink: 0;
-    }
-
-    dd {
-      margin: 0;
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text-primary);
-      font-family: var(--font-mono);
-      text-align: right;
-      word-break: break-word;
-    }
-  }
-
-  &__confirm-cost {
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  // 时段选择提示(灰色常驻),与 danger 红字区别
-  &__range-hint {
-    margin: 8px 0 0;
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--text-tertiary);
-  }
-  // 起止时间非法(超出工作时段 / 超设备上限)红字提示
-  &__range-warn {
-    margin: 8px 0 0;
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--status-danger);
-  }
-
-  // ---- 摘要 GlowCard 内部 ------------------------------------------------
-  &__summary {
-    padding: 22px;
-  }
-
-  &__summary-title {
-    margin: 0 0 14px;
-    font-family: var(--font-display);
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-    letter-spacing: 0.01em;
-  }
-
-  &__summary-row--accent dd {
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  &__summary-status {
-    margin-top: 16px;
-    padding-top: 14px;
-    border-top: 1px solid var(--border-subtle);
-  }
-
-  &__summary-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 500;
-    border-radius: var(--radius-pill);
-    line-height: 1.4;
-
-    &.is-ok {
-      color: var(--status-success);
-      background: color-mix(in srgb, var(--status-success) 10%, transparent);
-      border: 1px solid color-mix(in srgb, var(--status-success) 30%, transparent);
-    }
-
-    &.is-warn {
-      color: var(--status-warning);
-      background: color-mix(in srgb, var(--status-warning) 10%, transparent);
-      border: 1px solid color-mix(in srgb, var(--status-warning) 30%, transparent);
-    }
-  }
-
-  // ---- 底部操作栏:GradientButton 提交 / GhostButton 上一步-取消 ----------
-  &__actionbar {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 12px;
-    padding: 18px 24px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-card);
-    box-shadow: var(--shadow-soft-light);
-    // sticky 底部:stepper 每步 CTA 始终可达(R5.6 复审 🔵)
-    position: sticky;
-    bottom: 16px;
-    z-index: 2;
-  }
-}
-
-// ============================================================================
-// el-steps 深色青色进度覆盖(spec §7 建预约行 + 模式参考 R4.2 Detail el-tabs 覆盖)
-// 已完成/当前节点青色,未到 tertiary,连线 track hairline + 已完成连线青色。
-// 通过 :deep 改状态类色 + icon 圆背景 + 连线 inner 边框色,无 !important。
-// ============================================================================
-
-// icon 圆背景:与 surface 卡底区分(elevated 抬升一档)
-:deep(.el-step__icon) {
-  background: var(--bg-elevated);
-}
-
-// ---- 未到(wait):tertiary ------------------------------------------------
-:deep(.el-step__head.is-wait) {
-  color: var(--text-tertiary);
-  border-color: var(--text-tertiary);
-}
-:deep(.el-step__title.is-wait) {
-  color: var(--text-tertiary);
-  font-weight: 500;
-}
-:deep(.el-step__description.is-wait) {
-  color: var(--text-tertiary);
-}
-
-// ---- 已完成(finish):青色描边 + 青色字 ----------------------------------
-:deep(.el-step__head.is-finish) {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-:deep(.el-step__title.is-finish) {
-  color: var(--accent);
-  font-weight: 600;
-}
-:deep(.el-step__description.is-finish) {
-  color: var(--accent-bright);
-}
-
-// ---- 当前(process):实心青色圆 + 深字(更突出)-------------------------
-:deep(.el-step__head.is-process) {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-:deep(.el-step__head.is-process .el-step__icon.is-text) {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-:deep(.el-step__head.is-process .el-step__icon-inner) {
-  color: var(--text-on-accent);
-}
-:deep(.el-step__title.is-process) {
-  color: var(--accent);
-  font-weight: 600;
-}
-:deep(.el-step__description.is-process) {
-  color: var(--accent-bright);
-}
-
-// ---- 连线 track(未完成段):hairline-strong ------------------------------
-:deep(.el-step__line) {
-  background-color: var(--border-strong);
-}
-
-// ---- 连线 fill(已完成段):青色(border 1px solid,色由 currentColor 接管)
-:deep(.el-step__line-inner) {
-  border-color: var(--accent);
-}
-
-// ============================================================================
-// prefers-reduced-motion 兜底(spec §6.1 铁律)
-// ============================================================================
-@media (prefers-reduced-motion: reduce) {
-  :deep(.el-step__icon),
-  :deep(.el-step__line-inner) {
-    transition: none;
-  }
-}
+.reserve-create-v2 { display: flex; flex-direction: column; gap: 22px; color: var(--text-primary); }
+.reserve-create-v2__grid { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 18px; align-items: start; }.reserve-create-v2__main { display: grid; gap: 14px; }.panel-card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-card); box-shadow: var(--shadow-soft-light); }
+.reserve-create-v2__device { display: flex; align-items: center; gap: 13px; padding: 18px; }.device-mark { display: grid; place-items: center; width: 42px; height: 42px; color: var(--accent); background: rgba(34,211,238,.1); border: 1px solid rgba(34,211,238,.22); border-radius: 11px; }.device-mark svg { width: 20px; }.eyebrow { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; }.reserve-create-v2__device h2 { margin: 4px 0 2px; font-family: var(--font-display); font-size: 18px; }.reserve-create-v2__device p { margin: 0; color: var(--text-secondary); font-size: 12px; }.reserve-create-v2__device > :last-child { margin-left: auto; }
+.reserve-form { padding: 20px; }.form-heading,.preflight-card__head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }.form-heading .date-note { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-family: var(--font-mono); font-size: 10px; }.date-note svg { width: 13px; }.reserve-form :deep(.el-form-item__label) { color: var(--text-secondary); font-size: 12px; }.date-picker { width: 100%; }.reserve-form :deep(.el-textarea__inner) { min-height: 100px; }
+.availability-calendar { display: grid; gap: 10px; margin: -4px 0 18px; padding: 12px; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 9px; opacity: 1; transition: opacity var(--d-fast) var(--ease-out-expo); }.availability-calendar.is-loading { opacity: .55; }.availability-calendar__head { display: flex; align-items: center; justify-content: space-between; color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; }.availability-calendar__legend { display: inline-flex; align-items: center; gap: 5px; color: var(--text-tertiary); font-size: 9px; }.availability-calendar__legend i { width: 6px; height: 6px; border-radius: 50%; }.availability-calendar__legend i.is-available { background: var(--status-success); }.availability-calendar__legend i.is-conflict { background: var(--status-danger); }.availability-calendar__days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }.availability-calendar__day { display: grid; gap: 2px; padding: 7px 3px; color: var(--text-tertiary); background: transparent; border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; font: inherit; }.availability-calendar__day strong { color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 500; }.availability-calendar__day small { font-size: 9px; }.availability-calendar__day.is-available { border-color: color-mix(in srgb, var(--status-success) 30%, transparent); }.availability-calendar__day.is-available small { color: var(--status-success); }.availability-calendar__day.is-conflict { cursor: not-allowed; opacity: .65; border-color: color-mix(in srgb, var(--status-danger) 30%, transparent); }.availability-calendar__day.is-conflict small { color: var(--status-danger); }.availability-calendar__day.is-selected { color: var(--text-on-accent); background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); }.availability-calendar__day.is-selected strong,.availability-calendar__day.is-selected small { color: var(--accent); }.availability-calendar__day:disabled { color: var(--text-tertiary); }.conflict-tip { margin-top: 12px; padding: 10px 12px; color: var(--status-danger); background: rgba(248,113,113,.06); border-left: 2px solid var(--status-danger); font-size: 11px; line-height: 1.5; }
+.preflight-card { padding: 20px; }.preflight-card__head h3,.summary-card h3 { margin: 5px 0 0; font-family: var(--font-display); font-size: 17px; }.preflight-card__head > .el-icon { color: var(--accent); }.preflight-empty { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 76px; color: var(--text-tertiary); font-size: 12px; }.preflight-empty svg { color: var(--accent); }.preflight-empty svg { color: var(--accent); }.preflight-summary { display: flex; gap: 16px; padding: 11px; background: var(--bg-elevated); border-radius: 8px; font-family: var(--font-mono); font-size: 11px; }.summary-good { color: var(--status-success); }.summary-bad { color: var(--status-danger); }.summary-good svg,.summary-bad svg { width: 13px; vertical-align: -2px; }.conflict-list { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }.conflict-list li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; color: var(--text-secondary); background: rgba(248,113,113,.05); border-left: 2px solid var(--status-danger); font-size: 11px; }.conflict-list strong { color: var(--text-primary); font-family: var(--font-mono); font-weight: 500; }.conflict-list span { color: var(--text-tertiary); }
+.summary-card { position: sticky; top: 84px; padding: 20px; }.summary-card dl { display: grid; grid-template-columns: 70px 1fr; gap: 13px 8px; margin: 22px 0; font-size: 12px; }.summary-card dt { color: var(--text-tertiary); }.summary-card dd { margin: 0; color: var(--text-primary); text-align: right; }.summary-card__rule { height: 1px; background: var(--border-subtle); }.summary-card__hint { color: var(--text-tertiary); font-size: 11px; line-height: 1.6; }.submit-button,.cancel-button { width: 100%; margin-top: 10px; }.cancel-button { justify-content: center; }
+@media (max-width: 900px) { .reserve-create-v2__grid { grid-template-columns: 1fr; }.summary-card { position: static; } } @media (max-width: 560px) { .preflight-options { flex-direction: column; } }
 </style>

@@ -26,6 +26,14 @@ export const useNotificationStore = defineStore('notification', () => {
     }
   }
 
+  function decreaseUnread(amount = 1) {
+    unread.value = Math.max(0, unread.value - Math.max(0, amount))
+  }
+
+  function clearUnread() {
+    unread.value = 0
+  }
+
   /** S3 WebSocket 推送回调：弹通知 toast + 未读 +1。 */
   function onMessage(body: WsNotificationBody = {}) {
     unread.value++
@@ -38,5 +46,5 @@ export const useNotificationStore = defineStore('notification', () => {
     })
   }
 
-  return { unread, loadUnread, onMessage }
+  return { unread, loadUnread, decreaseUnread, clearUnread, onMessage }
 })

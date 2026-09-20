@@ -26,6 +26,9 @@ const STATUS_LABELS: Record<string, string> = {
   IDLE: '空闲',
   IN_USE: '使用中',
   MAINTENANCE: '维护中',
+  DISABLED: '已停用',
+  OFFLINE: '离线',
+  RETIRED: '已退役',
 }
 const statusLabelText = computed(() => {
   const s = device.value?.status
@@ -51,19 +54,18 @@ const subtitle = computed(() => {
   return parts.length > 0 ? parts.join(' · ') : '未填写品牌 / 型号'
 })
 
-// hero spec chip 行:几个关键规格钩子(分类 / 单价 / 最长预约 / 审批)
+// hero spec chip 行:分类 / 自然日上限 / 审批
 const keyChips = computed(() => {
   const d = device.value
   if (!d) return []
   return [
     { label: '分类', value: d.categoryName || '未分类' },
-    { label: '单价', value: d.pricePerHour != null && d.pricePerHour !== '' ? `¥${d.pricePerHour}/时` : '—' },
-    { label: '最长预约', value: d.maxReservationHours != null && d.maxReservationHours !== '' ? `${d.maxReservationHours} 小时` : '—' },
+    { label: '最长预约', value: d.maxReservationDays != null ? `${d.maxReservationDays} 天` : '—' },
     { label: '审批', value: d.needApproval === 1 ? '需审批' : '免审批' },
   ]
 })
 
-// 规格 tab 全量字段(品牌/型号/实验室/分类/规格/单价/最长预约/审批)
+// 规格 tab 全量字段(品牌/型号/实验室/分类/规格/最长预约/审批)
 const specRows = computed(() => {
   const d = device.value
   if (!d) return []
@@ -73,8 +75,7 @@ const specRows = computed(() => {
     { label: '实验室', value: d.labName || '—' },
     { label: '分类', value: d.categoryName || '—' },
     { label: '规格', value: d.specs || '—' },
-    { label: '单价 / 时', value: d.pricePerHour != null && d.pricePerHour !== '' ? `¥${d.pricePerHour}` : '—' },
-    { label: '最长预约', value: d.maxReservationHours != null && d.maxReservationHours !== '' ? `${d.maxReservationHours} 小时` : '—' },
+    { label: '最长预约', value: d.maxReservationDays != null ? `${d.maxReservationDays} 天` : '—' },
     { label: '审批要求', value: d.needApproval === 1 ? '需审批' : '免审批' },
   ]
 })
