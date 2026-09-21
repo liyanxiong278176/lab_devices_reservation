@@ -154,6 +154,21 @@ onMounted(loadDevice)
   <div class="reserve-create-v2">
     <PageHeader back title="预约设备" subtitle="按自然日选择连续使用区间，系统会先完成冲突预检" />
 
+    <nav class="booking-steps" aria-label="预约流程">
+      <div class="booking-step booking-step--done">
+        <span>01</span>
+        <strong>确认设备</strong>
+      </div>
+      <div class="booking-step" :class="{ 'booking-step--active': !selectedDates, 'booking-step--done': Boolean(selectedDates) }">
+        <span>02</span>
+        <strong>选择日期</strong>
+      </div>
+      <div class="booking-step" :class="{ 'booking-step--active': Boolean(selectedDates) && !form.purpose.trim(), 'booking-step--done': canSubmit }">
+        <span>03</span>
+        <strong>确认提交</strong>
+      </div>
+    </nav>
+
     <div v-loading="loading" class="reserve-create-v2__grid">
       <section class="reserve-create-v2__main">
         <div class="reserve-create-v2__device panel-card">
@@ -245,11 +260,21 @@ onMounted(loadDevice)
 
 <style scoped lang="scss">
 .reserve-create-v2 { display: flex; flex-direction: column; gap: 22px; color: var(--text-primary); }
+.booking-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; padding: 0 4px 6px; border-bottom: 1px solid var(--border-default); }
+.booking-step { position: relative; display: flex; align-items: center; gap: 10px; min-height: 42px; color: var(--text-tertiary); font-size: 12px; }
+.booking-step::after { content: ''; position: absolute; right: 18px; left: 78px; top: 50%; height: 1px; background: var(--border-subtle); }
+.booking-step:last-child::after { display: none; }
+.booking-step span { display: grid; place-items: center; width: 28px; height: 28px; color: var(--text-tertiary); border: 1px solid var(--border-default); border-radius: 50%; font-family: var(--font-mono); font-size: 10px; }
+.booking-step strong { position: relative; z-index: 1; padding-right: 14px; background: var(--bg-base); font-weight: 600; }
+.booking-step--active { color: var(--accent); }
+.booking-step--active span, .booking-step--done span { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.booking-step--done:not(:last-child)::after { background: color-mix(in srgb, var(--accent) 40%, var(--border-subtle)); }
 .reserve-create-v2__grid { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 18px; align-items: start; }.reserve-create-v2__main { display: grid; gap: 14px; }.panel-card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-card); box-shadow: var(--shadow-soft-light); }
 .reserve-create-v2__device { display: flex; align-items: center; gap: 13px; padding: 18px; }.device-mark { display: grid; place-items: center; width: 42px; height: 42px; color: var(--accent); background: rgba(34,211,238,.1); border: 1px solid rgba(34,211,238,.22); border-radius: 11px; }.device-mark svg { width: 20px; }.eyebrow { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; }.reserve-create-v2__device h2 { margin: 4px 0 2px; font-family: var(--font-display); font-size: 18px; }.reserve-create-v2__device p { margin: 0; color: var(--text-secondary); font-size: 12px; }.reserve-create-v2__device > :last-child { margin-left: auto; }
 .reserve-form { padding: 20px; }.form-heading,.preflight-card__head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }.form-heading .date-note { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-family: var(--font-mono); font-size: 10px; }.date-note svg { width: 13px; }.reserve-form :deep(.el-form-item__label) { color: var(--text-secondary); font-size: 12px; }.date-picker { width: 100%; }.reserve-form :deep(.el-textarea__inner) { min-height: 100px; }
 .availability-calendar { display: grid; gap: 10px; margin: -4px 0 18px; padding: 12px; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 9px; opacity: 1; transition: opacity var(--d-fast) var(--ease-out-expo); }.availability-calendar.is-loading { opacity: .55; }.availability-calendar__head { display: flex; align-items: center; justify-content: space-between; color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; }.availability-calendar__legend { display: inline-flex; align-items: center; gap: 5px; color: var(--text-tertiary); font-size: 9px; }.availability-calendar__legend i { width: 6px; height: 6px; border-radius: 50%; }.availability-calendar__legend i.is-available { background: var(--status-success); }.availability-calendar__legend i.is-conflict { background: var(--status-danger); }.availability-calendar__days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }.availability-calendar__day { display: grid; gap: 2px; padding: 7px 3px; color: var(--text-tertiary); background: transparent; border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; font: inherit; }.availability-calendar__day strong { color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 500; }.availability-calendar__day small { font-size: 9px; }.availability-calendar__day.is-available { border-color: color-mix(in srgb, var(--status-success) 30%, transparent); }.availability-calendar__day.is-available small { color: var(--status-success); }.availability-calendar__day.is-conflict { cursor: not-allowed; opacity: .65; border-color: color-mix(in srgb, var(--status-danger) 30%, transparent); }.availability-calendar__day.is-conflict small { color: var(--status-danger); }.availability-calendar__day.is-selected { color: var(--text-on-accent); background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); }.availability-calendar__day.is-selected strong,.availability-calendar__day.is-selected small { color: var(--accent); }.availability-calendar__day:disabled { color: var(--text-tertiary); }.conflict-tip { margin-top: 12px; padding: 10px 12px; color: var(--status-danger); background: rgba(248,113,113,.06); border-left: 2px solid var(--status-danger); font-size: 11px; line-height: 1.5; }
 .preflight-card { padding: 20px; }.preflight-card__head h3,.summary-card h3 { margin: 5px 0 0; font-family: var(--font-display); font-size: 17px; }.preflight-card__head > .el-icon { color: var(--accent); }.preflight-empty { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 76px; color: var(--text-tertiary); font-size: 12px; }.preflight-empty svg { color: var(--accent); }.preflight-empty svg { color: var(--accent); }.preflight-summary { display: flex; gap: 16px; padding: 11px; background: var(--bg-elevated); border-radius: 8px; font-family: var(--font-mono); font-size: 11px; }.summary-good { color: var(--status-success); }.summary-bad { color: var(--status-danger); }.summary-good svg,.summary-bad svg { width: 13px; vertical-align: -2px; }.conflict-list { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }.conflict-list li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; color: var(--text-secondary); background: rgba(248,113,113,.05); border-left: 2px solid var(--status-danger); font-size: 11px; }.conflict-list strong { color: var(--text-primary); font-family: var(--font-mono); font-weight: 500; }.conflict-list span { color: var(--text-tertiary); }
 .summary-card { position: sticky; top: 84px; padding: 20px; }.summary-card dl { display: grid; grid-template-columns: 70px 1fr; gap: 13px 8px; margin: 22px 0; font-size: 12px; }.summary-card dt { color: var(--text-tertiary); }.summary-card dd { margin: 0; color: var(--text-primary); text-align: right; }.summary-card__rule { height: 1px; background: var(--border-subtle); }.summary-card__hint { color: var(--text-tertiary); font-size: 11px; line-height: 1.6; }.submit-button,.cancel-button { width: 100%; margin-top: 10px; }.cancel-button { justify-content: center; }
-@media (max-width: 900px) { .reserve-create-v2__grid { grid-template-columns: 1fr; }.summary-card { position: static; } } @media (max-width: 560px) { .preflight-options { flex-direction: column; } }
+@media (max-width: 900px) { .reserve-create-v2__grid { grid-template-columns: 1fr; }.summary-card { position: static; } }
+@media (max-width: 560px) { .booking-steps { grid-template-columns: 1fr; gap: 8px; padding-bottom: 12px; }.booking-step::after { display: none; }.booking-step strong { background: transparent; }.preflight-options { flex-direction: column; } }
 </style>

@@ -178,7 +178,11 @@ async def reservation_lock(
 
                     ok = await redis_call(circuit, set_lock)
                 except (*REDIS_ERRORS, RedisCircuitOpen):
-                    raise
+                    # Redis is an accelerator for contention control, not the
+                    # source of truth.  A tripped circuit must take the same
+                    # fail-open path as a connection error so the database
+                    # unique reservation-day key can decide the winner.
+                    break
                 if ok:
                     acquired.append(key)
                     break
@@ -186,7 +190,7 @@ async def reservation_lock(
             if key not in acquired:
                 break
         locked = len(acquired) == len(keys)
-    except REDIS_ERRORS:
+    except (*REDIS_ERRORS, RedisCircuitOpen):
         locked = False
 
     metrics = getattr(request.app.state, "metrics", None)

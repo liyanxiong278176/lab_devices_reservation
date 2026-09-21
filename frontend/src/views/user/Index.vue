@@ -294,6 +294,14 @@ onMounted(load)
       <GhostButton @click="onSearch">查询</GhostButton>
     </div>
 
+    <section class="umanage__signal" aria-label="用户目录概览">
+      <div>
+        <span class="umanage__eyebrow">身份目录</span>
+        <strong>账号、角色和学院边界，在同一个工作面维护。</strong>
+      </div>
+      <span class="umanage__signal-count">{{ page.total }} <small>个账号</small></span>
+    </section>
+
     <div class="umanage__table">
       <el-table v-loading="loading" :data="page.records" stripe row-key="id">
         <el-table-column label="用户" min-width="200">
@@ -473,6 +481,22 @@ onMounted(load)
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-card);
   }
+
+  &__signal {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 20px 22px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-card);
+    background: linear-gradient(110deg, color-mix(in srgb, var(--accent-blue) 9%, var(--bg-surface)), var(--bg-surface));
+  }
+
+  &__eyebrow { display: block; margin-bottom: 8px; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+  &__signal strong { color: var(--text-primary); font-family: var(--font-display); font-size: clamp(18px, 2vw, 24px); letter-spacing: -.04em; }
+  &__signal-count { color: var(--accent); font-family: var(--font-display); font-size: 28px; font-weight: 700; }
+  &__signal-count small { color: var(--text-tertiary); font-family: var(--font-sans); font-size: 12px; font-weight: 500; }
 
   &__search {
     width: 200px;

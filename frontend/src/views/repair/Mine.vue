@@ -194,6 +194,15 @@ onMounted(load)
   <div class="rmine">
     <PageHeader title="我的报修" :subtitle="subtitle" />
 
+    <section class="rmine__overview" aria-label="报修概览">
+      <div>
+        <span class="rmine__eyebrow">维修轨迹</span>
+        <h2>每一次报修，都有下一步。</h2>
+        <p>查看设备、故障描述和当前处理节点，进度更新后会在这里留下记录。</p>
+      </div>
+      <div class="rmine__overview-mark"><span />{{ page.total }}<small>条工单</small></div>
+    </section>
+
     <!-- 卡片列表 -->
     <div v-loading="loading" class="rmine__grid" ref="listRef">
       <div
@@ -466,4 +475,33 @@ onMounted(load)
     justify-content: center;
   }
 }
+</style>
+
+<style scoped lang="scss">
+/* 报修页按工单纵向阅读，时间线成为每条记录的第二列。 */
+.rmine__overview {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 26px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: linear-gradient(108deg, color-mix(in srgb, var(--accent-blue) 9%, var(--bg-surface)), var(--bg-surface));
+}
+.rmine__eyebrow { display: block; margin-bottom: 8px; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+.rmine__overview h2 { margin: 0 0 7px; color: var(--text-primary); font-family: var(--font-display); font-size: clamp(22px, 3vw, 32px); letter-spacing: -.06em; }
+.rmine__overview p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.rmine__overview-mark { display: flex; align-items: baseline; gap: 7px; color: var(--accent); font-family: var(--font-display); font-size: 40px; font-weight: 700; white-space: nowrap; }
+.rmine__overview-mark span { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 14px var(--accent); }
+.rmine__overview-mark small { color: var(--text-tertiary); font-family: var(--font-sans); font-size: 12px; font-weight: 500; }
+.rmine__grid { display: flex; flex-direction: column; gap: 12px; }
+.rmine__cell { display: block; }
+.rmine__card { display: grid; grid-template-columns: minmax(220px, .82fr) minmax(260px, 1fr) minmax(280px, 1.25fr); align-items: start; gap: 22px; padding: 20px 22px; }
+.rmine__card-head { grid-column: 1 / -1; }
+.rmine__card-body { min-width: 0; }
+.rmine__card-timeline { padding-top: 0; border-top: 0; }
+.rmine__card-foot { grid-column: 1 / -1; margin-top: 0; }
+@media (max-width: 980px) { .rmine__card { grid-template-columns: minmax(200px, .8fr) minmax(260px, 1.2fr); } .rmine__card-timeline { grid-column: 1 / -1; padding-top: 12px; border-top: 1px solid var(--border-subtle); } }
+@media (max-width: 680px) { .rmine__overview { align-items: flex-start; flex-direction: column; padding: 20px; } .rmine__overview-mark { font-size: 32px; } .rmine__card { display: flex; flex-direction: column; gap: 14px; padding: 16px; } .rmine__card-timeline { width: 100%; } }
 </style>

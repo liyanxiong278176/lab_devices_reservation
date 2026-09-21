@@ -187,6 +187,14 @@ onMounted(load)
       />
     </div>
 
+    <section class="radmin__signal" aria-label="报修队列概览">
+      <div>
+        <span class="radmin__eyebrow">维修队列</span>
+        <strong>把每一条故障，推进到一个明确结果。</strong>
+      </div>
+      <span class="radmin__signal-count">{{ page.total }} <small>条工单</small></span>
+    </section>
+
     <!-- 暗表(el-table 全局深色桥接,R4.4 已建) -->
     <div class="radmin__table">
       <el-table v-loading="loading" :data="page.records" stripe row-key="id">
@@ -253,10 +261,44 @@ onMounted(load)
       </div>
     </div>
 
-    <!-- 处理对话框(resolve / reject 共用) -->
-    <el-dialog v-model="handleVisible" :title="handleTitle" width="440px">
-      <el-form>
-        <el-form-item :label="handleLabel" required>
+    <!-- 处理抽屉(resolve / reject 共用)：保留当前列表上下文 -->
+    <el-drawer
+      v-model="handleVisible"
+      :with-header="false"
+      direction="rtl"
+      size="min(480px, 92vw)"
+      modal-class="repair-handle-drawer"
+    >
+      <div v-if="handleTarget" class="radmin__drawer">
+        <header class="radmin__drawer-head">
+          <div>
+            <span class="radmin__eyebrow">工单 #{{ handleTarget.id }}</span>
+            <h2>{{ handleTitle }}</h2>
+          </div>
+          <button class="radmin__drawer-close" type="button" aria-label="关闭" @click="handleVisible = false">×</button>
+        </header>
+
+        <section class="radmin__drawer-hero">
+          <Tag :variant="statusVariant(handleTarget.status)" effect="light" size="small" round>
+            {{ statusLabel(handleTarget.status) }}
+          </Tag>
+          <h3>{{ handleTarget.title }}</h3>
+          <p>{{ handleTarget.deviceName || `设备 #${handleTarget.deviceId}` }}</p>
+        </section>
+
+        <dl class="radmin__drawer-facts">
+          <div><dt>报修人</dt><dd>{{ handleTarget.reporterName || '—' }}</dd></div>
+          <div><dt>提交时间</dt><dd>{{ fmt(handleTarget.createdAt) }}</dd></div>
+          <div><dt>设备编号</dt><dd>#{{ handleTarget.deviceId }}</dd></div>
+        </dl>
+
+        <section class="radmin__drawer-description">
+          <span class="radmin__eyebrow">故障描述</span>
+          <p>{{ handleTarget.description || '报修人未填写详细描述。' }}</p>
+        </section>
+
+        <el-form class="radmin__drawer-form">
+          <el-form-item :label="handleLabel" required>
           <el-input
             v-model="handleNote"
             type="textarea"
@@ -265,15 +307,14 @@ onMounted(load)
             maxlength="200"
             show-word-limit
           />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <GhostButton @click="handleVisible = false">取消</GhostButton>
-        <GradientButton :loading="handling" @click="onHandleConfirm">
-          确认
-        </GradientButton>
-      </template>
-    </el-dialog>
+          </el-form-item>
+        </el-form>
+        <footer class="radmin__drawer-actions">
+          <GhostButton @click="handleVisible = false">取消</GhostButton>
+          <GradientButton :loading="handling" @click="onHandleConfirm">确认处理</GradientButton>
+        </footer>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -300,6 +341,22 @@ onMounted(load)
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-card);
   }
+
+  &__signal {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 20px 22px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-card);
+    background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 9%, var(--bg-surface)), var(--bg-surface));
+  }
+
+  &__eyebrow { display: block; margin-bottom: 8px; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+  &__signal strong { color: var(--text-primary); font-family: var(--font-display); font-size: clamp(18px, 2vw, 24px); letter-spacing: -.04em; }
+  &__signal-count { color: var(--accent); font-family: var(--font-display); font-size: 28px; font-weight: 700; }
+  &__signal-count small { color: var(--text-tertiary); font-family: var(--font-sans); font-size: 12px; font-weight: 500; }
 
   // ---- 表格容器:surface 卡面 + hairline(同 R4.4 device/Manage)------------
   &__table {
@@ -329,10 +386,33 @@ onMounted(load)
   }
 }
 
-// 对话框 footer:GhostButton / GradientButton 间距微调
-:deep(.el-dialog__footer) {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
+</style>
+
+<style lang="scss">
+.repair-handle-drawer {
+  --el-drawer-bg-color: var(--bg-surface);
+  --el-drawer-padding-primary: 0;
+}
+.repair-handle-drawer .el-drawer { background: var(--bg-surface); border-left: 1px solid var(--border-default); box-shadow: var(--shadow-soft); }
+.repair-handle-drawer .el-drawer__body { padding: 0; }
+.radmin__drawer { display: flex; min-height: 100%; box-sizing: border-box; flex-direction: column; gap: 22px; padding: 28px; }
+.radmin__drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.radmin__drawer-head h2 { margin: 5px 0 0; color: var(--text-primary); font-family: var(--font-display); font-size: 28px; letter-spacing: -.05em; }
+.radmin__drawer-close { width: 34px; height: 34px; border: 1px solid var(--border-default); border-radius: 50%; background: transparent; color: var(--text-tertiary); cursor: pointer; font-size: 22px; line-height: 1; }
+.radmin__drawer-close:hover { border-color: var(--border-accent); color: var(--accent); }
+.radmin__drawer-hero { padding: 18px; border: 1px solid var(--border-subtle); border-radius: var(--radius-card); background: var(--bg-elevated); }
+.radmin__drawer-hero h3 { margin: 14px 0 5px; color: var(--text-primary); font-family: var(--font-display); font-size: 19px; }
+.radmin__drawer-hero p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+.radmin__drawer-facts { display: grid; gap: 0; margin: 0; border-top: 1px solid var(--border-subtle); }
+.radmin__drawer-facts div { display: flex; justify-content: space-between; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
+.radmin__drawer-facts dt { color: var(--text-tertiary); font-size: 12px; }
+.radmin__drawer-facts dd { margin: 0; color: var(--text-primary); font-size: 12px; text-align: right; }
+.radmin__drawer-description { padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: var(--bg-sunken); }
+.radmin__drawer-description p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.75; }
+.radmin__drawer-form { margin-top: auto; }
+.radmin__drawer-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: auto; padding-top: 18px; border-top: 1px solid var(--border-subtle); }
+@media (max-width: 620px) {
+  .radmin__signal { align-items: flex-start; flex-direction: column; }
+  .radmin__drawer { padding: 22px 18px; }
 }
 </style>

@@ -4,7 +4,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Cpu, Search } from '@element-plus/icons-vue'
-import { searchDevices } from '@/api/device'
+import { getDevice, searchDevices } from '@/api/device'
 import type { DeviceQuery, DeviceStatus, DeviceVO } from '@/types/device'
 import type { Page } from '@/types/common'
 import { useStagger } from '@/composables/useStagger'
@@ -29,6 +29,9 @@ const query = reactive<DeviceQuery>({
 
 const loading = ref(false)
 const page = ref<Page<DeviceVO>>({ records: [], total: 0, size: 24, current: 1 })
+const detailVisible = ref(false)
+const detailLoading = ref(false)
+const selectedDevice = ref<DeviceVO | null>(null)
 
 // SegmentedControl 选项:status ''=全部
 const statusOptions: { label: string; value: DeviceStatus | '' }[] = [
@@ -88,12 +91,30 @@ function onSizeChange(s: number) {
   load()
 }
 
-function goDetail(row: DeviceVO) {
-  router.push({ name: 'device-detail', params: { id: row.id } })
+async function openDetail(row: DeviceVO) {
+  selectedDevice.value = row
+  detailVisible.value = true
+  detailLoading.value = true
+  try {
+    selectedDevice.value = await getDevice(row.id)
+  } catch {
+    // The list record is already enough to keep the drawer useful if detail loading fails.
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function goFullDetail() {
+  if (!selectedDevice.value) return
+  router.push({ name: 'device-detail', params: { id: selectedDevice.value.id } })
 }
 
 function goReserve(row: DeviceVO) {
   router.push({ name: 'reservation-create', query: { deviceId: String(row.id) } })
+}
+
+function reserveSelected() {
+  if (selectedDevice.value) goReserve(selectedDevice.value)
 }
 
 onMounted(load)
@@ -138,7 +159,7 @@ onMounted(load)
         class="device-cell"
         data-stagger
       >
-        <GlowCard as="article" class="device-card" @click="goDetail(row)">
+        <GlowCard as="article" class="device-card" @click="openDetail(row)">
           <div class="device-card__media">
             <img v-if="row.imageUrl" :src="row.imageUrl" :alt="row.name" />
             <div v-else class="device-card__placeholder" aria-hidden="true">
@@ -196,6 +217,59 @@ onMounted(load)
         @size-change="onSizeChange"
       />
     </div>
+
+    <el-drawer
+      v-model="detailVisible"
+      :with-header="false"
+      direction="rtl"
+      size="min(480px, 92vw)"
+      class="device-detail-drawer"
+    >
+      <div v-loading="detailLoading" class="device-drawer">
+        <header class="device-drawer__head">
+          <div>
+            <span class="section-kicker">DEVICE PROFILE / {{ selectedDevice?.id ?? '—' }}</span>
+            <h2>{{ selectedDevice?.name || '设备详情' }}</h2>
+            <p>{{ [selectedDevice?.brand, selectedDevice?.model].filter(Boolean).join(' · ') || '实验室设备' }}</p>
+          </div>
+          <button type="button" class="device-drawer__close" aria-label="关闭设备详情" @click="detailVisible = false">×</button>
+        </header>
+
+        <div class="device-drawer__media">
+          <img v-if="selectedDevice?.imageUrl" :src="selectedDevice.imageUrl" :alt="selectedDevice.name" />
+          <div v-else class="device-drawer__placeholder" aria-hidden="true">
+            <Cpu />
+            <span>{{ selectedDevice?.categoryName || 'LAB DEVICE' }}</span>
+          </div>
+        </div>
+
+        <div v-if="selectedDevice" class="device-drawer__status-row">
+          <StatusDot :status="selectedDevice.status" :label="true" />
+          <Tag :variant="selectedDevice.needApproval === 1 ? 'warning' : 'success'" size="small">
+            {{ selectedDevice.needApproval === 1 ? '预约需负责人审批' : '预约自动确认' }}
+          </Tag>
+          <span class="device-drawer__limit">最多 {{ selectedDevice.maxReservationDays ?? '—' }} 天</span>
+        </div>
+
+        <section class="device-drawer__section">
+          <span class="section-kicker">LOCATION</span>
+          <div class="device-drawer__location">
+            <strong>{{ selectedDevice?.labName || '未分配实验室' }}</strong>
+            <span>{{ selectedDevice?.categoryName || '未分类设备' }}</span>
+          </div>
+        </section>
+
+        <section class="device-drawer__section">
+          <span class="section-kicker">SPECIFICATION</span>
+          <p class="device-drawer__description">{{ selectedDevice?.description || selectedDevice?.specs || '暂无规格说明，可进入完整详情查看预约日历。' }}</p>
+        </section>
+
+        <footer class="device-drawer__actions">
+          <TextButton @click="goFullDetail">查看完整详情</TextButton>
+          <el-button type="primary" :disabled="selectedDevice?.status !== 'IDLE'" @click="reserveSelected">预约设备</el-button>
+        </footer>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -422,5 +496,79 @@ onMounted(load)
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+}
+
+.device-detail-drawer :deep(.el-drawer) {
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-default);
+}
+
+.device-drawer {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 28px;
+  box-sizing: border-box;
+}
+
+.device-drawer__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 22px;
+}
+
+.device-drawer__head h2 {
+  margin: 9px 0 4px;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 28px;
+  letter-spacing: -.05em;
+}
+
+.device-drawer__head p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+
+.device-drawer__close {
+  width: 34px;
+  height: 34px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.device-drawer__close:hover { color: var(--accent); border-color: var(--border-accent); }
+
+.device-drawer__media {
+  display: grid;
+  place-items: center;
+  min-height: 210px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 25% 20%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 45%),
+    var(--bg-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+}
+
+.device-drawer__media img { width: 100%; height: 210px; object-fit: cover; }
+.device-drawer__placeholder { display: grid; place-items: center; gap: 10px; color: var(--accent); font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; }
+.device-drawer__placeholder svg { width: 56px; height: 56px; stroke-width: 1; }
+
+.device-drawer__status-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 18px 0; border-bottom: 1px solid var(--border-subtle); }
+.device-drawer__limit { margin-left: auto; color: var(--accent); font-family: var(--font-mono); font-size: 11px; }
+.device-drawer__section { display: grid; gap: 10px; padding: 22px 0; border-bottom: 1px solid var(--border-subtle); }
+.device-drawer__location { display: grid; gap: 4px; }
+.device-drawer__location strong { color: var(--text-primary); font-size: 16px; }
+.device-drawer__location span, .device-drawer__description { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
+.device-drawer__actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: auto; padding-top: 24px; }
+
+@media (max-width: 760px) {
+  .device-drawer { padding: 22px 18px; }
+  .device-drawer__actions { align-items: stretch; flex-direction: column; }
 }
 </style>

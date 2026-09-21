@@ -163,6 +163,18 @@ onMounted(load)
       </template>
     </PageHeader>
 
+    <section class="notif-overview">
+      <div>
+        <span class="section-kicker">INBOX / ACTIVITY</span>
+        <h2>重要的事，会一直留在这里。</h2>
+        <p>点击未读消息只会更新状态，不会从通知流中消失。</p>
+      </div>
+      <div class="notif-overview__count">
+        <strong>{{ notifStore.unread }}</strong>
+        <span>未读提醒</span>
+      </div>
+    </section>
+
     <!-- 筛选:SegmentedControl(全部/未读)-->
     <div class="notif-page__filter">
       <SegmentedControl
@@ -246,6 +258,22 @@ onMounted(load)
     padding-top: 4px;
   }
 }
+
+.notif-overview {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 0 24px;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.notif-overview h2 { margin: 9px 0 5px; color: var(--text-primary); font-family: var(--font-display); font-size: clamp(24px, 3vw, 36px); letter-spacing: -.05em; }
+.notif-overview p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+.notif-overview__count { display: grid; gap: 2px; min-width: 110px; padding-left: 18px; border-left: 1px solid var(--border-default); }
+.notif-overview__count strong { color: var(--accent); font-family: var(--font-mono); font-size: 32px; font-weight: 500; letter-spacing: -.08em; }
+.notif-overview__count span { color: var(--text-tertiary); font-size: 11px; }
 
 // ---- 通知列表 ---------------------------------------------------------------
 .notif-list {
@@ -368,6 +396,11 @@ onMounted(load)
     font-size: 12px;
     color: var(--text-tertiary);
   }
+}
+
+@media (max-width: 720px) {
+  .notif-overview { align-items: flex-start; flex-direction: column; }
+  .notif-overview__count { padding: 10px 0 0; border-top: 1px solid var(--border-default); border-left: 0; }
 }
 
 // reduced-motion 守卫(spec §6.1 铁律 #3):transition 在 reduce 时关闭

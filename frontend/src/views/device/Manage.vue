@@ -271,6 +271,14 @@ onMounted(() => {
       <GhostButton @click="onSearch">查询</GhostButton>
     </div>
 
+    <section class="dmanage__signal" aria-label="设备资产概览">
+      <div>
+        <span class="dmanage__eyebrow">资产档案</span>
+        <strong>让每台设备的状态，都一眼可读。</strong>
+      </div>
+      <span class="dmanage__signal-count">{{ page.total }} <small>台设备</small></span>
+    </section>
+
     <div class="dmanage__table">
       <el-table v-loading="loading" :data="page.records" stripe row-key="id">
         <el-table-column prop="id" label="编号" width="80" />
@@ -348,7 +356,21 @@ onMounted(() => {
       </div>
     </div>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="640px">
+    <el-drawer
+      v-model="dialogVisible"
+      :with-header="false"
+      direction="rtl"
+      size="min(620px, 94vw)"
+      modal-class="dmanage-drawer"
+    >
+      <div class="dmanage__drawer">
+        <header class="dmanage__drawer-head">
+          <div>
+            <span class="dmanage__eyebrow">设备资产</span>
+            <h2>{{ dialogTitle }}</h2>
+          </div>
+          <button class="dmanage__drawer-close" type="button" aria-label="关闭" @click="dialogVisible = false">×</button>
+        </header>
       <el-form
         ref="formRef"
         :model="form"
@@ -405,11 +427,12 @@ onMounted(() => {
           <el-input v-model="form.description" type="textarea" :rows="3" maxlength="300" show-word-limit />
         </el-form-item>
       </el-form>
+      </div>
       <template #footer>
         <GhostButton @click="dialogVisible = false">取消</GhostButton>
         <GradientButton :loading="submitting" @click="onSubmit">保存</GradientButton>
       </template>
-    </el-dialog>
+    </el-drawer>
   </div>
 </template>
 
@@ -436,6 +459,22 @@ onMounted(() => {
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-card);
   }
+
+  &__signal {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 20px 22px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-card);
+    background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 9%, var(--bg-surface)), var(--bg-surface));
+  }
+
+  &__eyebrow { display: block; margin-bottom: 8px; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+  &__signal strong { color: var(--text-primary); font-family: var(--font-display); font-size: clamp(18px, 2vw, 24px); letter-spacing: -.04em; }
+  &__signal-count { color: var(--accent); font-family: var(--font-display); font-size: 28px; font-weight: 700; }
+  &__signal-count small { color: var(--text-tertiary); font-family: var(--font-sans); font-size: 12px; font-weight: 500; }
 
   &__search {
     width: 280px;
@@ -474,10 +513,24 @@ onMounted(() => {
   }
 }
 
-// 对话框 footer:GhostButton / GradientButton 间距微调
-:deep(.el-dialog__footer) {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
+</style>
+
+<style lang="scss">
+.dmanage-drawer {
+  --el-drawer-bg-color: var(--bg-surface);
+  --el-drawer-padding-primary: 0;
+}
+.dmanage-drawer .el-drawer { background: var(--bg-surface); border-left: 1px solid var(--border-default); box-shadow: var(--shadow-soft); }
+.dmanage-drawer .el-drawer__body { padding: 0; }
+.dmanage-drawer .el-drawer__footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 28px; border-top: 1px solid var(--border-subtle); }
+.dmanage__drawer { display: flex; min-height: 100%; box-sizing: border-box; flex-direction: column; padding: 28px; }
+.dmanage__drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.dmanage__drawer-head h2 { margin: 5px 0 0; color: var(--text-primary); font-family: var(--font-display); font-size: 28px; letter-spacing: -.05em; }
+.dmanage__drawer-close { width: 34px; height: 34px; border: 1px solid var(--border-default); border-radius: 50%; background: transparent; color: var(--text-tertiary); cursor: pointer; font-size: 22px; line-height: 1; }
+.dmanage__drawer-close:hover { border-color: var(--border-accent); color: var(--accent); }
+.dmanage__drawer .el-form { flex: 1; }
+@media (max-width: 620px) {
+  .dmanage__signal { align-items: flex-start; flex-direction: column; }
+  .dmanage__drawer { padding: 22px 18px; }
 }
 </style>

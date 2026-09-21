@@ -183,6 +183,15 @@ onMounted(load)
   <div class="mine">
     <PageHeader title="我的预约" :subtitle="subtitle" />
 
+    <section class="mine__overview" aria-label="预约概览">
+      <div>
+        <span class="mine__eyebrow">预约时间线</span>
+        <h2>把接下来的实验安排，放在手边。</h2>
+        <p>从待审批到归还设备，每条预约都保留完整的日期和状态轨迹。</p>
+      </div>
+      <div class="mine__overview-mark"><span />{{ page.total }}<small>条记录</small></div>
+    </section>
+
     <!-- 状态筛选:SegmentedControl(沿用既有 8 状态 + 全部) -->
     <div class="mine__filter">
       <SegmentedControl
@@ -532,4 +541,34 @@ onMounted(load)
     box-shadow: none;
   }
 }
+</style>
+
+<style scoped lang="scss">
+/* 预约页采用纵向时间线工作区，避免大量预约时形成卡片墙。 */
+.mine__overview {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 26px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: linear-gradient(108deg, color-mix(in srgb, var(--accent) 9%, var(--bg-surface)), var(--bg-surface));
+}
+.mine__eyebrow { display: block; margin-bottom: 8px; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+.mine__overview h2 { margin: 0 0 7px; color: var(--text-primary); font-family: var(--font-display); font-size: clamp(22px, 3vw, 32px); letter-spacing: -.06em; }
+.mine__overview p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.mine__overview-mark { display: flex; align-items: baseline; gap: 7px; color: var(--accent); font-family: var(--font-display); font-size: 40px; font-weight: 700; white-space: nowrap; }
+.mine__overview-mark span { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 14px var(--accent); }
+.mine__overview-mark small { color: var(--text-tertiary); font-family: var(--font-sans); font-size: 12px; font-weight: 500; }
+.mine__grid { display: flex; flex-direction: column; gap: 12px; }
+.mine__cell { display: block; }
+.mine__card { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(280px, 1.4fr) minmax(240px, 1fr); align-items: center; gap: 22px; padding: 18px 22px; }
+.mine__card-head { align-self: start; }
+.mine__card-body { min-width: 0; }
+.mine__card-time { max-width: 260px; }
+.mine__card-foot { grid-column: 1 / -1; margin-top: 0; }
+.mine__card-purpose { max-width: 520px; }
+@media (max-width: 980px) { .mine__card { grid-template-columns: minmax(160px, .7fr) minmax(260px, 1.3fr); } .mine__card-foot { grid-column: 1 / -1; } }
+@media (max-width: 680px) { .mine__overview { align-items: flex-start; flex-direction: column; padding: 20px; } .mine__overview-mark { font-size: 32px; } .mine__card { display: flex; align-items: stretch; flex-direction: column; gap: 14px; padding: 16px; } .mine__card-time { max-width: none; } }
 </style>
