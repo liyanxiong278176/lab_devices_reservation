@@ -64,6 +64,12 @@ export const createRepair = (data: RepairCreatePayload) =>
     image_urls: data.imageUrls,
   })
 
+export const uploadRepairImage = (file: File) => {
+  const body = new FormData()
+  body.append('file', file)
+  return request.post<unknown, { url: string }>('/repair-uploads', body)
+}
+
 export const myRepairs = (page = 1, size = 10, cursor?: number | null) =>
   request
     .get<unknown, V2RepairPage>('/repair-reports/mine', { params: { page, size, cursor: cursor || undefined } })

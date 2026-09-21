@@ -1,6 +1,6 @@
 # FastAPI backend
 
-这是项目唯一运行时后端：FastAPI + SQLAlchemy async + Alembic。API 统一使用 `/api/v2`，旧 Spring Boot 源码不参与运行。
+这是项目唯一运行时后端：FastAPI + SQLAlchemy async + Alembic。API 统一使用 `/api/v2`。
 
 ## 本地运行
 

@@ -26,12 +26,12 @@ class MetricsRegistry:
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._counters: defaultdict[
-            tuple[str, tuple[tuple[str, str], ...]], float
-        ] = defaultdict(float)
-        self._histograms: defaultdict[
-            tuple[str, tuple[tuple[str, str], ...]], dict[str, float]
-        ] = defaultdict(lambda: {"count": 0.0, "sum": 0.0})
+        self._counters: defaultdict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(
+            float
+        )
+        self._histograms: defaultdict[tuple[str, tuple[tuple[str, str], ...]], dict[str, float]] = (
+            defaultdict(lambda: {"count": 0.0, "sum": 0.0})
+        )
 
     def increment(
         self,

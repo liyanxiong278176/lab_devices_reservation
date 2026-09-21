@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.v2.schemas import RepairData, RepairPage
+from app.application.lifecycle import append_audit, change_device_status
 from app.application.reservations import ReservationService
 from app.auth.security import Principal, college_scope
 from app.core.errors import ApiError
@@ -114,9 +115,24 @@ class RepairService:
         # the manager can restore it after resolving the ticket.
         catalog_changed = device.status not in {"DISABLED", "OFFLINE"}
         if catalog_changed:
-            device.status = "MAINTENANCE"
+            change_device_status(
+                self.session,
+                device,
+                "MAINTENANCE",
+                operator_id=self.principal.user_id,
+                reason="用户提交设备报修",
+            )
             enqueue_catalog_cache_bump(self.session, device.college_id)
         await self.session.flush()
+        append_audit(
+            self.session,
+            user_id=self.principal.user_id,
+            college_id=report.college_id,
+            action="REPAIR_CREATE",
+            target_type="REPAIR",
+            target_id=report.id,
+            detail={"device_id": report.device_id},
+        )
         self._notify(
             report,
             title="设备报修已提交",
@@ -253,6 +269,14 @@ class RepairService:
         report.status = "PROCESSING"
         report.handler_id = self.principal.user_id
         report.taken_at = utcnow_naive()
+        append_audit(
+            self.session,
+            user_id=self.principal.user_id,
+            college_id=report.college_id,
+            action="REPAIR_TAKE",
+            target_type="REPAIR",
+            target_id=report.id,
+        )
         self._notify(
             report,
             title="报修工单已受理",
@@ -271,12 +295,14 @@ class RepairService:
         report = await self._load(report_id)
         if not await self._can_manage(report.device):
             raise ApiError("FORBIDDEN", "只能处理自己负责实验室或学院的报修", 403)
-        if report.status not in OPEN_REPAIR_STATUSES:
-            raise ApiError("INVALID_REPAIR_STATE", "当前工单状态不能完成此操作", 409)
+        if report.status != "PROCESSING":
+            raise ApiError("INVALID_REPAIR_STATE", "请先受理工单后再完成此操作", 409)
+        if report.handler_id not in (None, self.principal.user_id):
+            raise ApiError("REPAIR_HANDLER_MISMATCH", "该工单已由其他负责人受理", 409)
         now = utcnow_naive()
         result = await self.session.execute(
             update(RepairReport)
-            .where(RepairReport.id == report_id, RepairReport.status.in_(OPEN_REPAIR_STATUSES))
+            .where(RepairReport.id == report_id, RepairReport.status == "PROCESSING")
             .values(
                 status=status,
                 handler_id=report.handler_id or self.principal.user_id,
@@ -301,13 +327,28 @@ class RepairService:
             or 0
         )
         if other_open == 0 and report.device.status not in {"DISABLED", "OFFLINE", "RETIRED"}:
-            report.device.status = "IDLE"
+            change_device_status(
+                self.session,
+                report.device,
+                "IDLE",
+                operator_id=self.principal.user_id,
+                reason="报修工单处理完成",
+            )
             enqueue_catalog_cache_bump(self.session, report.college_id)
         resolution_label = "解决" if status == "RESOLVED" else "驳回"
         self._notify(
             report,
             title="报修工单状态已更新",
             content=f"设备“{report.device.name}”的报修工单已{resolution_label}。",
+        )
+        append_audit(
+            self.session,
+            user_id=self.principal.user_id,
+            college_id=report.college_id,
+            action="REPAIR_RESOLVE" if status == "RESOLVED" else "REPAIR_REJECT",
+            target_type="REPAIR",
+            target_id=report.id,
+            detail={"note": note.strip()},
         )
         await self.session.commit()
         if other_open == 0 and report.device.status == "IDLE":

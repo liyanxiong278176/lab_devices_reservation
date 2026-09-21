@@ -17,11 +17,17 @@ import GradientButton from '@/components/ui/GradientButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
 import TextButton from '@/components/ui/TextButton.vue'
 import Tag from '@/components/ui/Tag.vue'
+import { useCursorPageChain } from '@/composables/useCursorPageChain'
 
 const loading = ref(false)
 const page = ref<Page<UserVO>>({ records: [], total: 0, size: 10, current: 1 })
 const query = ref<UserQuery>({ page: 1, size: 10, username: '', realName: '' })
 const colleges = ref<CollegeVO[]>([])
+const cursorPager = useCursorPageChain<UserVO>((cursor) => listUsers({
+  ...query.value,
+  page: 1,
+  cursor,
+}))
 
 // 角色选项(表单下拉用)
 const roleOptions = [
@@ -110,15 +116,12 @@ const rules: FormRules = {
   ],
 }
 
-async function load() {
+async function load(targetPage = query.value.page || 1) {
   loading.value = true
   try {
-    const [users, availableColleges] = await Promise.all([
-      listUsers(query.value),
-      listColleges(),
-    ])
+    const users = await cursorPager.load(targetPage)
     page.value = users
-    colleges.value = availableColleges
+    if (!colleges.value.length) colleges.value = await listColleges()
   } catch {
     // 拦截器已提示
   } finally {
@@ -128,17 +131,19 @@ async function load() {
 
 function onSearch() {
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 function onPageChange(p: number) {
   query.value.page = p
-  load()
+  void load(p)
 }
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 function resetForm() {

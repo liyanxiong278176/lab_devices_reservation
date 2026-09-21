@@ -1,5 +1,5 @@
 /**
- * 待审批列表项（vo/approval/ApprovalItemVO.java）。
+ * 待审批列表项。
  *
  * 在 reservation 基础字段之外附带 deviceName / username / realName，
  * 便于前端直接展示「谁 / 用哪个设备 / 何时 / 用途」。

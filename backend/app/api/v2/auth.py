@@ -1,3 +1,6 @@
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -13,7 +16,7 @@ from app.auth.security import (
 from app.common.response import ApiResponse
 from app.core.errors import ApiError
 from app.infrastructure.cache.rate_limit import enforce_login_rate_limit
-from app.infrastructure.db.models import College, Role, User
+from app.infrastructure.db.models import College, RefreshSession, Role, User
 from app.infrastructure.db.session import get_db
 
 router = APIRouter()
@@ -50,6 +53,8 @@ class UserData(BaseModel):
     real_name: str | None
     college_id: int | None
     roles: list[str]
+    credit_score: int = 100
+    booking_blocked_until: datetime | None = None
 
 
 async def _load_user(session: AsyncSession, username: str) -> User | None:
@@ -58,13 +63,38 @@ async def _load_user(session: AsyncSession, username: str) -> User | None:
     )
 
 
-def _token_data(request: Request, user: User) -> TokenData:
+def _token_data(request: Request, user: User, refresh_token_id: str) -> TokenData:
     settings = request.app.state.settings
     return TokenData(
         access_token=create_token(request, user=user, token_type="access"),
-        refresh_token=create_token(request, user=user, token_type="refresh"),
+        refresh_token=create_token(
+            request,
+            user=user,
+            token_type="refresh",
+            token_id=refresh_token_id,
+        ),
         expires_in=settings.access_token_minutes * 60,
     )
+
+
+async def _issue_tokens(
+    request: Request,
+    session: AsyncSession,
+    user: User,
+) -> TokenData:
+    settings = request.app.state.settings
+    refresh_token_id = uuid4().hex
+    data = _token_data(request, user, refresh_token_id)
+    session.add(
+        RefreshSession(
+            token_id=refresh_token_id,
+            user_id=user.id,
+            expires_at=datetime.now(UTC).replace(tzinfo=None)
+            + timedelta(days=settings.refresh_token_days),
+        )
+    )
+    await session.commit()
+    return data
 
 
 @router.post("/login", response_model=ApiResponse[TokenData])
@@ -81,7 +111,7 @@ async def login(
         or not verify_password(payload.password, user.password_hash)
     ):
         raise ApiError("INVALID_CREDENTIALS", "用户名或密码错误", 401)
-    return ApiResponse.ok(_token_data(request, user))
+    return ApiResponse.ok(await _issue_tokens(request, session, user))
 
 
 @router.post("/register", response_model=ApiResponse[UserData], status_code=201)
@@ -118,6 +148,8 @@ async def register(
             real_name=user.real_name,
             college_id=user.college_id,
             roles=[role.role_code for role in user.roles],
+            credit_score=user.credit_score,
+            booking_blocked_until=user.booking_blocked_until,
         )
     )
 
@@ -136,7 +168,53 @@ async def refresh(
     )
     if user is None or user.status != 1:
         raise ApiError("USER_NOT_FOUND", "用户不存在或已禁用", 401)
-    return ApiResponse.ok(_token_data(request, user))
+    now = datetime.now(UTC).replace(tzinfo=None)
+    old_session = await session.scalar(
+        select(RefreshSession)
+        .where(
+            RefreshSession.token_id == principal.token_id,
+            RefreshSession.user_id == user.id,
+            RefreshSession.revoked_at.is_(None),
+            RefreshSession.expires_at > now,
+        )
+        .with_for_update()
+    )
+    if old_session is None:
+        raise ApiError("REFRESH_REUSED", "刷新令牌已失效，请重新登录", 401)
+    new_refresh_id = uuid4().hex
+    old_session.revoked_at = now
+    old_session.replaced_by = new_refresh_id
+    data = _token_data(request, user, new_refresh_id)
+    session.add(
+        RefreshSession(
+            token_id=new_refresh_id,
+            user_id=user.id,
+            expires_at=now + timedelta(days=request.app.state.settings.refresh_token_days),
+        )
+    )
+    await session.commit()
+    return ApiResponse.ok(data)
+
+
+@router.post("/logout", response_model=ApiResponse[None])
+async def logout(
+    request: Request,
+    payload: RefreshRequest,
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[None]:
+    from app.auth.security import decode_token
+
+    principal = decode_token(request, payload.refresh_token, expected_type="refresh")
+    await session.execute(
+        RefreshSession.__table__.update()
+        .where(
+            RefreshSession.token_id == principal.token_id,
+            RefreshSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(UTC).replace(tzinfo=None))
+    )
+    await session.commit()
+    return ApiResponse.ok(None)
 
 
 @router.get("/me", response_model=ApiResponse[UserData])
@@ -148,5 +226,7 @@ async def me(user: User = Depends(get_current_user)) -> ApiResponse[UserData]:
             real_name=user.real_name,
             college_id=user.college_id,
             roles=[role.role_code for role in user.roles],
+            credit_score=user.credit_score,
+            booking_blocked_until=user.booking_blocked_until,
         )
     )

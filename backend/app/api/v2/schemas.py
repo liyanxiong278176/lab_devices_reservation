@@ -130,6 +130,11 @@ class ReservationData(BaseModel):
     batch_id: str | None = None
     need_approval: bool
     created_at: datetime | None = None
+    check_in_at: datetime | None = None
+    check_out_at: datetime | None = None
+    reject_reason: str | None = None
+    inspection_condition: str | None = None
+    inspection_note: str | None = None
 
 
 class ReservationPreflightData(BaseModel):
@@ -155,8 +160,61 @@ class ReservationPage(BaseModel):
     has_more: bool = False
 
 
+class FeedbackCreateRequest(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=500)
+
+
+class FeedbackData(BaseModel):
+    id: int
+    reservation_id: int
+    device_id: int
+    user_id: int
+    rating: int
+    comment: str | None = None
+    created_at: datetime | None = None
+
+
 class TransitionRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
+
+
+class ReturnInspectionRequest(BaseModel):
+    condition: Literal["NORMAL", "DAMAGED", "MISSING"] = "NORMAL"
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class WaitlistCreateRequest(BaseModel):
+    device_id: int = Field(gt=0)
+    reservation_date: date
+    purpose: str = Field(min_length=2, max_length=500)
+
+
+class WaitlistData(BaseModel):
+    id: int
+    device_id: int
+    device_name: str | None = None
+    reservation_date: date
+    purpose: str
+    status: str
+    created_at: datetime | None = None
+
+
+class BlackoutCreateRequest(BaseModel):
+    scope_type: Literal["COLLEGE", "LAB", "DEVICE"]
+    scope_id: int = Field(gt=0)
+    blocked_date: date
+    reason: str = Field(min_length=2, max_length=500)
+
+
+class BlackoutData(BaseModel):
+    id: int
+    scope_type: str
+    scope_id: int
+    blocked_date: date
+    reason: str
+    active: bool
+    created_at: datetime | None = None
 
 
 class ApprovalRequest(BaseModel):

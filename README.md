@@ -8,7 +8,7 @@
 - Redis 7：预约锁、租户目录缓存、Lua 限流和推荐缓存；设置短超时与进程级熔断，故障时由数据库唯一约束、缓存回源和进程内限流兜底。
 - Qdrant：学院/全局知识库向量检索；MySQL 保存文档元数据、版本和权限事实。
 
-本轮非 AI 可靠性改造还包括：按“设备 + 自然日”排序加锁与数据库唯一约束双重防超约；设备目录使用学院租户隔离的 Cache-Aside、TTL 抖动和热点保护；Redis Lua 令牌桶限流并在 Redis 故障时降级到进程内限流；MySQL Outbox 采用租约领取、聚合键串行、指数退避、死信和管理员重试；高增长列表支持 `cursor` 主键游标分页；`/api/v2/metrics` 提供进程级指标，`/api/v2/ready` 区分数据库故障与 Redis 降级。
+本轮非 AI 可靠性改造还包括：按“设备 + 自然日”排序加锁与数据库唯一约束双重防超约；设备目录使用学院租户隔离的 Cache-Aside、TTL 抖动和热点保护；Redis Lua 令牌桶限流并在 Redis 故障时降级到进程内限流；MySQL Outbox 采用租约领取、聚合键串行、指数退避、死信和管理员重试；高增长列表支持 `cursor` 主键游标分页；归还验收、信用事件、候补、不可预约日和完成后评价形成业务闭环；`/api/v2/metrics` 提供进程级指标，`/api/v2/ready` 区分数据库故障与 Redis 降级。
 
 ## 本地验证
 
@@ -43,4 +43,4 @@ uv run python benchmarks/reservation_concurrency.py --base-url http://127.0.0.1:
 
 首次初始化时可在 `.env` 设置 `LAB_BOOTSTRAP_ADMIN_PASSWORD`，服务只会在账号不存在时创建全局 `admin` 管理员，不会覆盖已有账号。
 
-`src/` 与 `pom.xml` 保留为旧 Spring Boot 参考源码；容器、开发文档和实际运行入口均以 `backend/` 为准。设计决策与迁移说明见 [`CONTEXT.md`](CONTEXT.md) 和 [`docs/superpowers/specs/2026-08-26-fastapi-langchain-rebuild-design.md`](docs/superpowers/specs/2026-08-26-fastapi-langchain-rebuild-design.md)。
+项目只保留 FastAPI/Python 后端实现，容器、开发文档和实际运行入口均以 `backend/` 为准。设计决策与迁移说明见 [`CONTEXT.md`](CONTEXT.md) 和 [`docs/superpowers/specs/2026-08-26-fastapi-langchain-rebuild-design.md`](docs/superpowers/specs/2026-08-26-fastapi-langchain-rebuild-design.md)。

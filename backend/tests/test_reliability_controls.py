@@ -124,6 +124,4 @@ async def test_reservation_cursor_returns_stable_keyset_pages(seeded) -> None:
             cursor=page_one.next_cursor,
         )
         assert len(page_two.items) >= 1
-        assert {item.id for item in page_one.items}.isdisjoint(
-            {item.id for item in page_two.items}
-        )
+        assert {item.id for item in page_one.items}.isdisjoint({item.id for item in page_two.items})

@@ -48,6 +48,9 @@ export const useUserStore = defineStore(
     }
 
     function logout() {
+      if (refreshToken.value) {
+        void authApi.logout(refreshToken.value).catch(() => undefined)
+      }
       accessToken.value = ''
       refreshToken.value = ''
       userId.value = null
@@ -96,5 +99,11 @@ export const useUserStore = defineStore(
   // 只持久化 token;user profile 由 mount 时 fetchMe 单源填充(401 失败时调
   // clearProfile 清空,路由 guard 即拒绝角色路由,防陈旧角色越权)。
   // token 过期由 axios 401 拦截器 → refresh / logout 兜底。
-  { persist: { key: 'lab-user', pick: ['accessToken', 'refreshToken'] } },
+  {
+    persist: {
+      key: 'lab-user',
+      storage: sessionStorage,
+      pick: ['accessToken', 'refreshToken'],
+    },
+  },
 )

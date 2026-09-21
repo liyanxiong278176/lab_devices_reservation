@@ -223,7 +223,7 @@ onMounted(load)
           <div class="mine__card-body">
             <div class="mine__card-row mine__card-row--device">
               <span class="mine__card-label">设备</span>
-              <span class="mine__card-value">设备 #{{ row.deviceId }}</span>
+                <span class="mine__card-value">{{ row.deviceName || `设备 #${row.deviceId}` }}</span>
             </div>
 
             <div class="mine__card-time">

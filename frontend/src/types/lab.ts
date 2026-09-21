@@ -1,4 +1,4 @@
-/** 实验室（entity/Lab.java）。 */
+/** 实验室。 */
 export interface Lab {
   id: number
   name: string

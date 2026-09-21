@@ -45,28 +45,26 @@ async def my_notifications(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, object]]:
+    if page != 1 and cursor is None:
+        raise ApiError("CURSOR_REQUIRED", "深页查询必须携带上一页游标", 422)
     conditions = _conditions(principal, only_unread)
     total = int(await session.scalar(select(func.count(Notification.id)).where(*conditions)) or 0)
     query_conditions = list(conditions)
     if cursor is not None:
         query_conditions.append(Notification.id < cursor)
-    order_columns = (
-        (Notification.id.desc(),)
-        if cursor is not None
-        else (Notification.created_at.desc(), Notification.id.desc())
-    )
+    order_columns = (Notification.id.desc(),)
     rows = list(
         (
             await session.scalars(
                 select(Notification)
                 .where(*query_conditions)
                 .order_by(*order_columns)
-                .offset((page - 1) * size if cursor is None else 0)
-                .limit(size + 1 if cursor is not None else size)
+                .offset(0)
+                .limit(size + 1)
             )
         ).all()
     )
-    has_more = cursor is not None and len(rows) > size
+    has_more = len(rows) > size
     if has_more:
         rows = rows[:size]
     return ApiResponse.ok(

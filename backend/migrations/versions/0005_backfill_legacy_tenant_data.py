@@ -1,6 +1,6 @@
 """Backfill tenant ownership and natural-day occupancy for legacy rows.
 
-The old Spring schema had no college columns and stored reservation windows as
+The original schema had no college columns and stored reservation windows as
 timestamps. Existing deployments therefore need a deterministic default
 tenant before v2 authorization can be enabled. Administrators can reassign
 rows to their real colleges after the migration.
@@ -18,7 +18,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # Reference data is idempotent so this revision works for both a clean
-    # Alembic database and a database that already ran the old Flyway seed.
+    # Alembic database and an existing database that already has seed data.
     op.execute(
         "INSERT INTO sys_role (role_code, role_name) "
         "SELECT 'STUDENT', '学生' WHERE NOT EXISTS "

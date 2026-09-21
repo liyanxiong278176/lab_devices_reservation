@@ -1,4 +1,4 @@
-"""Complete the notification timestamp shape for legacy Spring databases."""
+"""Complete the notification timestamp shape for existing databases."""
 
 from collections.abc import Sequence
 
@@ -12,7 +12,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Flyway's original notification table only had created_at. The FastAPI
+    # Older installations only had created_at. The FastAPI
     # mapping uses the shared timestamp mixin, so add the missing column in a
     # rerunnable, non-destructive compatibility revision.
     inspector = sa.inspect(op.get_bind())

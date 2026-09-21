@@ -3,7 +3,7 @@ import type { Page } from './common'
 /** 设备状态枚举（与后端 DeviceStatus 一致）。 */
 export type DeviceStatus = 'IDLE' | 'IN_USE' | 'MAINTENANCE' | 'DISABLED' | 'OFFLINE' | 'RETIRED'
 
-/** 后端 DeviceVO（vo/device/DeviceVO.java）。 */
+/** 后端设备视图。 */
 export interface DeviceVO {
   id: number
   name: string
@@ -27,7 +27,7 @@ export interface DeviceVO {
   updatedAt?: string
 }
 
-/** 后端 DeviceCalendarItemVO（vo/device/DeviceCalendarItemVO.java）。 */
+/** 后端设备日历项。 */
 export interface DeviceCalendarItemVO {
   /** ISO date: yyyy-MM-dd */
   date: string
@@ -37,7 +37,7 @@ export interface DeviceCalendarItemVO {
   status: string
 }
 
-/** 后端 DeviceCategoryNodeVO（vo/device/DeviceCategoryNodeVO.java）。 */
+/** 后端设备分类树节点。 */
 export interface DeviceCategoryNodeVO {
   id: number
   name: string
@@ -50,6 +50,7 @@ export interface DeviceCategoryNodeVO {
 export interface DeviceQuery {
   page?: number
   size?: number
+  cursor?: number | null
   keyword?: string
   search?: string
   categoryId?: number

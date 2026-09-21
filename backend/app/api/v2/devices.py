@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.v2.schemas import AvailabilityDay, DeviceDetail, DeviceSummary
+from app.application.lifecycle import append_audit, change_device_status
 from app.application.reservations import ReservationService
 from app.auth.security import Principal, get_current_principal
 from app.common.response import ApiResponse
@@ -16,7 +17,14 @@ from app.infrastructure.cache.invalidation import (
 )
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
 from app.infrastructure.cache.redis import get_redis, get_redis_circuit
-from app.infrastructure.db.models import College, Device, DeviceCategory, Lab, Reservation
+from app.infrastructure.db.models import (
+    College,
+    Device,
+    DeviceCategory,
+    Lab,
+    RepairReport,
+    Reservation,
+)
 from app.infrastructure.db.session import get_db
 
 router = APIRouter(dependencies=[Depends(enforce_authenticated_rate_limit)])
@@ -42,6 +50,7 @@ class DeviceUpdateRequest(DeviceCreateRequest):
 
 class DeviceStatusRequest(BaseModel):
     status: str = Field(pattern="^(IDLE|MAINTENANCE|DISABLED|OFFLINE|RETIRED)$")
+    reason: str | None = Field(default=None, max_length=500)
 
 
 async def _manager_can_access(
@@ -69,6 +78,7 @@ async def list_devices(
     status: str | None = Query(default=None, max_length=20),
     page: int = Query(default=1, ge=1, le=10000),
     page_size: int = Query(default=20, ge=1, le=100),
+    cursor: int | None = Query(default=None, ge=1),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, object]]:
@@ -79,14 +89,25 @@ async def list_devices(
         get_redis_circuit(request.app),
     )
     service = ReservationService(session, principal, cache=cache)
-    items, total = await service.list_devices(
+    items, total, next_cursor, has_more = await service.list_devices(
         search=search,
         lab_id=lab_id,
         status=status,
         page=page,
         page_size=page_size,
+        cursor=cursor,
+        include_meta=True,
     )
-    return ApiResponse.ok({"items": items, "total": total, "page": page, "page_size": page_size})
+    return ApiResponse.ok(
+        {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
+    )
 
 
 @router.get("/devices/{device_id}", response_model=ApiResponse[DeviceDetail])
@@ -147,6 +168,16 @@ async def create_device(
         status="IDLE",
     )
     session.add(device)
+    await session.flush()
+    append_audit(
+        session,
+        user_id=principal.user_id,
+        college_id=lab.college_id,
+        action="DEVICE_CREATE",
+        target_type="DEVICE",
+        target_id=device.id,
+        detail={"name": device.name},
+    )
     enqueue_catalog_cache_bump(session, lab.college_id)
     await session.commit()
     await sync_catalog_cache_bump(request.app, lab.college_id)
@@ -217,6 +248,15 @@ async def update_device(
     device.need_approval = payload.need_approval
     device.max_reservation_days = payload.max_reservation_days
     device.tags = payload.tags
+    append_audit(
+        session,
+        user_id=principal.user_id,
+        college_id=device.college_id,
+        action="DEVICE_UPDATE",
+        target_type="DEVICE",
+        target_id=device.id,
+        detail={"name": device.name},
+    )
     enqueue_catalog_cache_bump(session, device.college_id)
     await session.commit()
     await sync_catalog_cache_bump(request.app, device.college_id)
@@ -245,7 +285,21 @@ async def delete_device(
     )
     if active_count:
         raise ApiError("DEVICE_HAS_ACTIVE_RESERVATIONS", "设备仍有有效预约，不能删除", 409)
-    device.status = "DELETED"
+    change_device_status(
+        session,
+        device,
+        "DELETED",
+        operator_id=principal.user_id,
+        reason="负责人删除设备",
+    )
+    append_audit(
+        session,
+        user_id=principal.user_id,
+        college_id=device.college_id,
+        action="DEVICE_DELETE",
+        target_type="DEVICE",
+        target_id=device.id,
+    )
     enqueue_catalog_cache_bump(session, device.college_id)
     await session.commit()
     await sync_catalog_cache_bump(request.app, device.college_id)
@@ -264,7 +318,50 @@ async def update_device_status(
     device = await service._load_device(device_id)
     if not await service._can_manage_device(device):
         raise ApiError("FORBIDDEN", "只能管理自己负责实验室或学院的设备", 403)
-    device.status = payload.status
+    if payload.status == "IDLE":
+        open_repairs = int(
+            await session.scalar(
+                select(func.count(RepairReport.id)).where(
+                    RepairReport.device_id == device_id,
+                    RepairReport.status.in_(("PENDING", "PROCESSING")),
+                )
+            )
+            or 0
+        )
+        if open_repairs:
+            raise ApiError("DEVICE_HAS_OPEN_REPAIR", "存在未完成报修，不能恢复为空闲", 409)
+    if payload.status in {"DISABLED", "RETIRED"}:
+        active_reservations = int(
+            await session.scalar(
+                select(func.count(Reservation.id)).where(
+                    Reservation.device_id == device_id,
+                    Reservation.status.in_(("PENDING", "APPROVED", "IN_USE")),
+                )
+            )
+            or 0
+        )
+        if active_reservations:
+            raise ApiError(
+                "DEVICE_HAS_ACTIVE_RESERVATIONS",
+                "设备仍有有效预约，不能停用或报废",
+                409,
+            )
+    change_device_status(
+        session,
+        device,
+        payload.status,
+        operator_id=principal.user_id,
+        reason=payload.reason,
+    )
+    append_audit(
+        session,
+        user_id=principal.user_id,
+        college_id=device.college_id,
+        action="DEVICE_STATUS_CHANGE",
+        target_type="DEVICE",
+        target_id=device.id,
+        detail={"status": payload.status, "reason": payload.reason},
+    )
     enqueue_catalog_cache_bump(session, device.college_id)
     await session.commit()
     await sync_catalog_cache_bump(request.app, device.college_id)

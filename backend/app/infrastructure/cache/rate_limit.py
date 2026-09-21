@@ -88,6 +88,7 @@ class RateLimiter:
         if not keys or policy.capacity <= 0 or policy.refill_per_second <= 0:
             return True, 0, "disabled"
         try:
+
             async def eval_bucket():
                 return await asyncio.wait_for(
                     self.redis.eval(
@@ -118,9 +119,13 @@ class RateLimiter:
             allowed = True
             for key in keys:
                 state = self._local.get(key)
-                tokens = policy.capacity if state is None else min(
-                    policy.capacity,
-                    state.tokens + max(0.0, now - state.updated_at) * policy.refill_per_second,
+                tokens = (
+                    policy.capacity
+                    if state is None
+                    else min(
+                        policy.capacity,
+                        state.tokens + max(0.0, now - state.updated_at) * policy.refill_per_second,
+                    )
                 )
                 states.append((key, tokens))
                 if tokens < 1:

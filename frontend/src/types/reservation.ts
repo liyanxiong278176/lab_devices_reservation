@@ -11,7 +11,7 @@ export type ReservationStatus =
   | 'VIOLATED'
   | 'NO_SHOW'
 
-/** 后端 ReservationVO（vo/reservation/ReservationVO.java）。 */
+/** 后端自然日预约视图。 */
 export interface ReservationVO {
   id: number
   userId: number
@@ -27,9 +27,14 @@ export interface ReservationVO {
   slotCount: number
   status: ReservationStatus
   createdAt?: string
+  checkInAt?: string
+  checkOutAt?: string
+  rejectReason?: string
+  inspectionCondition?: 'NORMAL' | 'DAMAGED' | 'MISSING'
+  inspectionNote?: string
 }
 
-/** 创建预约参数（对齐 dto/reservation/ReservationCreateDTO）。 */
+/** 创建自然日预约参数。 */
 export interface ReservationCreatePayload {
   deviceId: number
   startDate: string
@@ -60,7 +65,7 @@ export interface ReservationCreateResultVO {
   batch_id?: string | null
 }
 
-/** 我的预约查询参数（对齐 dto/reservation/ReservationQueryDTO）。 */
+/** 我的预约查询参数。 */
 export interface ReservationQuery {
   status?: ReservationStatus | ''
   page?: number

@@ -3,15 +3,26 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fastapi import FastAPI
 from sqlalchemy import and_, delete, exists, or_, select, update
 
+from app.application.lifecycle import append_audit
 from app.infrastructure.cache.cache import CacheService
 from app.infrastructure.cache.redis import get_redis_circuit, get_redis_for_app
-from app.infrastructure.db.models import Notification, OutboxTask, Reservation, ReservationItem
+from app.infrastructure.db.models import (
+    CreditEvent,
+    Device,
+    Notification,
+    OutboxTask,
+    Reservation,
+    ReservationBlackout,
+    ReservationItem,
+    ReservationWaitlist,
+    User,
+)
 from app.infrastructure.db.session import build_session_factory
 
 logger = logging.getLogger(__name__)
@@ -154,11 +165,13 @@ class OutboxWorker:
                 for candidate in candidates:
                     if candidate.aggregate_key:
                         blocked = await session.scalar(
-                            select(exists().where(
-                                OutboxTask.aggregate_key == candidate.aggregate_key,
-                                OutboxTask.status == "PROCESSING",
-                                OutboxTask.id != candidate.id,
-                            ))
+                            select(
+                                exists().where(
+                                    OutboxTask.aggregate_key == candidate.aggregate_key,
+                                    OutboxTask.status == "PROCESSING",
+                                    OutboxTask.id != candidate.id,
+                                )
+                            )
                         )
                         if blocked:
                             continue
@@ -226,19 +239,38 @@ class OutboxWorker:
                     select(Notification).where(Notification.source_task_key == task_key)
                 ):
                     return
-                session.add(
-                    Notification(
-                        user_id=int(payload["user_id"]),
-                        college_id=payload.get("college_id"),
-                        type=str(payload.get("type", "SYSTEM")),
-                        title=str(payload.get("title", "系统通知"))[:200],
-                        content=str(payload.get("content", ""))[:1000],
-                        related_id=payload.get("related_id"),
-                        related_type=payload.get("related_type"),
-                        source_task_key=task_key,
-                    )
+                now = utcnow_naive()
+                notification = Notification(
+                    user_id=int(payload["user_id"]),
+                    college_id=payload.get("college_id"),
+                    type=str(payload.get("type", "SYSTEM")),
+                    title=str(payload.get("title", "系统通知"))[:200],
+                    content=str(payload.get("content", ""))[:1000],
+                    related_id=payload.get("related_id"),
+                    related_type=payload.get("related_type"),
+                    source_task_key=task_key,
+                    created_at=now,
+                    updated_at=now,
                 )
+                session.add(notification)
+                await session.flush()
                 await session.commit()
+                hub = getattr(self.app.state, "notification_hub", None)
+                if hub is not None:
+                    await hub.publish(
+                        notification.user_id,
+                        {
+                            "id": notification.id,
+                            "userId": notification.user_id,
+                            "type": notification.type,
+                            "title": notification.title,
+                            "content": notification.content,
+                            "relatedId": notification.related_id,
+                            "relatedType": notification.related_type,
+                            "isRead": 0,
+                            "createdAt": notification.created_at,
+                        },
+                    )
             return
 
         if task_type == "RESERVATION_NO_SHOW":
@@ -250,11 +282,73 @@ class OutboxWorker:
                     .values(status="NO_SHOW")
                 )
                 if result.rowcount:
+                    reservation = await session.scalar(
+                        select(Reservation).where(Reservation.id == reservation_id)
+                    )
+                    occupied_dates = list(
+                        (
+                            await session.scalars(
+                                select(ReservationItem.reservation_date).where(
+                                    ReservationItem.reservation_id == reservation_id
+                                )
+                            )
+                        ).all()
+                    )
                     await session.execute(
                         delete(ReservationItem).where(
                             ReservationItem.reservation_id == reservation_id
                         )
                     )
+                    user = await session.scalar(
+                        select(User).where(User.id == int(payload["user_id"]))
+                    )
+                    if user is not None:
+                        user.credit_score = max(0, user.credit_score - 10)
+                        if user.credit_score < self.app.state.settings.credit_block_threshold:
+                            user.booking_blocked_until = utcnow_naive() + timedelta(
+                                days=self.app.state.settings.credit_block_days
+                            )
+                        session.add(
+                            CreditEvent(
+                                user_id=user.id,
+                                college_id=user.college_id,
+                                reservation_id=reservation_id,
+                                event_type="NO_SHOW",
+                                points=-10,
+                                reason="批准预约未在预约首日完成签到",
+                                created_at=utcnow_naive(),
+                            )
+                        )
+                    append_audit(
+                        session,
+                        user_id=int(payload["user_id"]),
+                        college_id=payload.get("college_id"),
+                        action="RESERVATION_NO_SHOW",
+                        target_type="RESERVATION",
+                        target_id=reservation_id,
+                        detail={"credit_penalty": -10},
+                    )
+                    for occupied_date in occupied_dates:
+                        session.add(
+                            OutboxTask(
+                                task_key=(
+                                    "waitlist:promote:"
+                                    f"{payload.get('device_id', reservation.device_id)}:"
+                                    f"{occupied_date.isoformat()}:{reservation_id}"
+                                ),
+                                task_type="WAITLIST_PROMOTE",
+                                aggregate_key=(
+                                    f"waitlist:{payload.get('device_id', reservation.device_id)}:"
+                                    f"{occupied_date.isoformat()}"
+                                ),
+                                college_id=payload.get("college_id"),
+                                payload={
+                                    "device_id": payload.get("device_id", reservation.device_id),
+                                    "reservation_date": occupied_date.isoformat(),
+                                },
+                                execute_at=utcnow_naive(),
+                            )
+                        )
                     session.add(
                         OutboxTask(
                             task_key=f"notification:reservation:{reservation_id}:no-show",
@@ -273,6 +367,88 @@ class OutboxWorker:
                             execute_at=utcnow_naive(),
                         )
                     )
+                await session.commit()
+            return
+
+        if task_type == "WAITLIST_PROMOTE":
+            device_id = int(payload["device_id"])
+            reservation_date = date.fromisoformat(str(payload["reservation_date"]))
+            async with factory() as session:
+                candidate = await session.scalar(
+                    select(ReservationWaitlist)
+                    .where(
+                        ReservationWaitlist.device_id == device_id,
+                        ReservationWaitlist.reservation_date == reservation_date,
+                        ReservationWaitlist.status == "WAITING",
+                    )
+                    .order_by(ReservationWaitlist.id)
+                    .with_for_update(skip_locked=True)
+                )
+                if candidate is None:
+                    return
+                device = await session.scalar(select(Device).where(Device.id == device_id))
+                if device is None or device.status in {
+                    "MAINTENANCE",
+                    "DISABLED",
+                    "OFFLINE",
+                    "RETIRED",
+                }:
+                    return
+                occupied = await session.scalar(
+                    select(ReservationItem.id)
+                    .join(Reservation, Reservation.id == ReservationItem.reservation_id)
+                    .where(
+                        ReservationItem.device_id == device_id,
+                        ReservationItem.reservation_date == reservation_date,
+                        Reservation.status.in_(("PENDING", "APPROVED", "IN_USE")),
+                    )
+                )
+                blocked = await session.scalar(
+                    select(ReservationBlackout.id).where(
+                        ReservationBlackout.active.is_(True),
+                        ReservationBlackout.blocked_date == reservation_date,
+                        or_(
+                            and_(
+                                ReservationBlackout.scope_type == "DEVICE",
+                                ReservationBlackout.scope_id == device.id,
+                            ),
+                            and_(
+                                ReservationBlackout.scope_type == "LAB",
+                                ReservationBlackout.scope_id == device.lab_id,
+                            ),
+                            and_(
+                                ReservationBlackout.scope_type == "COLLEGE",
+                                ReservationBlackout.scope_id == device.college_id,
+                            ),
+                        ),
+                    )
+                )
+                if occupied is not None or blocked is not None:
+                    return
+                now = utcnow_naive()
+                candidate.status = "NOTIFIED"
+                candidate.notified_at = now
+                session.add(
+                    OutboxTask(
+                        task_key=f"notification:waitlist:{candidate.id}:ready",
+                        task_type="NOTIFICATION",
+                        aggregate_key=f"waitlist:{device_id}:{reservation_date.isoformat()}",
+                        college_id=candidate.college_id,
+                        payload={
+                            "user_id": candidate.user_id,
+                            "college_id": candidate.college_id,
+                            "type": "WAITLIST_READY",
+                            "title": "设备日期已释放",
+                            "content": (
+                                f"设备在 {reservation_date.isoformat()} 已有空位，"
+                                "请尽快重新提交预约。"
+                            ),
+                            "related_id": candidate.id,
+                            "related_type": "WAITLIST",
+                        },
+                        execute_at=now,
+                    )
+                )
                 await session.commit()
             return
 

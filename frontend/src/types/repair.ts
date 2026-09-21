@@ -1,7 +1,7 @@
 /** 报修状态（与后端 RepairStatus 一致）。 */
 export type RepairStatus = 'PENDING' | 'PROCESSING' | 'RESOLVED' | 'REJECTED'
 
-/** 报修返回视图（vo/repair/RepairReportVO.java）。 */
+/** 报修返回视图。 */
 export interface RepairReportVO {
   id: number
   deviceId: number
@@ -18,7 +18,7 @@ export interface RepairReportVO {
   resolvedAt?: string
 }
 
-/** 报修创建参数（dto/repair/RepairCreateDTO.java）。 */
+/** 报修创建参数。 */
 export interface RepairCreatePayload {
   deviceId: number
   title: string

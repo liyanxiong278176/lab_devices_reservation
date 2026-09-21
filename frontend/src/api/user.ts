@@ -20,6 +20,8 @@ interface V2UserPage {
   size: number
   current: number
   pages?: number
+  next_cursor?: number | null
+  has_more?: boolean
 }
 
 function mapUser(user: V2User): UserVO {
@@ -56,6 +58,7 @@ export const listUsers = (q: UserQuery = {}) =>
         status: q.status,
         page: q.page,
         size: q.size,
+        cursor: q.cursor || undefined,
       },
     })
     .then((data) => ({
@@ -64,6 +67,8 @@ export const listUsers = (q: UserQuery = {}) =>
       size: data.size,
       current: data.current,
       pages: data.pages,
+      nextCursor: data.next_cursor,
+      hasMore: data.has_more,
     }))
 
 export const createUser = (data: UserCreatePayload) =>

@@ -64,9 +64,7 @@ class RecommendationService:
                     )
 
                     async def load() -> list[dict[str, object]]:
-                        return [
-                            item.model_dump(mode="json") for item in await self._compute()
-                        ]
+                        return [item.model_dump(mode="json") for item in await self._compute()]
 
                     raw = await self.cache.get_or_set_json(
                         cache_key,

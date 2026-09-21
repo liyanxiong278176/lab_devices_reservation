@@ -136,6 +136,7 @@ async def ready(request: Request) -> ApiResponse[HealthData]:
         checks["database"] = "failed"
         raise ApiError("NOT_READY", "数据库暂不可用", 503, data={"checks": checks}) from exc
     try:
+
         async def ping_redis():
             return await asyncio.wait_for(get_redis(request).ping(), timeout=0.5)
 

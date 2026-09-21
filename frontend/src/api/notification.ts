@@ -10,8 +10,35 @@ import type { NotificationVO } from '@/types/notification'
  *  - PATCH /notifications/{id}/read                 → 标记单条已读
  *  - PATCH /notifications/read-all                  → 全部未读标记已读
  */
-export const myNotifications = (params: { onlyUnread?: boolean; page?: number; size?: number } = {}) =>
-  request.get<unknown, Page<NotificationVO>>('/notifications/mine', { params })
+interface V2NotificationPage {
+  records: NotificationVO[]
+  total: number
+  size: number
+  current: number
+  pages?: number
+  next_cursor?: number | null
+  has_more?: boolean
+}
+
+export const myNotifications = async (params: {
+  onlyUnread?: boolean
+  page?: number
+  size?: number
+  cursor?: number | null
+} = {}): Promise<Page<NotificationVO>> => {
+  const data = await request.get<unknown, V2NotificationPage>('/notifications/mine', {
+    params: { ...params, cursor: params.cursor || undefined },
+  })
+  return {
+    records: data.records,
+    total: data.total,
+    size: data.size,
+    current: data.current,
+    pages: data.pages,
+    nextCursor: data.next_cursor,
+    hasMore: data.has_more,
+  }
+}
 
 export const markRead = (id: number) =>
   request.patch<unknown, void>(`/notifications/${id}/read`)

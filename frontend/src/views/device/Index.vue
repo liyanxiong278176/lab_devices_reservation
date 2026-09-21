@@ -8,6 +8,7 @@ import { getDevice, searchDevices } from '@/api/device'
 import type { DeviceQuery, DeviceStatus, DeviceVO } from '@/types/device'
 import type { Page } from '@/types/common'
 import { useStagger } from '@/composables/useStagger'
+import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import GlowCard from '@/components/ui/GlowCard.vue'
@@ -32,6 +33,11 @@ const page = ref<Page<DeviceVO>>({ records: [], total: 0, size: 24, current: 1 }
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const selectedDevice = ref<DeviceVO | null>(null)
+const cursorPager = useCursorPageChain<DeviceVO>((cursor) => searchDevices({
+  ...query,
+  page: 1,
+  cursor,
+}))
 
 // SegmentedControl 选项:status ''=全部
 const statusOptions: { label: string; value: DeviceStatus | '' }[] = [
@@ -51,7 +57,7 @@ const subtitle = computed(() => `共 ${page.value.total} 台设备`)
 async function load() {
   loading.value = true
   try {
-    page.value = await searchDevices(query)
+    page.value = await cursorPager.load(query.page || 1)
   } catch {
     // 拦截器已提示
   } finally {
@@ -63,7 +69,8 @@ async function load() {
 
 function onSearch() {
   query.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 function onReset() {
@@ -71,6 +78,7 @@ function onReset() {
   query.status = ''
   query.categoryId = undefined
   query.labId = undefined
+  cursorPager.reset()
   onSearch()
 }
 
@@ -82,13 +90,14 @@ function onStatusChange(v: string | number) {
 
 function onPageChange(p: number) {
   query.page = p
-  load()
+  void load()
 }
 
 function onSizeChange(s: number) {
   query.size = s
   query.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 async function openDetail(row: DeviceVO) {

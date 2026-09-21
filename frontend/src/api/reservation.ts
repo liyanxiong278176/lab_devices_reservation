@@ -22,6 +22,11 @@ interface V2Reservation {
   batch_id?: string | null
   need_approval: boolean
   created_at?: string
+  check_in_at?: string | null
+  check_out_at?: string | null
+  reject_reason?: string | null
+  inspection_condition?: 'NORMAL' | 'DAMAGED' | 'MISSING' | null
+  inspection_note?: string | null
 }
 
 interface V2ReservationPage {
@@ -31,6 +36,16 @@ interface V2ReservationPage {
   page_size: number
   next_cursor?: number | null
   has_more?: boolean
+}
+
+export interface ReservationFeedbackVO {
+  id: number
+  reservation_id: number
+  device_id: number
+  user_id: number
+  rating: number
+  comment?: string | null
+  created_at?: string | null
 }
 
 function mapReservation(item: V2Reservation): ReservationVO {
@@ -48,11 +63,16 @@ function mapReservation(item: V2Reservation): ReservationVO {
     slotCount: item.dates.length,
     status: item.status,
     createdAt: item.created_at,
+    checkInAt: item.check_in_at || undefined,
+    checkOutAt: item.check_out_at || undefined,
+    rejectReason: item.reject_reason || undefined,
+    inspectionCondition: item.inspection_condition || undefined,
+    inspectionNote: item.inspection_note || undefined,
   }
 }
 
 /**
- * 预约接口（对齐 ReservationController）。
+ * 预约接口。
  *
  * 关键契约：
  *  - POST /reservations             → 创建（返回新预约 id）
@@ -86,8 +106,10 @@ export const cancelReservation = (id: number) =>
 export const checkInReservation = (id: number) =>
   request.post<unknown, void>(`/reservations/${id}/check-in`)
 
-export const checkOutReservation = (id: number) =>
-  request.post<unknown, void>(`/reservations/${id}/return`)
+export const checkOutReservation = (
+  id: number,
+  payload: { condition?: 'NORMAL' | 'DAMAGED' | 'MISSING'; note?: string } = {},
+) => request.post<unknown, void>(`/reservations/${id}/return`, payload)
 
 export const myReservations = async (q: ReservationQuery = {}): Promise<Page<ReservationVO>> => {
   const data = await request.get<unknown, V2ReservationPage>('/reservations/mine', {
@@ -115,3 +137,11 @@ export const myReservationsByStatus = (status: ReservationStatus | '', page = 1,
 
 export const getReservation = (id: number) =>
   request.get<unknown, V2Reservation>(`/reservations/${id}`).then(mapReservation)
+
+export const getReservationFeedback = (id: number) =>
+  request.get<unknown, ReservationFeedbackVO | null>(`/reservations/${id}/feedback`)
+
+export const submitReservationFeedback = (
+  id: number,
+  payload: { rating: number; comment?: string },
+) => request.post<unknown, ReservationFeedbackVO>(`/reservations/${id}/feedback`, payload)

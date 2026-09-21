@@ -4,7 +4,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import jwt
-from fastapi import Depends, Request
+from fastapi import Depends, Request, WebSocket
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pwdlib.exceptions import UnknownHashError
@@ -53,10 +53,11 @@ def verify_password(value: str, hashed: str) -> bool:
 
 
 def create_token(
-    request: Request,
+    request: Request | WebSocket,
     *,
     user: User,
     token_type: Literal["access", "refresh"],
+    token_id: str | None = None,
 ) -> str:
     settings = request.app.state.settings
     now = datetime.now(UTC)
@@ -72,7 +73,7 @@ def create_token(
         "college_id": user.college_id,
         "roles": role_codes,
         "type": token_type,
-        "jti": uuid4().hex,
+        "jti": token_id or uuid4().hex,
         "iss": settings.jwt_issuer,
         "iat": now,
         "exp": now + ttl,
@@ -80,7 +81,11 @@ def create_token(
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
-def decode_token(request: Request, token: str, expected_type: str = "access") -> Principal:
+def decode_token(
+    request: Request | WebSocket,
+    token: str,
+    expected_type: str = "access",
+) -> Principal:
     settings = request.app.state.settings
     try:
         payload = jwt.decode(
@@ -112,10 +117,26 @@ def decode_token(request: Request, token: str, expected_type: str = "access") ->
 async def get_current_principal(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    session: AsyncSession = Depends(get_db),
 ) -> Principal:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise ApiError("AUTH_REQUIRED", "请先登录", 401)
-    return decode_token(request, credentials.credentials)
+    token_principal = decode_token(request, credentials.credentials)
+    user = await session.scalar(
+        select(User)
+        .options(selectinload(User.roles))
+        .where(User.id == token_principal.user_id, User.status == 1)
+    )
+    if user is None:
+        raise ApiError("USER_NOT_FOUND", "用户不存在或已禁用", 401)
+    return Principal(
+        user_id=user.id,
+        username=user.username,
+        college_id=user.college_id,
+        roles=tuple(role.role_code for role in user.roles),
+        token_type=token_principal.token_type,
+        token_id=token_principal.token_id,
+    )
 
 
 async def get_current_user(

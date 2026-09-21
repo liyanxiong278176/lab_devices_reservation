@@ -1,5 +1,4 @@
-# FastAPI runtime. The Java implementation is no longer the application entrypoint;
-# backend/ is the canonical Python service for the v2 rewrite.
+# FastAPI runtime. backend/ is the canonical Python service for the v2 rewrite.
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 WORKDIR /app/backend
 

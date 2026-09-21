@@ -9,6 +9,7 @@ import { markAllRead, markRead, myNotifications } from '@/api/notification'
 import type { NotificationVO } from '@/types/notification'
 import type { Page } from '@/types/common'
 import { useNotificationStore } from '@/stores/notification'
+import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import { useStagger } from '@/composables/useStagger'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
@@ -22,6 +23,12 @@ const loading = ref(false)
 const onlyUnread = ref(false)
 const page = ref<Page<NotificationVO>>({ records: [], total: 0, size: 10, current: 1 })
 const query = ref<{ page: number; size: number }>({ page: 1, size: 10 })
+const cursorPager = useCursorPageChain<NotificationVO>((cursor) => myNotifications({
+  onlyUnread: onlyUnread.value || undefined,
+  page: 1,
+  size: query.value.size,
+  cursor,
+}))
 
 // SegmentedControl 选项:全部 / 未读(对齐既有 onlyUnread 布尔;API 仅支持 all/unread,
 // 不强行加"已读"以免改查询逻辑——守住"逻辑零改")
@@ -37,14 +44,10 @@ const filterValue = computed<'all' | 'unread'>(() => (onlyUnread.value ? 'unread
 const listRef = ref<HTMLElement | null>(null)
 const { reveal } = useStagger(listRef, { delay: 50 })
 
-async function load() {
+async function load(targetPage = query.value.page) {
   loading.value = true
   try {
-    page.value = await myNotifications({
-      onlyUnread: onlyUnread.value || undefined,
-      page: query.value.page,
-      size: query.value.size,
-    })
+    page.value = await cursorPager.load(targetPage)
   } catch {
     // 拦截器已提示
   } finally {
@@ -56,7 +59,8 @@ async function load() {
 
 function onFilterChange() {
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 // SegmentedControl 切换:写 onlyUnread 后立即查询(等价原 el-checkbox @change)
@@ -67,12 +71,13 @@ function onFilterSegment(v: string | number) {
 
 function onPageChange(p: number) {
   query.value.page = p
-  load()
+  void load(p)
 }
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 async function onMarkRead(row: NotificationVO) {

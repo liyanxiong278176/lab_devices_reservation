@@ -1,9 +1,8 @@
-"""Create the small legacy-compatible base used by the v2 migration.
+"""Create the compatibility base used by the v2 Alembic migration.
 
-Existing Flyway installations already have these tables; every operation is
+Existing installations may already have these tables; every operation is
 guarded by an inspector check, so this revision is a no-op for them. A clean
-installation can therefore run one Alembic chain without a separate Java
-bootstrap step.
+installation can therefore run one Alembic chain from the Python service.
 """
 
 from collections.abc import Sequence

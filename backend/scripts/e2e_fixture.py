@@ -133,11 +133,7 @@ async def cleanup(prefix: str) -> None:
             if college is None:
                 return
             users = list(
-                (
-                    await session.scalars(
-                        select(User).where(User.username.like(f"{prefix}%"))
-                    )
-                ).all()
+                (await session.scalars(select(User).where(User.username.like(f"{prefix}%")))).all()
             )
             user_ids = [user.id for user in users]
             device_ids = list(
@@ -154,7 +150,9 @@ async def cleanup(prefix: str) -> None:
             )
             if reservation_ids:
                 await session.execute(
-                    delete(ReservationItem).where(ReservationItem.reservation_id.in_(reservation_ids))
+                    delete(ReservationItem).where(
+                        ReservationItem.reservation_id.in_(reservation_ids)
+                    )
                 )
             if device_ids:
                 await session.execute(

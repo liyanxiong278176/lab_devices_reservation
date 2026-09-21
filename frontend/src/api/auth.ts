@@ -26,3 +26,6 @@ export const refresh = (refreshToken: string) =>
   request.post<unknown, TokenVO>('/auth/refresh', { refresh_token: refreshToken })
 
 export const getMe = () => request.get<unknown, UserInfoVO>('/auth/me')
+
+export const logout = (refreshToken: string) =>
+  request.post<unknown, void>('/auth/logout', { refresh_token: refreshToken })

@@ -133,15 +133,12 @@ async def list_colleges(
         stmt = stmt.where(College.id == scope)
     rows = list((await session.scalars(stmt)).all())
     manager_ids = {row.manager_id for row in rows if row.manager_id is not None}
-    managers = list(
-        (
-            await session.scalars(select(User).where(User.id.in_(manager_ids)))
-        ).all()
-    ) if manager_ids else []
-    manager_names = {
-        manager.id: manager.real_name or manager.username
-        for manager in managers
-    }
+    managers = (
+        list((await session.scalars(select(User).where(User.id.in_(manager_ids)))).all())
+        if manager_ids
+        else []
+    )
+    manager_names = {manager.id: manager.real_name or manager.username for manager in managers}
     return ApiResponse.ok(_college_rows_data(rows, manager_names))
 
 
@@ -274,9 +271,7 @@ async def list_labs(
             ]
         )
     stmt = (
-        select(Lab)
-        .options(selectinload(Lab.manager), selectinload(Lab.college))
-        .where(*conditions)
+        select(Lab).options(selectinload(Lab.manager), selectinload(Lab.college)).where(*conditions)
     )
     count_stmt = select(func.count(Lab.id)).select_from(Lab).where(*conditions)
     if scope is not None:

@@ -162,6 +162,7 @@ async def reservation_lock(
                 if remaining <= 0:
                     break
                 try:
+
                     async def set_lock():
                         return await asyncio.wait_for(
                             client.set(

@@ -1,4 +1,4 @@
-/** 通知返回视图（vo/notification/NotificationVO.java）。 */
+/** 通知返回视图。 */
 export interface NotificationVO {
   id: number
   userId: number

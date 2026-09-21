@@ -21,6 +21,7 @@ import GradientButton from '@/components/ui/GradientButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
 import TextButton from '@/components/ui/TextButton.vue'
 import Tag from '@/components/ui/Tag.vue'
+import { useCursorPageChain } from '@/composables/useCursorPageChain'
 
 const loading = ref(false)
 const page = ref<Page<DeviceVO>>({ records: [], total: 0, size: 10, current: 1 })
@@ -28,6 +29,11 @@ const query = ref<DeviceQuery>({ page: 1, size: 10, keyword: '' })
 
 const categories = ref<DeviceCategoryNodeVO[]>([])
 const labs = ref<Lab[]>([])
+const cursorPager = useCursorPageChain<DeviceVO>((cursor) => searchDevices({
+  ...query.value,
+  page: 1,
+  cursor,
+}))
 
 // 编辑对话框
 const dialogVisible = ref(false)
@@ -85,7 +91,7 @@ function statusVariant(s: DeviceStatus): 'default' | 'accent' | 'warning' | 'dan
 async function load() {
   loading.value = true
   try {
-    page.value = await searchDevices(query.value)
+    page.value = await cursorPager.load(query.value.page || 1)
   } catch {
     // 拦截器已提示
   } finally {
@@ -105,17 +111,19 @@ async function loadOptions() {
 
 function onSearch() {
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 function onPageChange(p: number) {
   query.value.page = p
-  load()
+  void load()
 }
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  load()
+  cursorPager.reset()
+  void load()
 }
 
 function resetForm() {

@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,10 +41,16 @@ class Settings(BaseSettings):
     outbox_retry_base_seconds: int = 5
     outbox_worker_concurrency: int = 4
     outbox_task_timeout_seconds: float = 30.0
+    upload_dir: str = ".data/uploads"
+    upload_max_bytes: int = 5 * 1024 * 1024
     reservation_max_days: int = 31
     reservation_lock_ttl_seconds: int = 8
     reservation_lock_wait_seconds: float = 2.0
     reservation_lock_poll_seconds: float = 0.05
+    reservation_user_active_limit: int = 10
+    reservation_user_days_limit: int = 31
+    credit_block_threshold: int = 60
+    credit_block_days: int = 7
     cache_default_ttl_seconds: int = 300
     cache_negative_ttl_seconds: int = 30
     cache_ttl_jitter_seconds: int = 60
@@ -87,6 +93,15 @@ class Settings(BaseSettings):
     ai_max_context_documents: int = 6
     ai_confirmation_ttl_minutes: int = 10
     ai_max_input_chars: int = 8000
+
+    @model_validator(mode="after")
+    def validate_runtime_security(self) -> "Settings":
+        if self.environment == "prod":
+            if len(self.jwt_secret) < 32 or self.jwt_secret.startswith("dev-only"):
+                raise ValueError("生产环境必须设置独立且长度不少于 32 的 LAB_JWT_SECRET")
+            if "123456" in self.mysql_dsn or "password" in self.mysql_dsn.lower():
+                raise ValueError("生产环境禁止使用默认数据库密码")
+        return self
 
 
 @lru_cache(maxsize=1)

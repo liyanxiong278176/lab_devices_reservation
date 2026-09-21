@@ -7,6 +7,7 @@ import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
 import { useNotificationStore } from '@/stores/notification'
 import { useThemeStore } from '@/stores/theme'
+import { connectWs, disconnectWs } from '@/composables/useWebSocket'
 
 const router = useRouter()
 const route = useRoute()
@@ -18,10 +19,12 @@ const themeStore = useThemeStore()
 let notifTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   notifStore.loadUnread()
+  connectWs()
   notifTimer = setInterval(() => notifStore.loadUnread(), 30000)
 })
 onUnmounted(() => {
   if (notifTimer) clearInterval(notifTimer)
+  disconnectWs()
 })
 
 interface MenuItem {

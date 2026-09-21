@@ -5,7 +5,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { createRepair } from '@/api/repair'
+import { createRepair, uploadRepairImage } from '@/api/repair'
 import { searchDevices } from '@/api/device'
 import type { DeviceVO } from '@/types/device'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -26,7 +26,9 @@ const form = ref({
   imageUrlsText: '',
 })
 const submitting = ref(false)
+const uploading = ref(false)
 const devices = ref<DeviceVO[]>([])
+const selectedFiles = ref<File[]>([])
 
 const rules: FormRules = {
   deviceId: [
@@ -49,17 +51,37 @@ async function loadDevices() {
     // parallel so the repair selector still contains every visible idle
     // device instead of failing on page entry or silently truncating options.
     const pageSize = 100
-    const firstPage = await searchDevices({ page: 1, size: pageSize, status: 'IDLE' })
-    const totalPages = firstPage.pages ?? Math.ceil(firstPage.total / pageSize)
-    const remainingPages = await Promise.all(
-      Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) =>
-        searchDevices({ page: index + 2, size: pageSize, status: 'IDLE' }),
-      ),
-    )
-    devices.value = [firstPage, ...remainingPages].flatMap((item) => item.records)
+    const pages: DeviceVO[][] = []
+    let cursor: number | null = null
+    do {
+      const result = await searchDevices({ page: 1, size: pageSize, status: 'IDLE', cursor })
+      pages.push(result.records)
+      cursor = result.hasMore ? (result.nextCursor ?? null) : null
+    } while (cursor !== null)
+    devices.value = pages.flat()
   } catch {
     // 拦截器已提示
   }
+}
+
+function onFilesChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  const validTypes = new Set(['image/jpeg', 'image/png', 'image/webp'])
+  if (files.length > MAX_IMAGE_URLS) {
+    ElMessage.warning(`故障图片最多选择 ${MAX_IMAGE_URLS} 张`)
+    input.value = ''
+    selectedFiles.value = []
+    return
+  }
+  const invalid = files.find((file) => !validTypes.has(file.type) || file.size > 5 * 1024 * 1024)
+  if (invalid) {
+    ElMessage.warning('只支持 JPG、PNG、WebP，且单张图片不能超过 5 MB')
+    input.value = ''
+    selectedFiles.value = []
+    return
+  }
+  selectedFiles.value = files
 }
 
 async function onSubmit() {
@@ -80,13 +102,30 @@ async function onSubmit() {
     return
   }
 
-  const imageUrls = form.value.imageUrlsText
+  let imageUrls = form.value.imageUrlsText
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
   if (imageUrls.length > MAX_IMAGE_URLS) {
     ElMessage.warning(`图片 URL 最多填写 ${MAX_IMAGE_URLS} 个`)
     return
+  }
+
+  if (selectedFiles.value.length + imageUrls.length > MAX_IMAGE_URLS) {
+    ElMessage.warning(`图片最多提交 ${MAX_IMAGE_URLS} 个`)
+    return
+  }
+
+  if (selectedFiles.value.length) {
+    uploading.value = true
+    try {
+      const uploaded = await Promise.all(selectedFiles.value.map((file) => uploadRepairImage(file)))
+      imageUrls = [...imageUrls, ...uploaded.map((item) => item.url)]
+    } catch {
+      return
+    } finally {
+      uploading.value = false
+    }
   }
 
   submitting.value = true
@@ -163,7 +202,19 @@ onMounted(loadDevices)
               show-word-limit
             />
           </el-form-item>
-          <el-form-item label="图片URL">
+          <el-form-item label="故障图片">
+            <input
+              class="rsubmit__file-input"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              @change="onFilesChange"
+            />
+            <span v-if="selectedFiles.length" class="rsubmit__file-hint">
+              已选择 {{ selectedFiles.length }} 张图片（单张不超过 5 MB）
+            </span>
+          </el-form-item>
+          <el-form-item label="外部图片 URL（可选）">
             <el-input
               v-model="form.imageUrlsText"
               placeholder="多个 URL 用英文逗号分隔(可选)"
@@ -174,8 +225,8 @@ onMounted(loadDevices)
         <!-- 底部操作区 -->
         <div class="rsubmit__actions">
           <GhostButton @click="onCancel">取消</GhostButton>
-          <GradientButton :loading="submitting" @click="onSubmit">
-            提交报修
+          <GradientButton :loading="submitting || uploading" @click="onSubmit">
+            {{ uploading ? '上传图片中…' : '提交报修' }}
           </GradientButton>
         </div>
       </GlowCard>
@@ -244,6 +295,23 @@ onMounted(loadDevices)
 
   &__el-form {
     width: 100%;
+  }
+
+  &__file-input {
+    width: 100%;
+    padding: 10px;
+    color: var(--text-secondary);
+    background: var(--bg-elevated);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-control);
+    font-size: 12px;
+  }
+
+  &__file-hint {
+    display: block;
+    margin-top: 6px;
+    color: var(--text-tertiary);
+    font-size: 11px;
   }
 
   // ---- 底部操作区 ----------------------------------------------------------

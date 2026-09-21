@@ -5,7 +5,6 @@ from app.infrastructure.db.models import Notification
 from app.infrastructure.db.session import get_db
 from app.main import create_app
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 @pytest.mark.asyncio

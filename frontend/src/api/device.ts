@@ -25,6 +25,8 @@ interface V2DevicePage {
   total: number
   page: number
   page_size: number
+  next_cursor?: number | null
+  has_more?: boolean
 }
 
 interface V2DeviceAvailability {
@@ -75,6 +77,7 @@ export const searchDevices = async (q: DeviceQuery): Promise<Page<DeviceVO>> => 
       search: q.keyword || q.search,
       lab_id: q.labId,
       status: q.status || undefined,
+      cursor: q.cursor || undefined,
     },
   })
   return {
@@ -83,6 +86,8 @@ export const searchDevices = async (q: DeviceQuery): Promise<Page<DeviceVO>> => 
     size: data.page_size,
     current: data.page,
     pages: Math.ceil(data.total / data.page_size),
+    nextCursor: data.next_cursor,
+    hasMore: data.has_more,
   }
 }
 

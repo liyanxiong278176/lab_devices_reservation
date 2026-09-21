@@ -9,6 +9,9 @@ from app.api.v2.schemas import (
     ReservationPage,
     ReservationPlanRequest,
     ReservationPreflightData,
+    ReturnInspectionRequest,
+    WaitlistCreateRequest,
+    WaitlistData,
 )
 from app.application.reservations import ReservationService
 from app.auth.security import Principal, get_current_principal
@@ -27,7 +30,15 @@ class BatchApprovalRequest(BaseModel):
 
 def _service(request: Request, session: AsyncSession, principal: Principal) -> ReservationService:
     settings: Settings = request.app.state.settings
-    return ReservationService(session, principal, max_days=settings.reservation_max_days)
+    return ReservationService(
+        session,
+        principal,
+        max_days=settings.reservation_max_days,
+        user_active_limit=settings.reservation_user_active_limit,
+        user_days_limit=settings.reservation_user_days_limit,
+        credit_block_threshold=settings.credit_block_threshold,
+        credit_block_days=settings.credit_block_days,
+    )
 
 
 @router.post("/reservations/preflight", response_model=ApiResponse[ReservationPreflightData])
@@ -38,6 +49,42 @@ async def preflight(
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationPreflightData]:
     return ApiResponse.ok(await _service(request, session, principal).preflight(payload))
+
+
+@router.post("/reservations/waitlist", response_model=ApiResponse[WaitlistData], status_code=201)
+async def join_waitlist(
+    payload: WaitlistCreateRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[WaitlistData]:
+    return ApiResponse.ok(
+        await _service(request, session, principal).join_waitlist(
+            device_id=payload.device_id,
+            reservation_date=payload.reservation_date,
+            purpose=payload.purpose,
+        )
+    )
+
+
+@router.get("/reservations/waitlist/mine", response_model=ApiResponse[list[WaitlistData]])
+async def my_waitlist(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[WaitlistData]]:
+    return ApiResponse.ok(await _service(request, session, principal).list_waitlist())
+
+
+@router.delete("/reservations/waitlist/{entry_id}", response_model=ApiResponse[None])
+async def cancel_waitlist(
+    entry_id: int,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[None]:
+    await _service(request, session, principal).cancel_waitlist(entry_id)
+    return ApiResponse.ok(None)
 
 
 @router.post("/reservations", response_model=ApiResponse[ReservationCreateData], status_code=201)
@@ -112,10 +159,32 @@ async def check_in(
 async def return_device(
     reservation_id: int,
     request: Request,
+    payload: ReturnInspectionRequest | None = Body(default=None),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationData]:
-    return ApiResponse.ok(await _service(request, session, principal).return_device(reservation_id))
+    inspection = payload or ReturnInspectionRequest()
+    return ApiResponse.ok(
+        await _service(request, session, principal).return_device(
+            reservation_id,
+            condition=inspection.condition,
+            note=inspection.note,
+        )
+    )
+
+
+@router.post("/reservations/{reservation_id}/violate", response_model=ApiResponse[ReservationData])
+async def violate_reservation(
+    reservation_id: int,
+    payload: ApprovalRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[ReservationData]:
+    reason = (payload.reason or "负责人标记预约违规").strip()
+    return ApiResponse.ok(
+        await _service(request, session, principal).violate(reservation_id, reason)
+    )
 
 
 @router.get("/approvals/pending", response_model=ApiResponse[ReservationPage])

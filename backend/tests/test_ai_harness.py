@@ -30,9 +30,7 @@ def test_heuristic_planner_prefers_device_search_for_natural_language_query() ->
 
 
 def test_heuristic_planner_accepts_chinese_calendar_date() -> None:
-    intent, arguments = _heuristic_intent(
-        "请帮我预约设备1，使用日期为2026年12月10日，用于联调测试"
-    )
+    intent, arguments = _heuristic_intent("请帮我预约设备1，使用日期为2026年12月10日，用于联调测试")
 
     assert intent == "create_reservation"
     assert arguments["device_id"] == 1
@@ -320,9 +318,7 @@ async def test_processed_confirmation_is_not_restored_from_history(seeded) -> No
                     college_id=student1.college_id,
                     role="assistant",
                     content="已处理预览",
-                    metadata_json={
-                        "pending_confirmation": {"confirmation_id": executed.id}
-                    },
+                    metadata_json={"pending_confirmation": {"confirmation_id": executed.id}},
                 ),
                 AiMessage(
                     conversation_id=conversation.id,
@@ -330,9 +326,7 @@ async def test_processed_confirmation_is_not_restored_from_history(seeded) -> No
                     college_id=student1.college_id,
                     role="assistant",
                     content="待处理预览",
-                    metadata_json={
-                        "pending_confirmation": {"confirmation_id": pending.id}
-                    },
+                    metadata_json={"pending_confirmation": {"confirmation_id": pending.id}},
                 ),
             ]
         )
