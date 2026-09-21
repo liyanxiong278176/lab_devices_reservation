@@ -4,7 +4,8 @@
 // Timeline items 由既有 status + 时间字段 computed 组装(思路同 reservation/Detail.vue)。
 import { computed, nextTick, onMounted, ref } from 'vue'
 import dayjs from 'dayjs'
-import { myRepairs } from '@/api/repair'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { confirmRepair, myRepairs } from '@/api/repair'
 import type { RepairReportVO, RepairStatus } from '@/types/repair'
 import type { Page } from '@/types/common'
 import { useCursorPageChain } from '@/composables/useCursorPageChain'
@@ -70,9 +71,13 @@ function statusVariant(s: RepairStatus): 'warning' | 'accent' | 'success' | 'dan
     case 'PROCESSING':
       return 'accent'
     case 'RESOLVED':
-      return 'success'
+      return 'warning'
     case 'REJECTED':
       return 'danger'
+    case 'COMPLETED':
+      return 'success'
+    default:
+      return 'accent'
   }
 }
 
@@ -83,9 +88,11 @@ function statusLabel(s: RepairStatus): string {
     case 'PROCESSING':
       return '处理中'
     case 'RESOLVED':
-      return '已解决'
+      return '待用户确认'
     case 'REJECTED':
       return '已驳回'
+    case 'COMPLETED':
+      return '已完成'
     default:
       return s
   }
@@ -131,7 +138,7 @@ function buildTimeline(r: RepairReportVO): TimelineItem[] {
     })
     return items
   } else {
-    // PROCESSING / RESOLVED —— 已受理
+    // PROCESSING / RESOLVED / COMPLETED —— 已受理
     items.push({
       id: 'take',
       title: '已受理',
@@ -147,7 +154,7 @@ function buildTimeline(r: RepairReportVO): TimelineItem[] {
       desc: '管理员正在处理',
       status: 'current',
     })
-  } else if (s === 'RESOLVED') {
+  } else if (s === 'RESOLVED' || s === 'COMPLETED') {
     items.push({
       id: 'process',
       title: '已处理',
@@ -165,9 +172,17 @@ function buildTimeline(r: RepairReportVO): TimelineItem[] {
   if (s === 'RESOLVED') {
     items.push({
       id: 'resolve',
-      title: '已解决',
+      title: '待用户确认',
       desc: r.resolutionNote || '故障已修复',
       time: r.resolvedAt ? fmt(r.resolvedAt) : undefined,
+      status: 'current',
+    })
+  } else if (s === 'COMPLETED') {
+    items.push({
+      id: 'resolve',
+      title: '已完成',
+      desc: r.userConfirmationNote || r.resolutionNote || '用户已确认设备恢复正常',
+      time: r.closedAt ? fmt(r.closedAt) : undefined,
       status: 'done',
     })
   } else {
@@ -179,6 +194,38 @@ function buildTimeline(r: RepairReportVO): TimelineItem[] {
   }
 
   return items
+}
+
+async function onConfirmRepair(row: RepairReportVO, confirmed: boolean) {
+  let note: string | undefined
+  try {
+    if (confirmed) {
+      await ElMessageBox.confirm('确认设备已经恢复正常并关闭这条报修？', '确认维修结果', {
+        type: 'success',
+        confirmButtonText: '确认已修复',
+        cancelButtonText: '稍后处理',
+      })
+    } else {
+      const result = await ElMessageBox.prompt('请说明仍存在的问题，管理员会重新处理。', '退回处理', {
+        inputPlaceholder: '例如：设备仍然无法开机',
+        inputPattern: /.{2,500}/,
+        inputErrorMessage: '请至少填写 2 个字符',
+        confirmButtonText: '退回处理',
+        cancelButtonText: '取消',
+      })
+      note = result.value.trim()
+    }
+  } catch {
+    return
+  }
+  try {
+    await confirmRepair(row.id, confirmed, note)
+    ElMessage.success(confirmed ? '报修已完成' : '已退回管理员处理')
+    cursorPager.reset()
+    await load()
+  } catch {
+    // 拦截器已提示
+  }
 }
 
 function fmt(t?: string): string {
@@ -234,15 +281,15 @@ onMounted(load)
 
           <!-- 处理说明(已解决/已驳回时展示) -->
           <div
-            v-if="row.resolutionNote && (row.status === 'RESOLVED' || row.status === 'REJECTED')"
+            v-if="row.resolutionNote && (row.status === 'RESOLVED' || row.status === 'COMPLETED' || row.status === 'REJECTED')"
             class="rmine__card-note"
             :class="{
-              'rmine__card-note--resolved': row.status === 'RESOLVED',
+              'rmine__card-note--resolved': row.status === 'RESOLVED' || row.status === 'COMPLETED',
               'rmine__card-note--rejected': row.status === 'REJECTED',
             }"
           >
             <span class="rmine__card-note-label">
-              {{ row.status === 'RESOLVED' ? '处理说明' : '驳回理由' }}
+              {{ row.status === 'REJECTED' ? '驳回理由' : '处理说明' }}
             </span>
             <p class="rmine__card-note-text">{{ row.resolutionNote }}</p>
           </div>
@@ -258,6 +305,12 @@ onMounted(load)
           <!-- 卡脚:提交时间 -->
           <footer class="rmine__card-foot">
             <span class="rmine__card-time">提交于 {{ fmt(row.createdAt) }}</span>
+            <div class="rmine__card-actions">
+              <template v-if="row.status === 'RESOLVED'">
+                <GhostButton size="small" @click="onConfirmRepair(row, false)">退回处理</GhostButton>
+                <TextButton size="small" @click="onConfirmRepair(row, true)">确认已修复</TextButton>
+              </template>
+            </div>
           </footer>
         </GlowCard>
       </div>

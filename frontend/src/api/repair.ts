@@ -1,6 +1,11 @@
 import request from './request'
 import type { Page } from '@/types/common'
-import type { RepairCreatePayload, RepairReportVO, RepairStatus } from '@/types/repair'
+import type {
+  RepairCreatePayload,
+  RepairPriority,
+  RepairReportVO,
+  RepairStatus,
+} from '@/types/repair'
 
 interface V2Repair {
   id: number
@@ -16,6 +21,12 @@ interface V2Repair {
   resolution_note?: string | null
   created_at?: string
   resolved_at?: string | null
+  priority?: RepairPriority
+  response_due_at?: string | null
+  resolve_due_at?: string | null
+  user_confirmed_at?: string | null
+  user_confirmation_note?: string | null
+  closed_at?: string | null
 }
 
 interface V2RepairPage {
@@ -42,6 +53,12 @@ function mapRepair(row: V2Repair): RepairReportVO {
     resolutionNote: row.resolution_note || undefined,
     createdAt: row.created_at,
     resolvedAt: row.resolved_at || undefined,
+    priority: row.priority || 'NORMAL',
+    responseDueAt: row.response_due_at || undefined,
+    resolveDueAt: row.resolve_due_at || undefined,
+    userConfirmedAt: row.user_confirmed_at || undefined,
+    userConfirmationNote: row.user_confirmation_note || undefined,
+    closedAt: row.closed_at || undefined,
   }
 }
 
@@ -62,6 +79,7 @@ export const createRepair = (data: RepairCreatePayload) =>
     title: data.title,
     description: data.description,
     image_urls: data.imageUrls,
+    priority: data.priority || 'NORMAL',
   })
 
 export const uploadRepairImage = (file: File) => {
@@ -111,3 +129,22 @@ export const rejectRepair = (id: number, resolutionNote: string) =>
   request.post<unknown, void>(`/repair-reports/${id}/reject`, {
     resolution_note: resolutionNote,
   })
+
+export const confirmRepair = (id: number, confirmed: boolean, note?: string) =>
+  request.post<unknown, RepairReportVO>(`/repair-reports/${id}/confirm`, {
+    confirmed,
+    note,
+  })
+
+export interface RepairWorklogVO {
+  id: number
+  report_id: number
+  operator_id: number
+  status: string
+  content: string
+  image_urls?: string[] | null
+  created_at?: string
+}
+
+export const repairWorklogs = (id: number) =>
+  request.get<unknown, RepairWorklogVO[]>(`/repair-reports/${id}/worklogs`)

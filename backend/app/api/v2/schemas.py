@@ -87,6 +87,16 @@ class DeviceSummary(BaseModel):
     need_approval: bool
     max_reservation_days: int
     tags: list[str] | None = None
+    asset_code: str | None = None
+    serial_number: str | None = None
+    purchase_date: date | None = None
+    warranty_until: date | None = None
+    allow_external_loan: bool = False
+    risk_level: str = "STANDARD"
+    requires_safety_ack: bool = False
+    requires_qualification: bool = False
+    max_advance_days: int | None = None
+    qr_token: str | None = None
 
 
 class DeviceDetail(DeviceSummary):
@@ -97,14 +107,17 @@ class DeviceDetail(DeviceSummary):
 class DeviceDocumentData(BaseModel):
     id: int
     device_id: int
-    document_type: Literal["MANUAL", "SOP"]
+    document_type: Literal["MANUAL", "SOP", "SAFETY"]
     title: str
+    version: str = "1.0"
+    requires_ack: bool = False
     original_name: str
     content_type: str
     size_bytes: int
     url: str
     created_by: int
     created_at: datetime | None = None
+    published_at: datetime | None = None
 
 
 class RecommendationData(BaseModel):
@@ -148,6 +161,13 @@ class ReservationData(BaseModel):
     reject_reason: str | None = None
     inspection_condition: str | None = None
     inspection_note: str | None = None
+    device_asset_code: str | None = None
+    device_lab_name: str | None = None
+    requires_handover: bool = False
+    handover_status: str = "NOT_REQUIRED"
+    safety_required: bool = False
+    safety_acknowledged: bool = False
+    safety_document_version: str | None = None
 
 
 class ReservationPreflightData(BaseModel):
@@ -156,6 +176,11 @@ class ReservationPreflightData(BaseModel):
     available_dates: list[date]
     conflicts: list[ReservationConflict]
     all_available: bool
+    safety_required: bool = False
+    safety_acknowledged: bool = False
+    qualification_required: bool = False
+    qualification_approved: bool = False
+    safety_document_version: str | None = None
 
 
 class ReservationCreateData(BaseModel):
@@ -195,6 +220,42 @@ class TransitionRequest(BaseModel):
 class ReturnInspectionRequest(BaseModel):
     condition: Literal["NORMAL", "DAMAGED", "MISSING"] = "NORMAL"
     note: str | None = Field(default=None, max_length=1000)
+    qr_token: str | None = Field(default=None, min_length=8, max_length=96)
+
+
+class HandoverRequest(BaseModel):
+    condition: Literal["NORMAL", "DAMAGED", "MISSING"] = "NORMAL"
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class DeviceScanRequest(BaseModel):
+    qr_token: str | None = Field(default=None, min_length=8, max_length=96)
+
+
+class SafetyAcknowledgementRequest(BaseModel):
+    reservation_id: int | None = Field(default=None, gt=0)
+
+
+class QualificationSubmitRequest(BaseModel):
+    qualification_type: str = Field(default="TRAINING", min_length=2, max_length=80)
+    asset_id: int | None = Field(default=None, gt=0)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class QualificationReviewRequest(BaseModel):
+    status: Literal["APPROVED", "REJECTED"]
+    valid_until: date | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+
+class RepairWorklogCreateRequest(BaseModel):
+    content: str = Field(min_length=2, max_length=2000)
+    image_urls: list[str] | None = Field(default=None, max_length=8)
+
+
+class RepairConfirmationRequest(BaseModel):
+    confirmed: bool
+    note: str | None = Field(default=None, max_length=500)
 
 
 class WaitlistCreateRequest(BaseModel):
@@ -249,6 +310,72 @@ class RepairData(BaseModel):
     resolution_note: str | None = None
     created_at: datetime | None = None
     resolved_at: datetime | None = None
+    priority: str = "NORMAL"
+    response_due_at: datetime | None = None
+    resolve_due_at: datetime | None = None
+    user_confirmed_at: datetime | None = None
+    user_confirmation_note: str | None = None
+    closed_at: datetime | None = None
+
+
+class RepairWorklogData(BaseModel):
+    id: int
+    report_id: int
+    operator_id: int
+    status: str
+    content: str
+    image_urls: list[str] | None = None
+    created_at: datetime | None = None
+
+
+class HandoverData(BaseModel):
+    id: int
+    reservation_id: int
+    device_id: int
+    user_id: int
+    status: str
+    handover_by: int | None = None
+    handover_at: datetime | None = None
+    handover_condition: str | None = None
+    handover_note: str | None = None
+    returned_by: int | None = None
+    returned_at: datetime | None = None
+    return_condition: str | None = None
+    return_note: str | None = None
+
+
+class QualificationData(BaseModel):
+    id: int
+    device_id: int
+    user_id: int
+    status: str
+    qualification_type: str
+    asset_id: int | None = None
+    valid_until: date | None = None
+    reviewed_by: int | None = None
+    reviewed_at: datetime | None = None
+    note: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class QualificationUploadData(BaseModel):
+    asset_id: int
+    url: str
+    name: str
+    content_type: str
+    size_bytes: int
+
+
+class ExportTaskData(BaseModel):
+    id: int
+    export_type: str
+    status: str
+    row_count: int = 0
+    download_url: str | None = None
+    error: str | None = None
+    created_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class RepairPage(BaseModel):

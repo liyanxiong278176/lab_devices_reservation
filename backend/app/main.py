@@ -30,6 +30,7 @@ async def lifespan(app: FastAPI):
     worker = None
     if app.state.settings.environment != "test":
         from app.infrastructure.db.bootstrap import ensure_bootstrap_admin
+        from app.infrastructure.db.operational_bootstrap import ensure_operational_metadata
         from app.infrastructure.db.session import build_engine, build_session_factory
 
         engine = getattr(app.state, "db_engine", None)
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
             factory = build_session_factory(engine)
             app.state.session_factory = factory
         await ensure_bootstrap_admin(factory, app.state.settings)
+        await ensure_operational_metadata(factory, app.state.settings)
     if app.state.settings.enable_workers and app.state.settings.environment != "test":
         from app.infrastructure.tasks.worker import OutboxWorker
 

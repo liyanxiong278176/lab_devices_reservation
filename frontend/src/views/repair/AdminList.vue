@@ -42,7 +42,8 @@ const statusTabs: { label: string; value: RepairStatus | '' }[] = [
   { label: '全部', value: '' },
   { label: '待受理', value: 'PENDING' },
   { label: '处理中', value: 'PROCESSING' },
-  { label: '已解决', value: 'RESOLVED' },
+  { label: '待用户确认', value: 'RESOLVED' },
+  { label: '已完成', value: 'COMPLETED' },
   { label: '已驳回', value: 'REJECTED' },
 ]
 
@@ -111,7 +112,7 @@ async function onHandleConfirm() {
   try {
     if (handleMode.value === 'resolve') {
       await resolveRepair(handleTarget.value.id, handleNote.value.trim())
-      ElMessage.success('已标记解决')
+      ElMessage.success('已标记解决，等待用户确认')
     } else {
       await rejectRepair(handleTarget.value.id, handleNote.value.trim())
       ElMessage.success('已驳回')
@@ -136,9 +137,13 @@ function statusVariant(s: RepairStatus): 'warning' | 'accent' | 'success' | 'dan
     case 'PROCESSING':
       return 'accent'
     case 'RESOLVED':
-      return 'success'
+      return 'warning'
     case 'REJECTED':
       return 'danger'
+    case 'COMPLETED':
+      return 'success'
+    default:
+      return 'accent'
   }
 }
 
@@ -149,9 +154,11 @@ function statusLabel(s: RepairStatus): string {
     case 'PROCESSING':
       return '处理中'
     case 'RESOLVED':
-      return '已解决'
+      return '待用户确认'
     case 'REJECTED':
       return '已驳回'
+    case 'COMPLETED':
+      return '已完成'
     default:
       return s
   }

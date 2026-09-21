@@ -64,6 +64,11 @@ async function loadDevices() {
   }
 }
 
+function deviceOptionLabel(device: DeviceVO): string {
+  const location = device.labName ? ` · ${device.labName}` : ''
+  return `#${device.id} · ${device.name}${location}`
+}
+
 function onFilesChange(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files || [])
@@ -179,7 +184,7 @@ onMounted(loadDevices)
               <el-option
                 v-for="d in devices"
                 :key="d.id"
-                :label="`${d.name}${d.labName ? ' · ' + d.labName : ''}`"
+                :label="deviceOptionLabel(d)"
                 :value="d.id"
               />
             </el-select>

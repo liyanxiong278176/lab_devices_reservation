@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,8 +28,10 @@ ALLOWED_DOCUMENTS = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
+    "text/markdown": ".md",
+    "text/plain": ".txt",
 }
-DOCUMENT_TYPES = {"MANUAL", "SOP"}
+DOCUMENT_TYPES = {"MANUAL", "SOP", "SAFETY"}
 
 
 def _upload_root(request: Request) -> Path:
@@ -44,6 +47,8 @@ def _signature_matches(content_type: str, content: bytes) -> bool:
         return content.startswith(b"\xff\xd8\xff")
     if content_type == "image/png":
         return content.startswith(b"\x89PNG\r\n\x1a\n")
+    if content_type in {"text/markdown", "text/plain"}:
+        return bool(content.strip())
     return content.startswith(b"RIFF") and content[8:12] == b"WEBP"
 
 
@@ -54,12 +59,15 @@ def _data(request: Request, document: DeviceDocument) -> DeviceDocumentData:
         device_id=document.device_id,
         document_type=document.document_type,  # type: ignore[arg-type]
         title=document.title,
+        version=document.version,
+        requires_ack=document.requires_ack,
         original_name=asset.original_name,
         content_type=asset.content_type,
         size_bytes=asset.size_bytes,
         url=f"{request.app.state.settings.api_prefix}/device-documents/{asset.asset_token}",
         created_by=document.created_by,
         created_at=document.created_at,
+        published_at=document.published_at,
     )
 
 
@@ -118,6 +126,8 @@ async def upload_device_document(
     request: Request,
     document_type: str = Form(...),
     title: str = Form(...),
+    version: str = Form(default="1.0"),
+    requires_ack: bool = Form(default=False),
     file: UploadFile = File(...),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
@@ -127,6 +137,9 @@ async def upload_device_document(
     normalized_title = title.strip()
     if not 2 <= len(normalized_title) <= 200:
         raise ApiError("DOCUMENT_TITLE_INVALID", "文档标题长度必须为 2 到 200 个字符", 422)
+    normalized_version = version.strip()
+    if not 1 <= len(normalized_version) <= 40:
+        raise ApiError("DOCUMENT_VERSION_INVALID", "文档版本不能为空且不能超过 40 个字符", 422)
     service = ReservationService(session, principal)
     device = await service._load_device(device_id)
     if not await service._can_manage_device(device):
@@ -135,7 +148,7 @@ async def upload_device_document(
     content_type = (file.content_type or "").lower()
     suffix = ALLOWED_DOCUMENTS.get(content_type)
     if suffix is None:
-        raise ApiError("DOCUMENT_TYPE_INVALID", "只支持 PDF、JPG、PNG 或 WebP 文档", 422)
+        raise ApiError("DOCUMENT_TYPE_INVALID", "只支持 PDF、JPG、PNG、WebP 或 Markdown 文档", 422)
     max_bytes = int(request.app.state.settings.upload_max_bytes)
     content = await file.read(max_bytes + 1)
     if len(content) > max_bytes:
@@ -162,8 +175,20 @@ async def upload_device_document(
         college_id=device.college_id,
         document_type=document_type,
         title=normalized_title,
+        version=normalized_version,
+        requires_ack=requires_ack,
         created_by=principal.user_id,
+        published_at=datetime.now(UTC).replace(tzinfo=None),
         asset=asset,
+    )
+    await session.execute(
+        update(DeviceDocument)
+        .where(
+            DeviceDocument.device_id == device.id,
+            DeviceDocument.document_type == document_type,
+            DeviceDocument.active.is_(True),
+        )
+        .values(active=False)
     )
     session.add(document)
     try:

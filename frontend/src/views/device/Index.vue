@@ -175,7 +175,7 @@ onMounted(load)
               <Cpu />
               <span>{{ row.categoryName || 'LAB DEVICE' }}</span>
             </div>
-            <span class="device-card__id">设备 {{ String(row.id).padStart(2, '0') }}</span>
+            <span class="device-card__id">{{ row.assetCode || `设备 ${String(row.id).padStart(2, '0')}` }}</span>
           </div>
           <div class="device-card__top">
             <StatusDot :status="row.status" :label="true" />
@@ -188,8 +188,8 @@ onMounted(load)
           </div>
 
           <h3 class="device-card__title">
-            <span class="device-card__brand">{{ row.brand || '未填品牌' }}</span>
-            <span class="device-card__model">{{ row.model || row.name }}</span>
+            <span class="device-card__brand">{{ row.name }}</span>
+            <span class="device-card__model">{{ [row.brand, row.model].filter(Boolean).join(' · ') || '设备详情' }}</span>
           </h3>
 
           <p class="device-card__specs">{{ row.specs || '暂无规格信息' }}</p>

@@ -23,6 +23,16 @@ export interface DeviceVO {
   pricePerHour?: number | string
   tags?: string[]
   description?: string
+  assetCode?: string
+  serialNumber?: string
+  purchaseDate?: string
+  warrantyUntil?: string
+  allowExternalLoan?: boolean
+  riskLevel?: 'STANDARD' | 'HIGH' | 'CRITICAL' | string
+  requiresSafetyAck?: boolean
+  requiresQualification?: boolean
+  maxAdvanceDays?: number
+  qrToken?: string
   createdAt?: string
   updatedAt?: string
 }
@@ -30,14 +40,40 @@ export interface DeviceVO {
 export interface DeviceDocumentVO {
   id: number
   deviceId: number
-  documentType: 'MANUAL' | 'SOP'
+  documentType: 'MANUAL' | 'SOP' | 'SAFETY'
   title: string
+  version: string
+  requiresAck: boolean
   originalName: string
   contentType: string
   sizeBytes: number
   url: string
   createdBy: number
   createdAt?: string
+  publishedAt?: string
+}
+
+export interface DeviceAccessVO {
+  safetyRequired: boolean
+  safetyAcknowledged: boolean
+  qualificationRequired: boolean
+  qualificationApproved: boolean
+  safetyDocumentVersion?: string | null
+}
+
+export interface QualificationVO {
+  id: number
+  deviceId: number
+  userId: number
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | string
+  qualificationType: string
+  assetId?: number | null
+  validUntil?: string | null
+  reviewedBy?: number | null
+  reviewedAt?: string | null
+  note?: string | null
+  createdAt?: string
+  updatedAt?: string
 }
 
 /** 后端设备日历项。 */

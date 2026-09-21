@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v2.schemas import (
     ApprovalRequest,
+    DeviceScanRequest,
     ReservationCreateData,
     ReservationData,
     ReservationPage,
@@ -38,6 +39,8 @@ def _service(request: Request, session: AsyncSession, principal: Principal) -> R
         user_days_limit=settings.reservation_user_days_limit,
         credit_block_threshold=settings.credit_block_threshold,
         credit_block_days=settings.credit_block_days,
+        advance_days=settings.reservation_advance_days,
+        manager_advance_days=settings.reservation_manager_advance_days,
     )
 
 
@@ -123,6 +126,26 @@ async def my_reservations(
     )
 
 
+@router.get("/reservations/handovers", response_model=ApiResponse[ReservationPage])
+async def pending_handovers(
+    request: Request,
+    status: str = Query(default="PENDING", max_length=20),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    cursor: int | None = Query(default=None, ge=1),
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[ReservationPage]:
+    return ApiResponse.ok(
+        await _service(request, session, principal).pending_handovers(
+            status=status,
+            page=page,
+            page_size=page_size,
+            cursor=cursor,
+        )
+    )
+
+
 @router.get("/reservations/{reservation_id}", response_model=ApiResponse[ReservationData])
 async def reservation_detail(
     reservation_id: int,
@@ -149,10 +172,16 @@ async def cancel_reservation(
 async def check_in(
     reservation_id: int,
     request: Request,
+    payload: DeviceScanRequest | None = Body(default=None),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationData]:
-    return ApiResponse.ok(await _service(request, session, principal).check_in(reservation_id))
+    return ApiResponse.ok(
+        await _service(request, session, principal).check_in(
+            reservation_id,
+            qr_token=payload.qr_token if payload else None,
+        )
+    )
 
 
 @router.post("/reservations/{reservation_id}/return", response_model=ApiResponse[ReservationData])
@@ -169,6 +198,49 @@ async def return_device(
             reservation_id,
             condition=inspection.condition,
             note=inspection.note,
+            qr_token=inspection.qr_token,
+        )
+    )
+
+
+@router.post(
+    "/reservations/{reservation_id}/handover",
+    response_model=ApiResponse[ReservationData],
+)
+async def handover_reservation(
+    reservation_id: int,
+    request: Request,
+    payload: ReturnInspectionRequest | None = Body(default=None),
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[ReservationData]:
+    data = payload or ReturnInspectionRequest()
+    return ApiResponse.ok(
+        await _service(request, session, principal).handover(
+            reservation_id,
+            condition=data.condition,
+            note=data.note,
+        )
+    )
+
+
+@router.post(
+    "/reservations/{reservation_id}/accept-return",
+    response_model=ApiResponse[ReservationData],
+)
+async def accept_return(
+    reservation_id: int,
+    request: Request,
+    payload: ReturnInspectionRequest | None = Body(default=None),
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[ReservationData]:
+    data = payload or ReturnInspectionRequest()
+    return ApiResponse.ok(
+        await _service(request, session, principal).accept_return(
+            reservation_id,
+            condition=data.condition,
+            note=data.note,
         )
     )
 

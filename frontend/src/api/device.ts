@@ -24,6 +24,16 @@ interface V2Device {
   max_reservation_days: number
   tags?: string[] | null
   description?: string | null
+  asset_code?: string | null
+  serial_number?: string | null
+  purchase_date?: string | null
+  warranty_until?: string | null
+  allow_external_loan?: boolean
+  risk_level?: string
+  requires_safety_ack?: boolean
+  requires_qualification?: boolean
+  max_advance_days?: number | null
+  qr_token?: string | null
 }
 
 interface V2DevicePage {
@@ -60,6 +70,16 @@ function mapDevice(item: V2Device): DeviceVO {
     maxReservationHours: item.max_reservation_days * 24,
     tags: item.tags || undefined,
     description: item.description || undefined,
+    assetCode: item.asset_code || undefined,
+    serialNumber: item.serial_number || undefined,
+    purchaseDate: item.purchase_date || undefined,
+    warrantyUntil: item.warranty_until || undefined,
+    allowExternalLoan: Boolean(item.allow_external_loan),
+    riskLevel: item.risk_level || 'STANDARD',
+    requiresSafetyAck: Boolean(item.requires_safety_ack),
+    requiresQualification: Boolean(item.requires_qualification),
+    maxAdvanceDays: item.max_advance_days ?? undefined,
+    qrToken: item.qr_token || undefined,
   }
 }
 
@@ -146,6 +166,15 @@ export const createDevice = (data: Record<string, unknown>) =>
     need_approval: Boolean(data.needApproval),
     max_reservation_days: data.maxReservationDays || 8,
     tags: data.tags,
+    asset_code: data.assetCode,
+    serial_number: data.serialNumber,
+    purchase_date: data.purchaseDate,
+    warranty_until: data.warrantyUntil,
+    allow_external_loan: Boolean(data.allowExternalLoan),
+    risk_level: data.riskLevel || 'STANDARD',
+    requires_safety_ack: Boolean(data.requiresSafetyAck),
+    requires_qualification: Boolean(data.requiresQualification),
+    max_advance_days: data.maxAdvanceDays,
   })
 
 export const updateDevice = (id: number, data: Record<string, unknown>) =>
@@ -161,6 +190,15 @@ export const updateDevice = (id: number, data: Record<string, unknown>) =>
     need_approval: Boolean(data.needApproval),
     max_reservation_days: data.maxReservationDays || 8,
     tags: data.tags,
+    asset_code: data.assetCode,
+    serial_number: data.serialNumber,
+    purchase_date: data.purchaseDate,
+    warranty_until: data.warrantyUntil,
+    allow_external_loan: Boolean(data.allowExternalLoan),
+    risk_level: data.riskLevel || 'STANDARD',
+    requires_safety_ack: Boolean(data.requiresSafetyAck),
+    requires_qualification: Boolean(data.requiresQualification),
+    max_advance_days: data.maxAdvanceDays,
   })
 
 export const deleteDevice = (id: number) =>
@@ -173,14 +211,17 @@ export const patchDeviceStatus = (id: number, status: string) =>
 interface V2DeviceDocument {
   id: number
   device_id: number
-  document_type: 'MANUAL' | 'SOP'
+  document_type: 'MANUAL' | 'SOP' | 'SAFETY'
   title: string
+  version: string
+  requires_ack: boolean
   original_name: string
   content_type: string
   size_bytes: number
   url: string
   created_by: number
   created_at?: string
+  published_at?: string | null
 }
 
 function mapDocument(row: V2DeviceDocument): DeviceDocumentVO {
@@ -189,12 +230,15 @@ function mapDocument(row: V2DeviceDocument): DeviceDocumentVO {
     deviceId: row.device_id,
     documentType: row.document_type,
     title: row.title,
+    version: row.version || '1.0',
+    requiresAck: Boolean(row.requires_ack),
     originalName: row.original_name,
     contentType: row.content_type,
     sizeBytes: row.size_bytes,
     url: row.url,
     createdBy: row.created_by,
     createdAt: row.created_at,
+    publishedAt: row.published_at || undefined,
   }
 }
 
@@ -205,11 +249,19 @@ export const listDeviceDocuments = async (deviceId: number): Promise<DeviceDocum
 
 export const uploadDeviceDocument = async (
   deviceId: number,
-  payload: { documentType: 'MANUAL' | 'SOP'; title: string; file: File },
+  payload: {
+    documentType: 'MANUAL' | 'SOP' | 'SAFETY'
+    title: string
+    version?: string
+    requiresAck?: boolean
+    file: File
+  },
 ) => {
   const body = new FormData()
   body.append('document_type', payload.documentType)
   body.append('title', payload.title)
+  body.append('version', payload.version || '1.0')
+  body.append('requires_ack', String(Boolean(payload.requiresAck)))
   body.append('file', payload.file)
   const row = await request.post<unknown, V2DeviceDocument>(`/devices/${deviceId}/documents`, body)
   return mapDocument(row)
@@ -227,3 +279,107 @@ export const downloadDeviceDocument = async (document: DeviceDocumentVO) => {
   anchor.click()
   URL.revokeObjectURL(url)
 }
+
+interface V2DeviceAccess {
+  safety_required: boolean
+  safety_acknowledged: boolean
+  qualification_required: boolean
+  qualification_approved: boolean
+  safety_document_version?: string | null
+}
+
+interface V2Qualification {
+  id: number
+  device_id: number
+  user_id: number
+  status: string
+  qualification_type: string
+  asset_id?: number | null
+  valid_until?: string | null
+  reviewed_by?: number | null
+  reviewed_at?: string | null
+  note?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+function mapAccess(row: V2DeviceAccess) {
+  return {
+    safetyRequired: Boolean(row.safety_required),
+    safetyAcknowledged: Boolean(row.safety_acknowledged),
+    qualificationRequired: Boolean(row.qualification_required),
+    qualificationApproved: Boolean(row.qualification_approved),
+    safetyDocumentVersion: row.safety_document_version || undefined,
+  }
+}
+
+function mapQualification(row: V2Qualification) {
+  return {
+    id: row.id,
+    deviceId: row.device_id,
+    userId: row.user_id,
+    status: row.status,
+    qualificationType: row.qualification_type,
+    assetId: row.asset_id ?? null,
+    validUntil: row.valid_until ?? null,
+    reviewedBy: row.reviewed_by ?? null,
+    reviewedAt: row.reviewed_at ?? null,
+    note: row.note ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export const listSafetyDocuments = (deviceId: number) =>
+  request.get<unknown, V2DeviceDocument[]>(`/devices/${deviceId}/safety-documents`).then((rows) => rows.map(mapDocument))
+
+export const getDeviceAccess = (deviceId: number) =>
+  request.get<unknown, V2DeviceAccess>(`/devices/${deviceId}/access`).then(mapAccess)
+
+export const acknowledgeSafety = (deviceId: number, reservationId?: number) =>
+  request.post<unknown, { device_id: number; acknowledged: boolean; version: string }>(
+    `/devices/${deviceId}/safety-ack`,
+    reservationId ? { reservation_id: reservationId } : {},
+  )
+
+export const uploadQualificationMaterial = async (deviceId: number, file: File) => {
+  const body = new FormData()
+  body.append('file', file)
+  return request.post<unknown, { asset_id: number; url: string; name: string }>(
+    `/devices/${deviceId}/qualification-uploads`,
+    body,
+  )
+}
+
+export const submitQualification = (
+  deviceId: number,
+  payload: { qualificationType?: string; assetId?: number | null; note?: string },
+) =>
+  request
+    .post<unknown, V2Qualification>(`/devices/${deviceId}/qualifications`, {
+      qualification_type: payload.qualificationType || 'TRAINING',
+      asset_id: payload.assetId ?? undefined,
+      note: payload.note,
+    })
+    .then(mapQualification)
+
+export const myQualification = (deviceId: number) =>
+  request
+    .get<unknown, V2Qualification | null>(`/devices/${deviceId}/qualifications/mine`)
+    .then((row) => (row ? mapQualification(row) : null))
+
+export const listQualifications = (deviceId: number) =>
+  request.get<unknown, V2Qualification[]>(`/devices/${deviceId}/qualifications`).then((rows) => rows.map(mapQualification))
+
+export const reviewQualification = (
+  deviceId: number,
+  qualificationId: number,
+  payload: { status: 'APPROVED' | 'REJECTED'; validUntil?: string; note?: string },
+) =>
+  request
+    .patch<unknown, V2Qualification>(`/devices/${deviceId}/qualifications/${qualificationId}`, {
+      status: payload.status,
+      valid_until: payload.validUntil,
+      note: payload.note,
+    })
+    .then(mapQualification)

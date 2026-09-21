@@ -4,7 +4,15 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Calendar, Check, CircleClose, Cpu, Refresh } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
-import { deviceAvailability, getDevice } from '@/api/device'
+import {
+  acknowledgeSafety,
+  getDevice,
+  listSafetyDocuments,
+  myQualification,
+  submitQualification,
+  uploadQualificationMaterial,
+  deviceAvailability,
+} from '@/api/device'
 import { createReservation, preflightReservation } from '@/api/reservation'
 import type { DeviceAvailabilityVO, DeviceVO } from '@/types/device'
 import type { ReservationCreatePayload, ReservationPreflightVO } from '@/types/reservation'
@@ -12,6 +20,7 @@ import PageHeader from '@/components/ui/PageHeader.vue'
 import GradientButton from '@/components/ui/GradientButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
 import StatusDot from '@/components/ui/StatusDot.vue'
+import Tag from '@/components/ui/Tag.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,6 +32,12 @@ const device = ref<DeviceVO | null>(null)
 const preflight = ref<ReservationPreflightVO | null>(null)
 const availabilityDays = ref<DeviceAvailabilityVO[]>([])
 const availabilityLoading = ref(false)
+const safetyDocs = ref<import('@/types/device').DeviceDocumentVO[]>([])
+const qualification = ref<import('@/types/device').QualificationVO | null>(null)
+const safetyAcking = ref(false)
+const qualificationSubmitting = ref(false)
+const qualificationNote = ref('')
+const qualificationFile = ref<File | null>(null)
 const selectedDates = ref<[string, string] | null>(null)
 const form = ref({ purpose: '' })
 
@@ -39,7 +54,9 @@ const canSubmit = computed(() => Boolean(
   selectedDates.value &&
   form.value.purpose.trim() &&
   !preflightLoading.value &&
-  preflight.value?.all_available,
+  preflight.value?.all_available &&
+  (!preflight.value.safety_required || preflight.value.safety_acknowledged) &&
+  (!preflight.value.qualification_required || preflight.value.qualification_approved),
 ))
 
 function todayStart() {
@@ -105,8 +122,57 @@ async function runPreflight() {
       endDate: selectedDates.value[1],
       purpose: form.value.purpose || '设备使用',
     })
+    if (preflight.value.safety_required || preflight.value.qualification_required) {
+      const [docs, mine] = await Promise.all([
+        listSafetyDocuments(device.value.id),
+        myQualification(device.value.id),
+      ])
+      safetyDocs.value = docs
+      qualification.value = mine
+    } else {
+      safetyDocs.value = []
+      qualification.value = null
+    }
   } finally {
     preflightLoading.value = false
+  }
+}
+
+async function acknowledgeCurrentSafety() {
+  if (!device.value) return
+  safetyAcking.value = true
+  try {
+    await acknowledgeSafety(device.value.id)
+    await runPreflight()
+    ElMessage.success('已记录安全须知确认')
+  } finally {
+    safetyAcking.value = false
+  }
+}
+
+function onQualificationFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  qualificationFile.value = input.files?.[0] || null
+}
+
+async function applyQualification() {
+  if (!device.value) return
+  qualificationSubmitting.value = true
+  try {
+    let assetId: number | undefined
+    if (qualificationFile.value) {
+      const uploaded = await uploadQualificationMaterial(device.value.id, qualificationFile.value)
+      assetId = uploaded.asset_id
+    }
+    qualification.value = await submitQualification(device.value.id, {
+      assetId,
+      note: qualificationNote.value.trim() || undefined,
+    })
+    qualificationFile.value = null
+    qualificationNote.value = ''
+    ElMessage.success('资质申请已提交，请等待负责人审核')
+  } finally {
+    qualificationSubmitting.value = false
   }
 }
 
@@ -238,6 +304,59 @@ onMounted(loadDevice)
             </ul>
           </template>
         </section>
+
+        <section
+          v-if="preflight && (preflight.safety_required || preflight.qualification_required)"
+          class="access-card panel-card"
+        >
+          <div class="preflight-card__head">
+            <div><span class="eyebrow">ACCESS CONTROL</span><h3>使用前准入</h3></div>
+            <span class="access-card__state">{{ canSubmit ? '已满足' : '待处理' }}</span>
+          </div>
+          <div v-if="preflight.safety_required" class="access-card__item">
+            <div>
+              <strong>阅读并确认安全须知</strong>
+              <p>当前版本 {{ preflight.safety_document_version || '1.0' }}，确认后才可提交预约。</p>
+              <div class="access-card__docs">
+                <a v-for="doc in safetyDocs" :key="doc.id" :href="doc.url" target="_blank" rel="noreferrer">
+                  {{ doc.title }} · v{{ doc.version }}
+                </a>
+              </div>
+            </div>
+            <GradientButton
+              v-if="!preflight.safety_acknowledged"
+              size="small"
+              :loading="safetyAcking"
+              @click="acknowledgeCurrentSafety"
+            >
+              我已阅读并确认
+            </GradientButton>
+            <Tag v-else variant="success" size="small" round>已确认</Tag>
+          </div>
+          <div v-if="preflight.qualification_required" class="access-card__item">
+            <div>
+              <strong>使用资质审核</strong>
+              <p v-if="qualification?.status === 'PENDING'">申请已提交，等待实验室负责人审核。</p>
+              <p v-else-if="qualification?.status === 'REJECTED'">上次申请未通过，请补充说明后重新提交。</p>
+              <p v-else-if="qualification?.status === 'APPROVED'">资质有效期至 {{ qualification.validUntil || '长期有效' }}。</p>
+              <p v-else>该设备需要先提交培训或操作资质。</p>
+              <div v-if="qualification?.status !== 'APPROVED'" class="access-card__apply">
+                <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" @change="onQualificationFileChange" />
+                <el-input v-model="qualificationNote" maxlength="500" placeholder="培训记录、证书或申请说明（可选）" />
+              </div>
+            </div>
+            <GradientButton
+              v-if="qualification?.status !== 'PENDING' && qualification?.status !== 'APPROVED'"
+              size="small"
+              :loading="qualificationSubmitting"
+              @click="applyQualification"
+            >
+              提交资质申请
+            </GradientButton>
+            <Tag v-else-if="qualification?.status === 'PENDING'" variant="warning" size="small" round>审核中</Tag>
+            <Tag v-else variant="success" size="small" round>已通过</Tag>
+          </div>
+        </section>
       </section>
 
       <aside class="reserve-create-v2__aside">
@@ -274,6 +393,7 @@ onMounted(loadDevice)
 .reserve-form { padding: 20px; }.form-heading,.preflight-card__head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }.form-heading .date-note { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-family: var(--font-mono); font-size: 10px; }.date-note svg { width: 13px; }.reserve-form :deep(.el-form-item__label) { color: var(--text-secondary); font-size: 12px; }.date-picker { width: 100%; }.reserve-form :deep(.el-textarea__inner) { min-height: 100px; }
 .availability-calendar { display: grid; gap: 10px; margin: -4px 0 18px; padding: 12px; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 9px; opacity: 1; transition: opacity var(--d-fast) var(--ease-out-expo); }.availability-calendar.is-loading { opacity: .55; }.availability-calendar__head { display: flex; align-items: center; justify-content: space-between; color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; }.availability-calendar__legend { display: inline-flex; align-items: center; gap: 5px; color: var(--text-tertiary); font-size: 9px; }.availability-calendar__legend i { width: 6px; height: 6px; border-radius: 50%; }.availability-calendar__legend i.is-available { background: var(--status-success); }.availability-calendar__legend i.is-conflict { background: var(--status-danger); }.availability-calendar__days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }.availability-calendar__day { display: grid; gap: 2px; padding: 7px 3px; color: var(--text-tertiary); background: transparent; border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; font: inherit; }.availability-calendar__day strong { color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 500; }.availability-calendar__day small { font-size: 9px; }.availability-calendar__day.is-available { border-color: color-mix(in srgb, var(--status-success) 30%, transparent); }.availability-calendar__day.is-available small { color: var(--status-success); }.availability-calendar__day.is-conflict { cursor: not-allowed; opacity: .65; border-color: color-mix(in srgb, var(--status-danger) 30%, transparent); }.availability-calendar__day.is-conflict small { color: var(--status-danger); }.availability-calendar__day.is-selected { color: var(--text-on-accent); background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); }.availability-calendar__day.is-selected strong,.availability-calendar__day.is-selected small { color: var(--accent); }.availability-calendar__day:disabled { color: var(--text-tertiary); }.conflict-tip { margin-top: 12px; padding: 10px 12px; color: var(--status-danger); background: rgba(248,113,113,.06); border-left: 2px solid var(--status-danger); font-size: 11px; line-height: 1.5; }
 .preflight-card { padding: 20px; }.preflight-card__head h3,.summary-card h3 { margin: 5px 0 0; font-family: var(--font-display); font-size: 17px; }.preflight-card__head > .el-icon { color: var(--accent); }.preflight-empty { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 76px; color: var(--text-tertiary); font-size: 12px; }.preflight-empty svg { color: var(--accent); }.preflight-empty svg { color: var(--accent); }.preflight-summary { display: flex; gap: 16px; padding: 11px; background: var(--bg-elevated); border-radius: 8px; font-family: var(--font-mono); font-size: 11px; }.summary-good { color: var(--status-success); }.summary-bad { color: var(--status-danger); }.summary-good svg,.summary-bad svg { width: 13px; vertical-align: -2px; }.conflict-list { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }.conflict-list li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; color: var(--text-secondary); background: rgba(248,113,113,.05); border-left: 2px solid var(--status-danger); font-size: 11px; }.conflict-list strong { color: var(--text-primary); font-family: var(--font-mono); font-weight: 500; }.conflict-list span { color: var(--text-tertiary); }
+.access-card { display: grid; gap: 16px; padding: 20px; }.access-card__state { color: var(--status-warning); font-family: var(--font-mono); font-size: 11px; }.access-card__item { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 14px; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 10px; }.access-card__item strong { color: var(--text-primary); font-size: 13px; }.access-card__item p { margin: 6px 0 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.6; }.access-card__docs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }.access-card__docs a { color: var(--accent); font-size: 11px; text-decoration: none; }.access-card__docs a:hover { text-decoration: underline; }.access-card__apply { display: grid; gap: 8px; margin-top: 10px; }.access-card__apply input { max-width: 260px; color: var(--text-secondary); font-size: 11px; }
 .summary-card { position: sticky; top: 84px; padding: 20px; }.summary-card dl { display: grid; grid-template-columns: 70px 1fr; gap: 13px 8px; margin: 22px 0; font-size: 12px; }.summary-card dt { color: var(--text-tertiary); }.summary-card dd { margin: 0; color: var(--text-primary); text-align: right; }.summary-card__rule { height: 1px; background: var(--border-subtle); }.summary-card__hint { color: var(--text-tertiary); font-size: 11px; line-height: 1.6; }.submit-button,.cancel-button { width: 100%; margin-top: 10px; }.cancel-button { justify-content: center; }
 @media (max-width: 900px) { .reserve-create-v2__grid { grid-template-columns: 1fr; }.summary-card { position: static; } }
 @media (max-width: 560px) { .booking-steps { grid-template-columns: 1fr; gap: 8px; padding-bottom: 12px; }.booking-step::after { display: none; }.booking-step strong { background: transparent; }.preflight-options { flex-direction: column; } }

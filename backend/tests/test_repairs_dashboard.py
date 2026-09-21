@@ -55,8 +55,17 @@ async def test_repair_scope_and_lifecycle(seeded) -> None:
         assert resolved.resolution_note == "更换电源模块后恢复正常"
 
     async with factory() as session:
+        confirmed = await RepairService(session, principal(student1, "STUDENT")).confirm(
+            created.id,
+            confirmed=True,
+            note="用户现场确认设备已恢复正常",
+        )
+        assert confirmed.status == "COMPLETED"
+        assert confirmed.user_confirmed_at is not None
+
+    async with factory() as session:
         report = await session.scalar(select(RepairReport).where(RepairReport.id == created.id))
-        assert report is not None and report.status == "RESOLVED"
+        assert report is not None and report.status == "COMPLETED"
 
 
 @pytest.mark.asyncio

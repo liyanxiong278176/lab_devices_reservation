@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     upload_dir: str = ".data/uploads"
     upload_max_bytes: int = 5 * 1024 * 1024
     reservation_max_days: int = 31
+    reservation_advance_days: int = 30
+    reservation_manager_advance_days: int = 90
     reservation_lock_ttl_seconds: int = 8
     reservation_lock_wait_seconds: float = 2.0
     reservation_lock_poll_seconds: float = 0.05
@@ -67,6 +69,11 @@ class Settings(BaseSettings):
     rate_limit_reservation_refill_per_second: float = 10 / 60
     rate_limit_repair_capacity: int = 10
     rate_limit_repair_refill_per_second: float = 10 / 60
+    repair_sla_days: dict[str, int] = Field(
+        default_factory=lambda: {"NORMAL": 3, "IMPORTANT": 2, "URGENT": 1}
+    )
+    repair_user_confirmation_days: int = 3
+    export_sync_row_limit: int = 1000
     recommend_cache_ttl_seconds: int = 300
     ai_provider: str = "openai"
     ai_model: str = "gpt-4o-mini"

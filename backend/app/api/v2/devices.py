@@ -1,6 +1,9 @@
+import secrets
+from datetime import UTC, date, datetime
+
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -22,8 +25,10 @@ from app.infrastructure.db.models import (
     Device,
     DeviceCategory,
     Lab,
+    OutboxTask,
     RepairReport,
     Reservation,
+    ReservationItem,
 )
 from app.infrastructure.db.session import get_db
 
@@ -42,6 +47,15 @@ class DeviceCreateRequest(BaseModel):
     need_approval: bool = False
     max_reservation_days: int = Field(default=8, ge=1, le=31)
     tags: list[str] | None = None
+    asset_code: str | None = Field(default=None, min_length=2, max_length=80)
+    serial_number: str | None = Field(default=None, max_length=120)
+    purchase_date: date | None = None
+    warranty_until: date | None = None
+    allow_external_loan: bool = False
+    risk_level: str = Field(default="STANDARD", pattern="^(STANDARD|HIGH|CRITICAL)$")
+    requires_safety_ack: bool = False
+    requires_qualification: bool = False
+    max_advance_days: int | None = Field(default=None, ge=1, le=365)
 
 
 class DeviceUpdateRequest(DeviceCreateRequest):
@@ -165,6 +179,16 @@ async def create_device(
         need_approval=payload.need_approval,
         max_reservation_days=payload.max_reservation_days,
         tags=payload.tags,
+        asset_code=payload.asset_code.strip() if payload.asset_code else None,
+        serial_number=payload.serial_number.strip() if payload.serial_number else None,
+        purchase_date=payload.purchase_date,
+        warranty_until=payload.warranty_until,
+        allow_external_loan=payload.allow_external_loan,
+        risk_level=payload.risk_level,
+        requires_safety_ack=payload.requires_safety_ack,
+        requires_qualification=payload.requires_qualification,
+        max_advance_days=payload.max_advance_days,
+        qr_token=secrets.token_urlsafe(48),
         status="IDLE",
     )
     session.add(device)
@@ -199,6 +223,16 @@ async def create_device(
             need_approval=device.need_approval,
             max_reservation_days=device.max_reservation_days,
             tags=device.tags,
+            asset_code=device.asset_code,
+            serial_number=device.serial_number,
+            purchase_date=device.purchase_date,
+            warranty_until=device.warranty_until,
+            allow_external_loan=device.allow_external_loan,
+            risk_level=device.risk_level,
+            requires_safety_ack=device.requires_safety_ack,
+            requires_qualification=device.requires_qualification,
+            max_advance_days=device.max_advance_days,
+            qr_token=device.qr_token,
             category_name=None,
         )
     )
@@ -248,6 +282,17 @@ async def update_device(
     device.need_approval = payload.need_approval
     device.max_reservation_days = payload.max_reservation_days
     device.tags = payload.tags
+    device.asset_code = payload.asset_code.strip() if payload.asset_code else None
+    device.serial_number = payload.serial_number.strip() if payload.serial_number else None
+    device.purchase_date = payload.purchase_date
+    device.warranty_until = payload.warranty_until
+    device.allow_external_loan = payload.allow_external_loan
+    device.risk_level = payload.risk_level
+    device.requires_safety_ack = payload.requires_safety_ack
+    device.requires_qualification = payload.requires_qualification
+    device.max_advance_days = payload.max_advance_days
+    if not device.qr_token:
+        device.qr_token = secrets.token_urlsafe(48)
     append_audit(
         session,
         user_id=principal.user_id,
@@ -278,7 +323,7 @@ async def delete_device(
         await session.scalar(
             select(func.count(Reservation.id)).where(
                 Reservation.device_id == device_id,
-                Reservation.status.in_(("PENDING", "APPROVED", "IN_USE")),
+                Reservation.status.in_(("PENDING", "APPROVED", "IN_USE", "RETURN_PENDING")),
             )
         )
         or 0
@@ -330,29 +375,83 @@ async def update_device_status(
         )
         if open_repairs:
             raise ApiError("DEVICE_HAS_OPEN_REPAIR", "存在未完成报修，不能恢复为空闲", 409)
-    if payload.status in {"DISABLED", "RETIRED"}:
-        active_reservations = int(
-            await session.scalar(
-                select(func.count(Reservation.id)).where(
-                    Reservation.device_id == device_id,
-                    Reservation.status.in_(("PENDING", "APPROVED", "IN_USE")),
-                )
-            )
-            or 0
-        )
-        if active_reservations:
-            raise ApiError(
-                "DEVICE_HAS_ACTIVE_RESERVATIONS",
-                "设备仍有有效预约，不能停用或报废",
-                409,
-            )
-    change_device_status(
+    changed = change_device_status(
         session,
         device,
         payload.status,
         operator_id=principal.user_id,
         reason=payload.reason,
     )
+    if changed and payload.status in {"MAINTENANCE", "DISABLED", "OFFLINE", "RETIRED"}:
+        pending = list(
+            (
+                await session.scalars(
+                    select(Reservation).where(
+                        Reservation.device_id == device.id,
+                        Reservation.status == "PENDING",
+                    )
+                )
+            ).all()
+        )
+        for reservation in pending:
+            reservation.status = "REJECTED"
+            reservation.reject_reason = f"设备已进入{payload.status}状态，暂不可预约"
+            await session.execute(
+                delete(ReservationItem).where(
+                    ReservationItem.reservation_id == reservation.id
+                )
+            )
+            session.add(
+                OutboxTask(
+                    task_key=f"notification:reservation:{reservation.id}:device-status-{payload.status.lower()}",
+                    task_type="NOTIFICATION",
+                    aggregate_key=f"reservation:{reservation.id}",
+                    college_id=reservation.college_id,
+                    payload={
+                        "user_id": reservation.user_id,
+                        "college_id": reservation.college_id,
+                        "type": "RESERVATION_UPDATE",
+                        "title": "预约已驳回",
+                        "content": reservation.reject_reason,
+                        "related_id": reservation.id,
+                        "related_type": "RESERVATION",
+                    },
+                    execute_at=datetime.now(UTC).replace(tzinfo=None),
+                )
+            )
+        approved = list(
+            (
+                await session.scalars(
+                    select(Reservation).where(
+                        Reservation.device_id == device.id,
+                        Reservation.status == "APPROVED",
+                        Reservation.start_date >= date.today(),
+                    )
+                )
+            ).all()
+        )
+        for reservation in approved:
+            session.add(
+                OutboxTask(
+                    task_key=f"notification:reservation:{reservation.id}:device-unavailable-{payload.status.lower()}",
+                    task_type="NOTIFICATION",
+                    aggregate_key=f"reservation:{reservation.id}",
+                    college_id=reservation.college_id,
+                    payload={
+                        "user_id": reservation.user_id,
+                        "college_id": reservation.college_id,
+                        "type": "RESERVATION_UPDATE",
+                        "title": "预约需要调整",
+                        "content": (
+                            f"设备“{device.name}”已进入{payload.status}状态，原预约暂不能使用，"
+                            "请联系负责人取消或更换设备。"
+                        ),
+                        "related_id": reservation.id,
+                        "related_type": "RESERVATION",
+                    },
+                    execute_at=datetime.now(UTC).replace(tzinfo=None),
+                )
+            )
     append_audit(
         session,
         user_id=principal.user_id,

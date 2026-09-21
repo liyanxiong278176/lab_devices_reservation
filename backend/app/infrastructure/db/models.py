@@ -150,6 +150,16 @@ class Device(TimestampMixin, Base):
     max_reservation_days: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[list[str] | None] = mapped_column(JSON)
+    asset_code: Mapped[str | None] = mapped_column(String(80), unique=True, index=True)
+    serial_number: Mapped[str | None] = mapped_column(String(120), index=True)
+    purchase_date: Mapped[date | None] = mapped_column(Date)
+    warranty_until: Mapped[date | None] = mapped_column(Date)
+    allow_external_loan: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(20), default="STANDARD", nullable=False)
+    requires_safety_ack: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    requires_qualification: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    max_advance_days: Mapped[int | None] = mapped_column(Integer)
+    qr_token: Mapped[str | None] = mapped_column(String(96), unique=True, index=True)
 
     lab: Mapped[Lab | None] = relationship(back_populates="devices")
     college: Mapped[College | None] = relationship(back_populates="devices")
@@ -161,6 +171,10 @@ class Device(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     documents: Mapped[list["DeviceDocument"]] = relationship(
+        back_populates="device",
+        cascade="all, delete-orphan",
+    )
+    handovers: Mapped[list["DeviceHandover"]] = relationship(
         back_populates="device",
         cascade="all, delete-orphan",
     )
@@ -191,6 +205,11 @@ class Reservation(TimestampMixin, Base):
     reject_reason: Mapped[str | None] = mapped_column(String(500))
     check_in_at: Mapped[datetime | None] = mapped_column(DateTime)
     check_out_at: Mapped[datetime | None] = mapped_column(DateTime)
+    handover_status: Mapped[str] = mapped_column(
+        String(24), default="NOT_REQUIRED", nullable=False
+    )
+    safety_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime)
+    safety_document_version: Mapped[str | None] = mapped_column(String(40))
 
     user: Mapped[User] = relationship(back_populates="reservations", foreign_keys=[user_id])
     device: Mapped[Device] = relationship(back_populates="reservations")
@@ -203,6 +222,11 @@ class Reservation(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     feedback: Mapped["ReservationFeedback | None"] = relationship(
+        back_populates="reservation",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    handover: Mapped["DeviceHandover | None"] = relationship(
         back_populates="reservation",
         uselist=False,
         cascade="all, delete-orphan",
@@ -451,12 +475,134 @@ class DeviceDocument(Base):
     )
     document_type: Mapped[str] = mapped_column(String(20), default="MANUAL")
     title: Mapped[str] = mapped_column(String(200))
+    version: Mapped[str] = mapped_column(String(40), default="1.0", nullable=False)
+    requires_ack: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     device: Mapped[Device] = relationship(back_populates="documents")
     asset: Mapped[UploadAsset] = relationship()
+
+
+class DeviceDocumentAcknowledgement(Base):
+    """Records which user acknowledged which published device document."""
+
+    __tablename__ = "v2_device_document_ack"
+    __table_args__ = (
+        UniqueConstraint("document_id", "user_id", name="uk_v2_device_document_ack_user"),
+        Index("idx_v2_device_document_ack_user", "user_id", "acknowledged_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("v2_device_document.id", ondelete="CASCADE"),
+        index=True,
+    )
+    device_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("device.id"), index=True)
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
+    reservation_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("reservation.id"))
+    document_version: Mapped[str] = mapped_column(String(40))
+    acknowledged_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DeviceQualification(TimestampMixin, Base):
+    """User qualification for a controlled or high-risk device."""
+
+    __tablename__ = "v2_device_qualification"
+    __table_args__ = (
+        UniqueConstraint("device_id", "user_id", name="uk_v2_device_qualification_user"),
+        Index("idx_v2_device_qualification_scope_status", "college_id", "status", "valid_until"),
+        Index("idx_v2_device_qualification_user_status", "user_id", "status", "valid_until"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    device_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("device.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False, index=True)
+    qualification_type: Mapped[str] = mapped_column(String(80), default="TRAINING")
+    asset_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("v2_upload_asset.id"))
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    reviewed_by: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    note: Mapped[str | None] = mapped_column(String(500))
+
+
+class DeviceHandover(TimestampMixin, Base):
+    """Physical handover and return evidence for an externally loaned device."""
+
+    __tablename__ = "v2_device_handover"
+    __table_args__ = (
+        UniqueConstraint("reservation_id", name="uk_v2_device_handover_reservation"),
+        Index("idx_v2_device_handover_device_status", "device_id", "status", "created_at"),
+        Index("idx_v2_device_handover_scope_status", "college_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    reservation_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("reservation.id", ondelete="CASCADE"),
+    )
+    device_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("device.id"), index=True)
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False, index=True)
+    handover_by: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    handover_at: Mapped[datetime | None] = mapped_column(DateTime)
+    handover_condition: Mapped[str | None] = mapped_column(String(20))
+    handover_note: Mapped[str | None] = mapped_column(String(1000))
+    returned_by: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime)
+    return_condition: Mapped[str | None] = mapped_column(String(20))
+    return_note: Mapped[str | None] = mapped_column(String(1000))
+
+    reservation: Mapped[Reservation] = relationship(back_populates="handover")
+    device: Mapped[Device] = relationship(back_populates="handovers")
+
+
+class RepairWorklog(Base):
+    """Append-only repair processing timeline entry."""
+
+    __tablename__ = "v2_repair_worklog"
+    __table_args__ = (Index("idx_v2_repair_worklog_report_created", "report_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    report_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("v2_repair_report.id", ondelete="CASCADE"),
+        index=True,
+    )
+    operator_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    status: Mapped[str] = mapped_column(String(24))
+    content: Mapped[str] = mapped_column(String(2000))
+    image_urls: Mapped[list[str] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ExportTask(TimestampMixin, Base):
+    """Durable asynchronous CSV/Excel export request."""
+
+    __tablename__ = "v2_export_task"
+    __table_args__ = (
+        Index("idx_v2_export_task_user_status_created", "requester_id", "status", "created_at"),
+        Index("idx_v2_export_task_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    requester_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
+    export_type: Mapped[str] = mapped_column(String(40))
+    filters: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False, index=True)
+    file_token: Mapped[str | None] = mapped_column(String(96), unique=True, index=True)
+    file_path: Mapped[str | None] = mapped_column(String(500))
+    row_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(String(1000))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class OutboxTask(Base):
@@ -529,13 +675,23 @@ class RepairReport(TimestampMixin, Base):
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(20), default="PENDING", index=True)
     handler_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    priority: Mapped[str] = mapped_column(String(20), default="NORMAL", nullable=False, index=True)
+    response_due_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    resolve_due_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     resolution_note: Mapped[str | None] = mapped_column(String(1000))
     taken_at: Mapped[datetime | None] = mapped_column(DateTime)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    user_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    user_confirmation_note: Mapped[str | None] = mapped_column(String(500))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     device: Mapped["Device"] = relationship(foreign_keys=[device_id])
     reporter: Mapped["User"] = relationship(foreign_keys=[reporter_id])
     handler: Mapped["User | None"] = relationship(foreign_keys=[handler_id])
+    worklogs: Mapped[list["RepairWorklog"]] = relationship(
+        cascade="all, delete-orphan",
+        primaryjoin="RepairReport.id == foreign(RepairWorklog.report_id)",
+    )
 
 
 class AiProviderConfig(TimestampMixin, Base):

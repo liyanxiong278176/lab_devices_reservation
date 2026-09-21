@@ -55,8 +55,10 @@ const calendar = ref<DeviceCalendarItemVO[]>([])
 const calendarLoading = ref(false)
 const documents = ref<DeviceDocumentVO[]>([])
 const documentDialogVisible = ref(false)
-const documentType = ref<'MANUAL' | 'SOP'>('MANUAL')
+const documentType = ref<'MANUAL' | 'SOP' | 'SAFETY'>('MANUAL')
 const documentTitle = ref('')
+const documentVersion = ref('1.0')
+const documentRequiresAck = ref(false)
 const documentFile = ref<File | null>(null)
 const documentUploading = ref(false)
 
@@ -86,11 +88,15 @@ const specRows = computed(() => {
   const d = device.value
   if (!d) return []
   return [
+    { label: '资产编号', value: d.assetCode || `设备 #${d.id}` },
+    { label: '序列号', value: d.serialNumber || '—' },
     { label: '品牌', value: d.brand || '—' },
     { label: '型号', value: d.model || '—' },
     { label: '实验室', value: d.labName || '—' },
     { label: '分类', value: d.categoryName || '—' },
     { label: '规格', value: d.specs || '—' },
+    { label: '风险等级', value: d.riskLevel || 'STANDARD' },
+    { label: '使用方式', value: d.allowExternalLoan ? '允许外借，需交接验收' : '实验室内使用' },
     { label: '最长预约', value: d.maxReservationDays != null ? `${d.maxReservationDays} 天` : '—' },
     { label: '审批要求', value: d.needApproval === 1 ? '需审批' : '免审批' },
   ]
@@ -155,6 +161,8 @@ function goRepair() {
 function openDocumentDialog() {
   documentType.value = 'MANUAL'
   documentTitle.value = ''
+  documentVersion.value = '1.0'
+  documentRequiresAck.value = false
   documentFile.value = null
   documentDialogVisible.value = true
 }
@@ -174,6 +182,8 @@ async function submitDocument() {
     const created = await uploadDeviceDocument(id.value, {
       documentType: documentType.value,
       title: documentTitle.value.trim(),
+      version: documentVersion.value.trim() || '1.0',
+      requiresAck: documentRequiresAck.value,
       file: documentFile.value,
     })
     documents.value.unshift(created)
@@ -232,7 +242,9 @@ async function joinWaitlistForDate(date: string) {
 }
 
 function documentTypeLabel(type: DeviceDocumentVO['documentType']): string {
-  return type === 'SOP' ? '操作规程' : '设备手册'
+  if (type === 'SOP') return '操作规程'
+  if (type === 'SAFETY') return '安全须知'
+  return '设备手册'
 }
 
 function formatBytes(value: number): string {
@@ -293,12 +305,12 @@ onMounted(async () => {
             <p class="device-detail__desc-text">{{ device.description }}</p>
           </div>
 
-          <section class="device-detail__documents" aria-label="设备手册与操作规程">
+          <section class="device-detail__documents" aria-label="设备文档与安全须知">
             <div class="device-detail__documents-head">
               <div>
                 <span class="eyebrow">DOCUMENTS</span>
-                <h3>设备手册与操作规程</h3>
-                <p>只展示当前学院可访问的已发布文档。</p>
+                <h3>设备文档与安全须知</h3>
+                <p>手册、操作规程和安全须知均按版本发布，预约高风险设备前请先阅读。</p>
               </div>
               <GhostButton v-permission="'device:manage'" size="small" @click="openDocumentDialog">
                 上传文档
@@ -317,7 +329,7 @@ onMounted(async () => {
                 </div>
               </article>
             </div>
-            <p v-else class="device-detail__documents-empty">暂无手册或操作规程。</p>
+            <p v-else class="device-detail__documents-empty">暂无设备文档。</p>
           </section>
         </Panel>
       </el-tab-pane>
@@ -381,18 +393,27 @@ onMounted(async () => {
           <el-radio-group v-model="documentType">
             <el-radio value="MANUAL">设备手册</el-radio>
             <el-radio value="SOP">操作规程</el-radio>
+            <el-radio value="SAFETY">安全须知</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="标题" required>
           <el-input v-model="documentTitle" maxlength="200" show-word-limit placeholder="例如：离心机日常操作规程" />
         </el-form-item>
+        <div class="device-detail__upload-row">
+          <el-form-item label="版本">
+            <el-input v-model="documentVersion" maxlength="24" placeholder="例如：1.0" />
+          </el-form-item>
+          <el-form-item label="需要阅读确认">
+            <el-switch v-model="documentRequiresAck" />
+          </el-form-item>
+        </div>
         <el-form-item label="文件" required>
           <input
             type="file"
-            accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
+            accept=".pdf,.md,.txt,.jpg,.jpeg,.png,.webp,application/pdf,text/markdown,text/plain,image/jpeg,image/png,image/webp"
             @change="onDocumentFileChange"
           />
-          <small class="device-detail__upload-hint">支持 PDF、JPG、PNG、WebP，大小不超过 5 MB。</small>
+          <small class="device-detail__upload-hint">支持 PDF、Markdown、TXT、JPG、PNG、WebP，大小不超过 5 MB。</small>
         </el-form-item>
       </el-form>
       <template #footer>

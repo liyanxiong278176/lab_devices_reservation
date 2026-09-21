@@ -27,6 +27,7 @@ import Tag from '@/components/ui/Tag.vue'
 import TextButton from '@/components/ui/TextButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import DeviceScanner from '@/components/DeviceScanner.vue'
 
 const router = useRouter()
 
@@ -45,6 +46,7 @@ const returnDialogVisible = ref(false)
 const returningRow = ref<ReservationVO | null>(null)
 const returnCondition = ref<'NORMAL' | 'DAMAGED' | 'MISSING'>('NORMAL')
 const returnNote = ref('')
+const returnQrToken = ref('')
 
 // SegmentedControl 选项:沿用既有 8 状态 + 全部,1:1 映射后端 status,
 // 不做多状态聚合(避免改 API 单状态契约 / 避免客户端过滤破坏分页)。
@@ -53,6 +55,7 @@ const tabs: { label: string; value: ReservationStatus | '' }[] = [
   { label: '待审批', value: 'PENDING' },
   { label: '已通过', value: 'APPROVED' },
   { label: '使用中', value: 'IN_USE' },
+  { label: '待验收', value: 'RETURN_PENDING' },
   { label: '已完成', value: 'COMPLETED' },
   { label: '已取消', value: 'CANCELLED' },
   { label: '已拒绝', value: 'REJECTED' },
@@ -142,7 +145,7 @@ function canCancel(row: ReservationVO): boolean {
 
 /** APPROVED 可签到(后端校验时间窗)。 */
 function canCheckIn(row: ReservationVO): boolean {
-  return row.status === 'APPROVED'
+  return row.status === 'APPROVED' && !row.requiresHandover
 }
 
 /** IN_USE 可归还。 */
@@ -185,6 +188,7 @@ async function onCheckOut(row: ReservationVO) {
   returningRow.value = row
   returnCondition.value = 'NORMAL'
   returnNote.value = ''
+  returnQrToken.value = ''
   returnDialogVisible.value = true
 }
 
@@ -195,6 +199,7 @@ async function submitReturn() {
     await checkOutReservation(row.id, {
       condition: returnCondition.value,
       note: returnNote.value.trim() || undefined,
+      qrToken: row.requiresHandover ? returnQrToken.value.trim() || undefined : undefined,
     })
     returnDialogVisible.value = false
     returningRow.value = null
@@ -290,8 +295,9 @@ onMounted(() => {
           <div class="mine__card-body">
             <div class="mine__card-row mine__card-row--device">
               <span class="mine__card-label">设备</span>
-                <span class="mine__card-value">{{ row.deviceName || `设备 #${row.deviceId}` }}</span>
+              <span class="mine__card-value">#{{ row.deviceAssetCode || row.deviceId }} · {{ row.deviceName || `设备 #${row.deviceId}` }}</span>
             </div>
+            <div v-if="row.deviceLabName" class="mine__card-location">{{ row.deviceLabName }}</div>
 
             <div class="mine__card-time">
               <div class="mine__card-time-row">
@@ -329,6 +335,9 @@ onMounted(() => {
               >
                 签到
               </GhostButton>
+              <Tag v-if="row.status === 'APPROVED' && row.requiresHandover" variant="warning" size="small" round>
+                等待管理员交接
+              </Tag>
               <GhostButton
                 v-if="canCheckOut(row)"
                 size="small"
@@ -390,6 +399,18 @@ onMounted(() => {
           maxlength="1000"
           show-word-limit
           placeholder="补充验收备注（可选）"
+        />
+        <el-input
+          v-if="returningRow?.requiresHandover"
+          v-model="returnQrToken"
+          maxlength="96"
+          placeholder="外借设备请填写设备 QR token（可由现场负责人提供）"
+        />
+        <DeviceScanner
+          v-if="returningRow?.requiresHandover"
+          v-model="returnQrToken"
+          label="扫码或手工输入"
+          hint="电脑浏览器支持摄像头时可直接扫描；没有摄像头时继续使用上面的输入框。"
         />
       </div>
       <template #footer>

@@ -24,6 +24,13 @@ interface V2Reservation {
   created_at?: string
   check_in_at?: string | null
   check_out_at?: string | null
+  device_asset_code?: string | null
+  device_lab_name?: string | null
+  requires_handover?: boolean
+  handover_status?: string | null
+  safety_required?: boolean
+  safety_acknowledged?: boolean
+  safety_document_version?: string | null
   reject_reason?: string | null
   inspection_condition?: 'NORMAL' | 'DAMAGED' | 'MISSING' | null
   inspection_note?: string | null
@@ -68,6 +75,13 @@ function mapReservation(item: V2Reservation): ReservationVO {
     rejectReason: item.reject_reason || undefined,
     inspectionCondition: item.inspection_condition || undefined,
     inspectionNote: item.inspection_note || undefined,
+    deviceAssetCode: item.device_asset_code || undefined,
+    deviceLabName: item.device_lab_name || undefined,
+    requiresHandover: Boolean(item.requires_handover),
+    handoverStatus: item.handover_status || 'NOT_REQUIRED',
+    safetyRequired: Boolean(item.safety_required),
+    safetyAcknowledged: Boolean(item.safety_acknowledged),
+    safetyDocumentVersion: item.safety_document_version || undefined,
   }
 }
 
@@ -103,13 +117,27 @@ export const preflightReservation = (data: ReservationCreatePayload) =>
 export const cancelReservation = (id: number) =>
   request.post<unknown, void>(`/reservations/${id}/cancel`)
 
-export const checkInReservation = (id: number) =>
-  request.post<unknown, void>(`/reservations/${id}/check-in`)
+export const checkInReservation = (id: number, qrToken?: string) =>
+  request.post<unknown, void>(`/reservations/${id}/check-in`, qrToken ? { qr_token: qrToken } : {})
 
 export const checkOutReservation = (
   id: number,
+  payload: { condition?: 'NORMAL' | 'DAMAGED' | 'MISSING'; note?: string; qrToken?: string } = {},
+) => request.post<unknown, void>(`/reservations/${id}/return`, {
+  condition: payload.condition,
+  note: payload.note,
+  qr_token: payload.qrToken,
+})
+
+export const handoverReservation = (
+  id: number,
   payload: { condition?: 'NORMAL' | 'DAMAGED' | 'MISSING'; note?: string } = {},
-) => request.post<unknown, void>(`/reservations/${id}/return`, payload)
+) => request.post<unknown, void>(`/reservations/${id}/handover`, payload)
+
+export const acceptReservationReturn = (
+  id: number,
+  payload: { condition?: 'NORMAL' | 'DAMAGED' | 'MISSING'; note?: string } = {},
+) => request.post<unknown, void>(`/reservations/${id}/accept-return`, payload)
 
 export const myReservations = async (q: ReservationQuery = {}): Promise<Page<ReservationVO>> => {
   const data = await request.get<unknown, V2ReservationPage>('/reservations/mine', {
@@ -198,3 +226,23 @@ export const myWaitlist = async () => {
 
 export const cancelWaitlist = (id: number) =>
   request.delete<unknown, void>(`/reservations/waitlist/${id}`)
+
+export const pendingHandovers = async (
+  status: 'PENDING' | 'RETURN_PENDING' = 'PENDING',
+  page = 1,
+  size = 20,
+  cursor?: number | null,
+): Promise<Page<ReservationVO>> => {
+  const data = await request.get<unknown, V2ReservationPage>('/reservations/handovers', {
+    params: { status, page, page_size: size, cursor: cursor || undefined },
+  })
+  return {
+    records: data.items.map(mapReservation),
+    total: data.total,
+    size: data.page_size,
+    current: data.page,
+    pages: Math.ceil(data.total / data.page_size),
+    nextCursor: data.next_cursor,
+    hasMore: data.has_more,
+  }
+}

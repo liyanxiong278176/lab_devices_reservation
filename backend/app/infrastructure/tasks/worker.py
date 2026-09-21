@@ -1,22 +1,31 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import logging
 import random
+import secrets
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
-from sqlalchemy import and_, delete, exists, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, update
+from sqlalchemy.orm import selectinload
 
-from app.application.lifecycle import append_audit
+from app.application.exports import export_rows
+from app.application.lifecycle import append_audit, change_device_status
+from app.auth.security import Principal
 from app.infrastructure.cache.cache import CacheService
 from app.infrastructure.cache.redis import get_redis_circuit, get_redis_for_app
 from app.infrastructure.db.models import (
     CreditEvent,
     Device,
+    ExportTask,
     Notification,
     OutboxTask,
+    RepairReport,
+    RepairWorklog,
     Reservation,
     ReservationBlackout,
     ReservationItem,
@@ -450,6 +459,183 @@ class OutboxWorker:
                     )
                 )
                 await session.commit()
+            return
+
+        if task_type == "REPAIR_AUTO_CLOSE":
+            report_id = int(payload["report_id"])
+            async with factory() as session:
+                report = await session.scalar(
+                    select(RepairReport).where(
+                        RepairReport.id == report_id,
+                        RepairReport.status == "RESOLVED",
+                    )
+                )
+                if report is None:
+                    return
+                now = utcnow_naive()
+                report.status = "COMPLETED"
+                report.user_confirmed_at = now
+                report.closed_at = now
+                report.user_confirmation_note = "用户在确认期限内未反馈，系统自动关闭"
+                session.add(
+                    RepairWorklog(
+                        report_id=report.id,
+                        operator_id=report.handler_id or report.reporter_id,
+                        status="COMPLETED",
+                        content="用户超时未反馈，系统自动关闭工单",
+                        created_at=now,
+                    )
+                )
+                other_open = int(
+                    await session.scalar(
+                        select(func.count(RepairReport.id)).where(
+                            RepairReport.device_id == report.device_id,
+                            RepairReport.status.in_(("PENDING", "PROCESSING", "RESOLVED")),
+                            RepairReport.id != report.id,
+                        )
+                    )
+                    or 0
+                )
+                device = await session.scalar(select(Device).where(Device.id == report.device_id))
+                if (
+                    device is not None
+                    and other_open == 0
+                    and device.status not in {"DISABLED", "OFFLINE", "RETIRED"}
+                ):
+                    change_device_status(
+                        session,
+                        device,
+                        "IDLE",
+                        operator_id=report.handler_id or report.reporter_id,
+                        reason="用户确认超时，系统自动关闭报修",
+                    )
+                append_audit(
+                    session,
+                    user_id=report.handler_id or report.reporter_id,
+                    college_id=report.college_id,
+                    action="REPAIR_AUTO_CLOSE",
+                    target_type="REPAIR",
+                    target_id=report.id,
+                )
+                session.add(
+                    OutboxTask(
+                        task_key=f"notification:repair:{report.id}:auto-closed",
+                        task_type="NOTIFICATION",
+                        aggregate_key=f"repair:{report.id}",
+                        college_id=report.college_id,
+                        payload={
+                            "user_id": report.reporter_id,
+                            "college_id": report.college_id,
+                            "type": "REPAIR_UPDATE",
+                            "title": "报修工单已自动关闭",
+                            "content": "在确认期限内未收到反馈，系统已自动完成工单。",
+                            "related_id": report.id,
+                            "related_type": "REPAIR",
+                        },
+                        execute_at=now,
+                    )
+                )
+                await session.commit()
+            return
+
+        if task_type == "EXPORT_GENERATE":
+            export_id = int(payload["export_id"])
+            async with factory() as session:
+                task = await session.scalar(select(ExportTask).where(ExportTask.id == export_id))
+                if task is None or task.status not in {"PENDING", "PROCESSING"}:
+                    return
+                task.status = "PROCESSING"
+                task.updated_at = utcnow_naive()
+                await session.commit()
+                task = await session.scalar(select(ExportTask).where(ExportTask.id == export_id))
+                if task is None:
+                    return
+                user = await session.scalar(
+                    select(User)
+                    .options(selectinload(User.roles))
+                    .where(User.id == task.requester_id)
+                )
+                if user is None:
+                    task.status = "FAILED"
+                    task.error = "导出发起人不存在"
+                    await session.commit()
+                    return
+                principal = Principal(
+                    user_id=user.id,
+                    username=user.username,
+                    college_id=user.college_id,
+                    roles=tuple(role.role_code for role in user.roles),
+                    token_type="access",
+                    token_id=f"export-{task.id}",
+                )
+                try:
+                    rows = await export_rows(
+                        session,
+                        principal,
+                        task.export_type,  # type: ignore[arg-type]
+                        task.filters or {},
+                    )
+                    root = Path(self.app.state.settings.upload_dir).resolve() / "exports"
+                    root.mkdir(parents=True, exist_ok=True)
+                    token = secrets.token_urlsafe(48)
+                    path = root / f"{token}.csv"
+                    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+                        if rows:
+                            writer = csv.DictWriter(
+                                handle,
+                                fieldnames=list(rows[0].keys()),
+                                extrasaction="ignore",
+                            )
+                            writer.writeheader()
+                            writer.writerows(rows)
+                        else:
+                            handle.write("暂无数据\n")
+                    now = utcnow_naive()
+                    task.status = "COMPLETED"
+                    task.file_token = token
+                    task.file_path = str(path)
+                    task.row_count = len(rows)
+                    task.completed_at = now
+                    task.updated_at = now
+                    append_audit(
+                        session,
+                        user_id=task.requester_id,
+                        college_id=task.college_id,
+                        action="REPORT_EXPORT_COMPLETE",
+                        target_type="EXPORT",
+                        target_id=task.id,
+                        detail={"row_count": len(rows)},
+                    )
+                    session.add(
+                        OutboxTask(
+                            task_key=f"notification:export:{task.id}:complete",
+                            task_type="NOTIFICATION",
+                            aggregate_key=f"export:{task.id}",
+                            college_id=task.college_id,
+                            payload={
+                                "user_id": task.requester_id,
+                                "college_id": task.college_id,
+                                "type": "REPORT_EXPORT",
+                                "title": "导出任务已完成",
+                                "content": f"{task.export_type} 数据已生成，共 {len(rows)} 条。",
+                                "related_id": task.id,
+                                "related_type": "EXPORT",
+                            },
+                            execute_at=now,
+                        )
+                    )
+                    await session.commit()
+                except Exception as exc:
+                    await session.rollback()
+                    task = await session.scalar(
+                        select(ExportTask).where(ExportTask.id == export_id)
+                    )
+                    if task is not None:
+                        task.status = "FAILED"
+                        task.error = str(exc)[:1000]
+                        task.updated_at = utcnow_naive()
+                        await session.commit()
+                    raise
             return
 
         if task_type == "CACHE_BUMP":

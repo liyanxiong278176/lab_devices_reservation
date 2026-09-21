@@ -26,6 +26,7 @@ class RepairCreateRequest(BaseModel):
     title: str = Field(min_length=2, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
     image_urls: list[str] | None = Field(default=None, max_length=6)
+    priority: str = Field(default="NORMAL", pattern="^(NORMAL|IMPORTANT|URGENT)$")
 
     @field_validator("image_urls")
     @classmethod
@@ -165,6 +166,7 @@ async def create_repair(
             title=payload.title,
             description=payload.description,
             image_urls=payload.image_urls,
+            priority=payload.priority,
         )
     )
 
@@ -243,3 +245,38 @@ async def reject_repair(
             payload.resolution_note,
         )
     )
+
+
+class RepairConfirmRequest(BaseModel):
+    confirmed: bool
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/repair-reports/{report_id}/confirm", response_model=ApiResponse[RepairData])
+async def confirm_repair(
+    report_id: int,
+    payload: RepairConfirmRequest,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[RepairData]:
+    return ApiResponse.ok(
+        await RepairService(session, principal, request.app).confirm(
+            report_id,
+            confirmed=payload.confirmed,
+            note=payload.note,
+        )
+    )
+
+
+@router.get(
+    "/repair-reports/{report_id}/worklogs",
+    response_model=ApiResponse[list[dict[str, object]]],
+)
+async def repair_worklogs(
+    report_id: int,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[dict[str, object]]]:
+    return ApiResponse.ok(await RepairService(session, principal, request.app).worklogs(report_id))

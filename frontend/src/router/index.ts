@@ -99,6 +99,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '设备管理', icon: 'Setting', roles: ['LAB_ADMIN', 'SYS_ADMIN'] },
       },
       {
+        path: 'handovers',
+        name: 'handovers',
+        component: () => import('@/views/handover/Index.vue'),
+        meta: { title: '设备交接', icon: 'Connection', roles: ['LAB_ADMIN', 'SYS_ADMIN'] },
+      },
+      {
+        path: 'reports',
+        name: 'reports',
+        component: () => import('@/views/reports/Index.vue'),
+        meta: { title: '运营报表', icon: 'DataAnalysis', roles: ['LAB_ADMIN', 'SYS_ADMIN'] },
+      },
+      {
         path: 'reservation-rules',
         name: 'reservation-rules',
         component: () => import('@/views/scheduling/Index.vue'),

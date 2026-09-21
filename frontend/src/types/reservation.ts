@@ -5,6 +5,7 @@ export type ReservationStatus =
   | 'PENDING'
   | 'APPROVED'
   | 'IN_USE'
+  | 'RETURN_PENDING'
   | 'COMPLETED'
   | 'CANCELLED'
   | 'REJECTED'
@@ -32,6 +33,13 @@ export interface ReservationVO {
   rejectReason?: string
   inspectionCondition?: 'NORMAL' | 'DAMAGED' | 'MISSING'
   inspectionNote?: string
+  deviceAssetCode?: string
+  deviceLabName?: string
+  requiresHandover?: boolean
+  handoverStatus?: string
+  safetyRequired?: boolean
+  safetyAcknowledged?: boolean
+  safetyDocumentVersion?: string
 }
 
 /** 创建自然日预约参数。 */
@@ -57,6 +65,11 @@ export interface ReservationPreflightVO {
   available_dates: string[]
   conflicts: ReservationConflictVO[]
   all_available: boolean
+  safety_required?: boolean
+  safety_acknowledged?: boolean
+  qualification_required?: boolean
+  qualification_approved?: boolean
+  safety_document_version?: string | null
 }
 
 export interface ReservationCreateResultVO {
