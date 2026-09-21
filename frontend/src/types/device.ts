@@ -27,6 +27,19 @@ export interface DeviceVO {
   updatedAt?: string
 }
 
+export interface DeviceDocumentVO {
+  id: number
+  deviceId: number
+  documentType: 'MANUAL' | 'SOP'
+  title: string
+  originalName: string
+  contentType: string
+  sizeBytes: number
+  url: string
+  createdBy: number
+  createdAt?: string
+}
+
 /** 后端设备日历项。 */
 export interface DeviceCalendarItemVO {
   /** ISO date: yyyy-MM-dd */

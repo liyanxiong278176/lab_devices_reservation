@@ -405,9 +405,9 @@ onMounted(load)
           请选择设备归还时的状态；如发现损坏或缺失，请填写处理备注。
         </p>
         <el-radio-group v-model="returnCondition">
-          <el-radio label="NORMAL">验收正常</el-radio>
-          <el-radio label="DAMAGED">发现损坏</el-radio>
-          <el-radio label="MISSING">设备缺失</el-radio>
+          <el-radio value="NORMAL">验收正常</el-radio>
+          <el-radio value="DAMAGED">发现损坏</el-radio>
+          <el-radio value="MISSING">设备缺失</el-radio>
         </el-radio-group>
         <el-input
           v-model="returnNote"

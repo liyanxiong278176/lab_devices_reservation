@@ -8,10 +8,18 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   server: {
     port: 5173,
+    // FastAPI 本地开发端口默认是 8000；可用 VITE_API_PROXY_TARGET 覆盖。
     proxy: {
-      // v2 FastAPI 单体服务；SSE 和原生 WebSocket 共用 /api 代理。
-      '/api': { target: 'http://localhost:8000', changeOrigin: true, ws: true },
-      '/ws': { target: 'http://localhost:8000', ws: true, changeOrigin: true },
+      '/api': {
+        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000',
+        changeOrigin: true,
+        ws: true,
+      },
+      '/ws': {
+        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000',
+        ws: true,
+        changeOrigin: true,
+      },
     },
   },
   test: {

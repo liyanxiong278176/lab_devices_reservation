@@ -4,6 +4,7 @@ from app.api.v2.ai import router as ai_router
 from app.api.v2.auth import router as auth_router
 from app.api.v2.catalog import router as catalog_router
 from app.api.v2.dashboard import router as dashboard_router
+from app.api.v2.device_documents import router as device_documents_router
 from app.api.v2.devices import router as devices_router
 from app.api.v2.feedback import router as feedback_router
 from app.api.v2.notifications import router as notifications_router
@@ -21,6 +22,7 @@ router.include_router(catalog_router, tags=["catalog"])
 router.include_router(dashboard_router, tags=["dashboard"])
 router.include_router(ai_router, tags=["ai"])
 router.include_router(devices_router, tags=["devices"])
+router.include_router(device_documents_router, tags=["device-documents"])
 router.include_router(notifications_router, tags=["notifications"])
 router.include_router(reservations_router, tags=["reservations"])
 router.include_router(feedback_router, tags=["feedback"])

@@ -94,6 +94,19 @@ class DeviceDetail(DeviceSummary):
     location: str | None = None
 
 
+class DeviceDocumentData(BaseModel):
+    id: int
+    device_id: int
+    document_type: Literal["MANUAL", "SOP"]
+    title: str
+    original_name: str
+    content_type: str
+    size_bytes: int
+    url: str
+    created_by: int
+    created_at: datetime | None = None
+
+
 class RecommendationData(BaseModel):
     device_id: int
     name: str

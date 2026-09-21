@@ -22,6 +22,7 @@ import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { ElNotification } from 'element-plus/es/components/notification/index'
 import { ElPagination } from 'element-plus/es/components/pagination/index'
 import { ElRadio } from 'element-plus/es/components/radio/index'
+import { ElRate } from 'element-plus/es/components/rate/index'
 import { ElRow } from 'element-plus/es/components/row/index'
 import { ElSelect } from 'element-plus/es/components/select/index'
 import { ElSwitch } from 'element-plus/es/components/switch/index'
@@ -107,6 +108,7 @@ app
   .use(ElMenu)
   .use(ElPagination)
   .use(ElRadio)
+  .use(ElRate)
   .use(ElRow)
   .use(ElSelect)
   .use(ElSwitch)

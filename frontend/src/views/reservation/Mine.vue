@@ -10,9 +10,12 @@ import {
   cancelReservation,
   checkInReservation,
   checkOutReservation,
+  cancelWaitlist,
+  myWaitlist,
   myReservations,
 } from '@/api/reservation'
 import type { ReservationQuery, ReservationStatus, ReservationVO } from '@/types/reservation'
+import type { WaitlistVO } from '@/api/reservation'
 import type { Page } from '@/types/common'
 import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import { reservationStatusTag } from '@/composables/useDeviceStatus'
@@ -37,6 +40,11 @@ const cursorPager = useCursorPageChain<ReservationVO>((cursor) => myReservations
   status: activeStatus.value,
   cursor,
 }))
+const waitlist = ref<WaitlistVO[]>([])
+const returnDialogVisible = ref(false)
+const returningRow = ref<ReservationVO | null>(null)
+const returnCondition = ref<'NORMAL' | 'DAMAGED' | 'MISSING'>('NORMAL')
+const returnNote = ref('')
 
 // SegmentedControl 选项:沿用既有 8 状态 + 全部,1:1 映射后端 status,
 // 不做多状态聚合(避免改 API 单状态契约 / 避免客户端过滤破坏分页)。
@@ -74,6 +82,33 @@ function onStatusChange(v: string | number) {
   query.value.page = 1
   cursorPager.reset()
   void load()
+}
+
+async function loadWaitlist() {
+  try {
+    waitlist.value = await myWaitlist()
+  } catch {
+    waitlist.value = []
+  }
+}
+
+async function onCancelWaitlist(row: WaitlistVO) {
+  try {
+    await ElMessageBox.confirm(`确认取消 ${row.reservationDate} 的候补申请？`, '取消候补', {
+      type: 'warning',
+      confirmButtonText: '确认取消',
+      cancelButtonText: '保留',
+    })
+  } catch {
+    return
+  }
+  try {
+    await cancelWaitlist(row.id)
+    waitlist.value = waitlist.value.filter((item) => item.id !== row.id)
+    ElMessage.success('候补申请已取消')
+  } catch {
+    // 拦截器已提示
+  }
 }
 
 function onPageChange(p: number) {
@@ -147,17 +182,22 @@ async function onCheckIn(row: ReservationVO) {
 }
 
 async function onCheckOut(row: ReservationVO) {
+  returningRow.value = row
+  returnCondition.value = 'NORMAL'
+  returnNote.value = ''
+  returnDialogVisible.value = true
+}
+
+async function submitReturn() {
+  const row = returningRow.value
+  if (!row) return
   try {
-    await ElMessageBox.confirm(`确认归还设备(预约 #${row.id})？`, '归还确认', {
-      type: 'warning',
-      confirmButtonText: '确认归还',
-      cancelButtonText: '取消',
+    await checkOutReservation(row.id, {
+      condition: returnCondition.value,
+      note: returnNote.value.trim() || undefined,
     })
-  } catch {
-    return
-  }
-  try {
-    await checkOutReservation(row.id)
+    returnDialogVisible.value = false
+    returningRow.value = null
     ElMessage.success('归还成功')
     cursorPager.reset()
     await load()
@@ -176,7 +216,10 @@ function fmt(t?: string): string {
 
 const subtitle = computed(() => `共 ${page.value.total} 条预约`)
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadWaitlist()
+})
 </script>
 
 <template>
@@ -201,6 +244,30 @@ onMounted(load)
         @update:model-value="onStatusChange"
       />
     </div>
+
+    <section v-if="waitlist.length" class="mine__waitlist" aria-label="我的候补申请">
+      <div class="mine__waitlist-head">
+        <div>
+          <span class="mine__eyebrow">WAITLIST</span>
+          <h3>我的候补申请</h3>
+        </div>
+        <span>{{ waitlist.length }} 条</span>
+      </div>
+      <div class="mine__waitlist-list">
+        <div v-for="row in waitlist" :key="row.id" class="mine__waitlist-row">
+          <div>
+            <strong>{{ row.deviceName || `设备 #${row.deviceId}` }}</strong>
+            <span>{{ row.reservationDate }} · {{ row.purpose }}</span>
+          </div>
+          <div class="mine__waitlist-actions">
+            <Tag :variant="row.status === 'NOTIFIED' ? 'success' : 'warning'" size="small" round>
+              {{ row.status === 'NOTIFIED' ? '已释放，请重新预约' : '排队中' }}
+            </Tag>
+            <TextButton size="small" @click="onCancelWaitlist(row)">取消</TextButton>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <!-- 卡片列表 -->
     <div v-loading="loading" class="mine__grid" ref="listRef">
@@ -305,6 +372,31 @@ onMounted(load)
         @size-change="onSizeChange"
       />
     </div>
+
+    <el-dialog v-model="returnDialogVisible" title="归还验收" width="520px">
+      <div class="mine__return-form">
+        <p class="mine__return-hint">
+          请选择设备归还时的状态；如发现损坏或缺失，请填写处理备注。
+        </p>
+        <el-radio-group v-model="returnCondition">
+          <el-radio value="NORMAL">验收正常</el-radio>
+          <el-radio value="DAMAGED">发现损坏</el-radio>
+          <el-radio value="MISSING">设备缺失</el-radio>
+        </el-radio-group>
+        <el-input
+          v-model="returnNote"
+          type="textarea"
+          :rows="4"
+          maxlength="1000"
+          show-word-limit
+          placeholder="补充验收备注（可选）"
+        />
+      </div>
+      <template #footer>
+        <GhostButton @click="returnDialogVisible = false">取消</GhostButton>
+        <GhostButton @click="submitReturn">确认归还</GhostButton>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -326,6 +418,66 @@ onMounted(load)
     border-radius: var(--radius-card);
   }
 
+  &__waitlist {
+    display: grid;
+    gap: 14px;
+    padding: 18px 20px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+  }
+
+  &__waitlist-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+
+    h3 {
+      margin: 5px 0 0;
+      color: var(--text-primary);
+      font-family: var(--font-display);
+      font-size: 16px;
+    }
+
+    & > span {
+      color: var(--text-tertiary);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+  }
+
+  &__waitlist-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  &__waitlist-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 14px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-control);
+
+    & > div:first-child {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    strong { overflow: hidden; color: var(--text-primary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+    span { color: var(--text-tertiary); font-size: 11px; }
+  }
+
+  &__waitlist-actions {
+    display: flex;
+    align-items: center;
+    flex: none;
+    gap: 10px;
+  }
+
   // ---- 卡片网格 -----------------------------------------------------------
   &__grid {
     display: grid;
@@ -338,6 +490,11 @@ onMounted(load)
     & > .mine__empty {
       grid-column: 1 / -1;
     }
+  }
+
+  @media (max-width: 620px) {
+    &__waitlist-row { align-items: flex-start; flex-direction: column; }
+    &__waitlist-actions { align-self: flex-end; }
   }
 
   &__cell {
@@ -530,6 +687,18 @@ onMounted(load)
   &__empty {
     display: flex;
     justify-content: center;
+  }
+
+  &__return-form {
+    display: grid;
+    gap: 16px;
+  }
+
+  &__return-hint {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
   }
 }
 

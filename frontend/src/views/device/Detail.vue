@@ -5,15 +5,25 @@
 // 数据来源 / 日历逻辑 / 路由跳转——零改,仅换展示层 + 接 R1 ui 组件。
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
-import { deviceCalendar, getDevice } from '@/api/device'
-import type { DeviceCalendarItemVO, DeviceVO } from '@/types/device'
+import {
+  archiveDeviceDocument,
+  deviceCalendar,
+  downloadDeviceDocument,
+  getDevice,
+  listDeviceDocuments,
+  uploadDeviceDocument,
+} from '@/api/device'
+import { joinWaitlist } from '@/api/reservation'
+import type { DeviceCalendarItemVO, DeviceDocumentVO, DeviceVO } from '@/types/device'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import StatusDot from '@/components/ui/StatusDot.vue'
 import GradientButton from '@/components/ui/GradientButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
 import Panel from '@/components/ui/Panel.vue'
 import Tag from '@/components/ui/Tag.vue'
+import TextButton from '@/components/ui/TextButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,6 +53,12 @@ const rangeTo = computed(() => dayjs(selectedDate.value).endOf('week').format('Y
 
 const calendar = ref<DeviceCalendarItemVO[]>([])
 const calendarLoading = ref(false)
+const documents = ref<DeviceDocumentVO[]>([])
+const documentDialogVisible = ref(false)
+const documentType = ref<'MANUAL' | 'SOP'>('MANUAL')
+const documentTitle = ref('')
+const documentFile = ref<File | null>(null)
+const documentUploading = ref(false)
 
 const id = computed(() => Number(route.params.id))
 
@@ -118,6 +134,14 @@ async function loadCalendar() {
   }
 }
 
+async function loadDocuments() {
+  try {
+    documents.value = await listDeviceDocuments(id.value)
+  } catch {
+    documents.value = []
+  }
+}
+
 watch(selectedDate, loadCalendar)
 
 function goReserve() {
@@ -128,9 +152,97 @@ function goRepair() {
   router.push({ name: 'repair-submit', query: { deviceId: String(id.value) } })
 }
 
+function openDocumentDialog() {
+  documentType.value = 'MANUAL'
+  documentTitle.value = ''
+  documentFile.value = null
+  documentDialogVisible.value = true
+}
+
+function onDocumentFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  documentFile.value = input.files?.[0] || null
+}
+
+async function submitDocument() {
+  if (!documentFile.value || documentTitle.value.trim().length < 2) {
+    ElMessage.warning('请填写文档标题并选择文件')
+    return
+  }
+  documentUploading.value = true
+  try {
+    const created = await uploadDeviceDocument(id.value, {
+      documentType: documentType.value,
+      title: documentTitle.value.trim(),
+      file: documentFile.value,
+    })
+    documents.value.unshift(created)
+    documentDialogVisible.value = false
+    ElMessage.success('文档已上传')
+  } catch {
+    // 拦截器已提示
+  } finally {
+    documentUploading.value = false
+  }
+}
+
+async function removeDocument(document: DeviceDocumentVO) {
+  try {
+    await ElMessageBox.confirm(`确认归档「${document.title}」？`, '归档文档', {
+      type: 'warning',
+      confirmButtonText: '归档',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await archiveDeviceDocument(id.value, document.id)
+    documents.value = documents.value.filter((item) => item.id !== document.id)
+    ElMessage.success('文档已归档')
+  } catch {
+    // 拦截器已提示
+  }
+}
+
+async function joinWaitlistForDate(date: string) {
+  try {
+    const result = await ElMessageBox.prompt(
+      `设备在 ${date} 已被占用。候补通知后仍需重新提交预约。`,
+      '加入候补队列',
+      {
+        inputPlaceholder: '请输入候补用途',
+        inputPattern: /.{2,500}/,
+        inputErrorMessage: '用途至少填写 2 个字符',
+        confirmButtonText: '提交候补',
+        cancelButtonText: '取消',
+      },
+    )
+    await joinWaitlist({
+      deviceId: id.value,
+      reservationDate: date,
+      purpose: result.value.trim(),
+    })
+    ElMessage.success('已加入候补队列')
+  } catch (error) {
+    if (error !== 'cancel') {
+      // 请求错误由拦截器提示；取消操作不提示
+    }
+  }
+}
+
+function documentTypeLabel(type: DeviceDocumentVO['documentType']): string {
+  return type === 'SOP' ? '操作规程' : '设备手册'
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
 onMounted(async () => {
   await loadDevice()
-  await loadCalendar()
+  await Promise.all([loadCalendar(), loadDocuments()])
 })
 </script>
 
@@ -180,6 +292,33 @@ onMounted(async () => {
             <h4 class="device-detail__desc-title">设备描述</h4>
             <p class="device-detail__desc-text">{{ device.description }}</p>
           </div>
+
+          <section class="device-detail__documents" aria-label="设备手册与操作规程">
+            <div class="device-detail__documents-head">
+              <div>
+                <span class="eyebrow">DOCUMENTS</span>
+                <h3>设备手册与操作规程</h3>
+                <p>只展示当前学院可访问的已发布文档。</p>
+              </div>
+              <GhostButton v-permission="'device:manage'" size="small" @click="openDocumentDialog">
+                上传文档
+              </GhostButton>
+            </div>
+            <div v-if="documents.length" class="device-detail__documents-list">
+              <article v-for="document in documents" :key="document.id" class="device-document">
+                <div class="device-document__main">
+                  <Tag variant="info" size="small" round>{{ documentTypeLabel(document.documentType) }}</Tag>
+                  <strong>{{ document.title }}</strong>
+                  <span>{{ document.originalName }} · {{ formatBytes(document.sizeBytes) }}</span>
+                </div>
+                <div class="device-document__actions">
+                  <TextButton size="small" @click="downloadDeviceDocument(document)">查看</TextButton>
+                  <TextButton v-permission="'device:manage'" size="small" @click="removeDocument(document)">归档</TextButton>
+                </div>
+              </article>
+            </div>
+            <p v-else class="device-detail__documents-empty">暂无手册或操作规程。</p>
+          </section>
         </Panel>
       </el-tab-pane>
 
@@ -217,6 +356,17 @@ onMounted(async () => {
               </template>
             </el-table-column>
             <el-table-column prop="reservationId" label="预约 ID" />
+            <el-table-column label="候补" width="100" fixed="right">
+              <template #default="{ row }">
+                <TextButton
+                  v-if="['PENDING', 'APPROVED', 'IN_USE'].includes(row.status)"
+                  size="small"
+                  @click="joinWaitlistForDate(row.date)"
+                >
+                  排队
+                </TextButton>
+              </template>
+            </el-table-column>
             <template #empty>
               <span class="device-detail__cal-empty">该周无占用记录,时段空闲可预约</span>
             </template>
@@ -224,6 +374,32 @@ onMounted(async () => {
         </Panel>
       </el-tab-pane>
     </el-tabs>
+
+    <el-dialog v-model="documentDialogVisible" title="上传设备文档" width="520px">
+      <el-form label-position="top">
+        <el-form-item label="文档类型" required>
+          <el-radio-group v-model="documentType">
+            <el-radio value="MANUAL">设备手册</el-radio>
+            <el-radio value="SOP">操作规程</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="标题" required>
+          <el-input v-model="documentTitle" maxlength="200" show-word-limit placeholder="例如：离心机日常操作规程" />
+        </el-form-item>
+        <el-form-item label="文件" required>
+          <input
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
+            @change="onDocumentFileChange"
+          />
+          <small class="device-detail__upload-hint">支持 PDF、JPG、PNG、WebP，大小不超过 5 MB。</small>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <GhostButton @click="documentDialogVisible = false">取消</GhostButton>
+        <GradientButton :loading="documentUploading" type="primary" @click="submitDocument">上传</GradientButton>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -311,6 +487,55 @@ onMounted(async () => {
     color: var(--text-secondary);
   }
 
+  &__documents {
+    display: grid;
+    gap: 14px;
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  &__documents-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+
+    h3 {
+      margin: 5px 0 4px;
+      color: var(--text-primary);
+      font-family: var(--font-display);
+      font-size: 16px;
+    }
+
+    p {
+      margin: 0;
+      color: var(--text-tertiary);
+      font-size: 12px;
+    }
+  }
+
+  &__documents-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  &__documents-empty {
+    margin: 0;
+    padding: 16px;
+    color: var(--text-tertiary);
+    background: var(--bg-elevated);
+    border-radius: var(--radius-control);
+    font-size: 12px;
+  }
+
+  &__upload-hint {
+    display: block;
+    margin-top: 8px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+  }
+
   // ---- 预约日历 tab -------------------------------------------------------
   &__cal-panel {
     padding: 24px;
@@ -343,6 +568,54 @@ onMounted(async () => {
     color: var(--status-success);
     font-size: 13px;
   }
+}
+
+.device-document {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+}
+
+.device-document__main {
+  display: grid;
+  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 9px;
+  min-width: 0;
+}
+
+.device-document__main strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-document__main > span:last-child {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-document__actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+@media (max-width: 620px) {
+  .device-document { align-items: flex-start; flex-direction: column; }
+  .device-document__actions { align-self: flex-end; }
 }
 
 // ---- spec chip:hairline pill + 小标 + 强调值(青色 mono)-------------------

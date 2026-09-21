@@ -20,16 +20,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.auth.security import hash_password
 from app.core.settings import Settings
 from app.infrastructure.db.models import (
+    AuditLog,
     College,
+    CreditEvent,
     Device,
+    DeviceDocument,
+    DeviceStatusHistory,
     IdempotencyKey,
     Lab,
     Notification,
     OutboxTask,
+    RefreshSession,
     RepairReport,
     Reservation,
+    ReservationBlackout,
+    ReservationFeedback,
+    ReservationInspection,
     ReservationItem,
+    ReservationWaitlist,
     Role,
+    UploadAsset,
     User,
     user_roles,
 )
@@ -141,6 +151,9 @@ async def cleanup(prefix: str) -> None:
                     await session.scalars(select(Device.id).where(Device.college_id == college.id))
                 ).all()
             )
+            lab_ids = list(
+                (await session.scalars(select(Lab.id).where(Lab.college_id == college.id))).all()
+            )
             reservation_ids = list(
                 (
                     await session.scalars(
@@ -148,7 +161,55 @@ async def cleanup(prefix: str) -> None:
                     )
                 ).all()
             )
+            document_assets = list(
+                (
+                    await session.execute(
+                        select(UploadAsset.id, UploadAsset.storage_path)
+                        .join(DeviceDocument, DeviceDocument.asset_id == UploadAsset.id)
+                        .where(DeviceDocument.device_id.in_(device_ids or [-1]))
+                    )
+                ).all()
+            )
+            scope_ids = [college.id, *lab_ids, *device_ids]
+            if user_ids:
+                await session.execute(
+                    delete(ReservationBlackout).where(
+                        (ReservationBlackout.created_by.in_(user_ids))
+                        | (ReservationBlackout.scope_id.in_(scope_ids or [-1]))
+                    )
+                )
+                await session.execute(delete(AuditLog).where(AuditLog.user_id.in_(user_ids)))
+                await session.execute(
+                    delete(RefreshSession).where(RefreshSession.user_id.in_(user_ids))
+                )
+            if device_ids:
+                await session.execute(
+                    delete(ReservationWaitlist).where(
+                        ReservationWaitlist.device_id.in_(device_ids)
+                    )
+                )
+                await session.execute(
+                    delete(DeviceDocument).where(DeviceDocument.device_id.in_(device_ids))
+                )
+                await session.execute(
+                    delete(DeviceStatusHistory).where(
+                        DeviceStatusHistory.device_id.in_(device_ids)
+                    )
+                )
             if reservation_ids:
+                await session.execute(
+                    delete(ReservationFeedback).where(
+                        ReservationFeedback.reservation_id.in_(reservation_ids)
+                    )
+                )
+                await session.execute(
+                    delete(ReservationInspection).where(
+                        ReservationInspection.reservation_id.in_(reservation_ids)
+                    )
+                )
+                await session.execute(
+                    delete(CreditEvent).where(CreditEvent.reservation_id.in_(reservation_ids))
+                )
                 await session.execute(
                     delete(ReservationItem).where(
                         ReservationItem.reservation_id.in_(reservation_ids)
@@ -167,6 +228,13 @@ async def cleanup(prefix: str) -> None:
                 await session.execute(
                     delete(IdempotencyKey).where(IdempotencyKey.user_id.in_(user_ids))
                 )
+                await session.execute(delete(UploadAsset).where(UploadAsset.user_id.in_(user_ids)))
+            if document_assets:
+                await session.execute(
+                    delete(UploadAsset).where(
+                        UploadAsset.id.in_([asset_id for asset_id, _ in document_assets])
+                    )
+                )
             await session.execute(delete(Device).where(Device.college_id == college.id))
             await session.execute(delete(Lab).where(Lab.college_id == college.id))
             if user_ids:
@@ -179,6 +247,8 @@ async def cleanup(prefix: str) -> None:
                 await session.execute(delete(User).where(User.id.in_(user_ids)))
             await session.execute(delete(College).where(College.id == college.id))
             await session.commit()
+            for _, storage_path in document_assets:
+                Path(storage_path).unlink(missing_ok=True)
     finally:
         await engine.dispose()
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
@@ -34,6 +35,7 @@ const cursorPager = useCursorPageChain<DeviceVO>((cursor) => searchDevices({
   page: 1,
   cursor,
 }))
+const router = useRouter()
 
 // 编辑对话框
 const dialogVisible = ref(false)
@@ -261,6 +263,7 @@ onMounted(() => {
   <div class="dmanage">
     <PageHeader title="设备管理" subtitle="维护设备档案、状态与预约策略">
       <template #actions>
+        <GhostButton @click="router.push({ name: 'reservation-rules' })">预约规则</GhostButton>
         <GradientButton v-permission="'device:manage'" @click="openCreate">
           新增设备
         </GradientButton>

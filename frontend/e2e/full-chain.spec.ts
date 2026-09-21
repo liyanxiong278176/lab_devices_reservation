@@ -72,9 +72,14 @@ test.describe.serial('普通用户与管理员真实页面完整链路', () => {
     await userPage.getByRole('button', { name: '预约' }).click()
     await expect(userPage.getByText('预约设备')).toBeVisible()
 
-    const start = new Date(Date.now() + 3 * 86_400_000)
-    const end = new Date(Date.now() + 4 * 86_400_000)
-    const format = (value: Date) => value.toISOString().slice(0, 10)
+    const start = new Date()
+    const end = new Date()
+    const format = (value: Date) => {
+      const year = value.getFullYear()
+      const month = String(value.getMonth() + 1).padStart(2, '0')
+      const day = String(value.getDate()).padStart(2, '0')
+      return `${year}-${month}-${day}`
+    }
     await chooseDateRange(userPage, format(start), format(end))
     await userPage.getByPlaceholder('例如：完成材料拉伸实验并采集三组数据').fill('E2E 页面预约审批链路')
     await expect(userPage.getByRole('button', { name: '提交预约' })).toBeEnabled()
@@ -98,6 +103,50 @@ test.describe.serial('普通用户与管理员真实页面完整链路', () => {
 
     await userPage.reload()
     await expect(userPage.getByText('已通过')).toBeVisible()
+
+    // 预约首日完成签到、归还验收，确认状态机不是停留在审批层。
+    await userPage.getByRole('button', { name: '签到' }).click()
+    await expect(userPage.getByText('使用中', { exact: true })).toBeVisible()
+    await userPage.getByRole('button', { name: '归还' }).click()
+    await expect(userPage.getByRole('dialog', { name: '归还验收' })).toBeVisible()
+    await userPage.getByRole('button', { name: '确认归还' }).click()
+    await expect(userPage.getByText('已完成', { exact: true })).toBeVisible()
+
+    await userPage.getByRole('button', { name: '详情' }).click()
+    await expect(userPage).toHaveURL(/reservations\/\d+/)
+    await userPage.getByRole('button', { name: '评价设备' }).click()
+    await expect(userPage.getByText('评价本次使用')).toBeVisible()
+    await userPage.locator('textarea').last().fill('设备运行稳定，页面链路验收通过。')
+    const feedbackResponsePromise = userPage.waitForResponse(
+      (response) => response.url().includes('/feedback') && response.request().method() === 'POST',
+    )
+    await userPage.getByRole('button', { name: '提交评价' }).click()
+    const feedbackResponse = await feedbackResponsePromise
+    expect(feedbackResponse.status()).toBe(201)
+    await expect(userPage.getByText(/使用评价/)).toBeVisible()
+
+    // 页面级通知入口可打开，未读列表保留在当前页面并可执行已读操作。
+    await userPage.getByRole('menuitem', { name: '我的通知', exact: true }).click()
+    await expect(userPage.getByRole('heading', { name: '通知中心', exact: true })).toBeVisible()
+
+    // 管理员端可以打开设备文档区域和预约规则入口。
+    await adminPage.getByRole('menuitem', { name: '设备', exact: true }).click()
+    await adminPage.getByText(fixture.device_name, { exact: true }).click()
+    await adminPage.getByText('查看完整详情').click()
+    await expect(adminPage.getByText('设备手册与操作规程')).toBeVisible()
+    await adminPage.getByRole('button', { name: '上传文档' }).click()
+    await adminPage.getByRole('dialog').getByLabel('标题').fill('E2E 设备操作规程')
+    await adminPage.locator('input[type="file"]').setInputFiles({
+      name: 'e2e-sop.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.7\nE2E SOP'),
+    })
+    await adminPage.getByRole('dialog').getByRole('button', { name: '上传' }).click()
+    await expect(adminPage.getByText('E2E 设备操作规程')).toBeVisible()
+
+    await adminPage.getByRole('menuitem', { name: '设备管理', exact: true }).click()
+    await adminPage.getByRole('button', { name: '预约规则' }).click()
+    await expect(adminPage.getByRole('heading', { name: '预约规则', exact: true })).toBeVisible()
 
     await userPage.getByRole('menuitem', { name: '提交报修', exact: true }).click()
     await expect(userPage.getByRole('heading', { name: '提交报修', exact: true })).toBeVisible()

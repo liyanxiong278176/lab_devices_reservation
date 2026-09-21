@@ -99,6 +99,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '设备管理', icon: 'Setting', roles: ['LAB_ADMIN', 'SYS_ADMIN'] },
       },
       {
+        path: 'reservation-rules',
+        name: 'reservation-rules',
+        component: () => import('@/views/scheduling/Index.vue'),
+        meta: { title: '预约规则', icon: 'Calendar', roles: ['LAB_ADMIN', 'SYS_ADMIN'], hidden: true },
+      },
+      {
         path: 'users',
         name: 'users',
         component: () => import('@/views/user/Index.vue'),

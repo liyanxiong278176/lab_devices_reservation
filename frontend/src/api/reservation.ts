@@ -145,3 +145,56 @@ export const submitReservationFeedback = (
   id: number,
   payload: { rating: number; comment?: string },
 ) => request.post<unknown, ReservationFeedbackVO>(`/reservations/${id}/feedback`, payload)
+
+export interface WaitlistVO {
+  id: number
+  deviceId: number
+  deviceName?: string
+  reservationDate: string
+  purpose: string
+  status: 'WAITING' | 'NOTIFIED' | 'CANCELLED'
+  createdAt?: string
+}
+
+interface V2Waitlist {
+  id: number
+  device_id: number
+  device_name?: string | null
+  reservation_date: string
+  purpose: string
+  status: WaitlistVO['status']
+  created_at?: string
+}
+
+function mapWaitlist(row: V2Waitlist): WaitlistVO {
+  return {
+    id: row.id,
+    deviceId: row.device_id,
+    deviceName: row.device_name || undefined,
+    reservationDate: row.reservation_date,
+    purpose: row.purpose,
+    status: row.status,
+    createdAt: row.created_at,
+  }
+}
+
+export const joinWaitlist = async (payload: {
+  deviceId: number
+  reservationDate: string
+  purpose: string
+}) => {
+  const row = await request.post<unknown, V2Waitlist>('/reservations/waitlist', {
+    device_id: payload.deviceId,
+    reservation_date: payload.reservationDate,
+    purpose: payload.purpose,
+  })
+  return mapWaitlist(row)
+}
+
+export const myWaitlist = async () => {
+  const rows = await request.get<unknown, V2Waitlist[]>('/reservations/waitlist/mine')
+  return rows.map(mapWaitlist)
+}
+
+export const cancelWaitlist = (id: number) =>
+  request.delete<unknown, void>(`/reservations/waitlist/${id}`)

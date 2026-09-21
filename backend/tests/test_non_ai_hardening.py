@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -154,6 +155,95 @@ async def test_completed_reservation_has_one_college_scoped_feedback(seeded) -> 
                 token_id="feedback-other-college",
             )
             forbidden = await client.get(f"/api/v2/reservations/{reservation_id}/feedback")
+            assert forbidden.status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_device_documents_and_blackouts_are_validated_and_scoped(
+    seeded, tmp_path: Path
+) -> None:
+    factory, college, other_college, student1, student2, manager, device, _ = seeded
+    app = create_app(
+        Settings(
+            environment="test",
+            cors_origins=[],
+            enable_workers=False,
+            rate_limit_enabled=False,
+            upload_dir=str(tmp_path),
+        )
+    )
+    current = Principal(
+        user_id=manager.id,
+        username=manager.username,
+        college_id=college.id,
+        roles=("LAB_ADMIN",),
+        token_type="access",
+        token_id="document-manager",
+    )
+
+    async def override_db():
+        async with factory() as session:
+            yield session
+
+    async def override_principal() -> Principal:
+        return current
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_principal] = override_principal
+    target = (date.today() + timedelta(days=7)).isoformat()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            pdf = b"%PDF-1.7\nminimal test document"
+            created = await client.post(
+                f"/api/v2/devices/{device.id}/documents",
+                data={"document_type": "SOP", "title": "设备操作规程"},
+                files={"file": ("sop.pdf", pdf, "application/pdf")},
+            )
+            assert created.status_code == 201
+            document = created.json()["data"]
+            assert document["document_type"] == "SOP"
+
+            listed = await client.get(f"/api/v2/devices/{device.id}/documents")
+            assert listed.status_code == 200
+            assert listed.json()["data"][0]["title"] == "设备操作规程"
+
+            blackout = await client.post(
+                "/api/v2/blackouts",
+                json={
+                    "scope_type": "DEVICE",
+                    "scope_id": device.id,
+                    "blocked_date": target,
+                    "reason": "年度检修",
+                },
+            )
+            assert blackout.status_code == 201
+
+            current = Principal(
+                user_id=student1.id,
+                username=student1.username,
+                college_id=college.id,
+                roles=("STUDENT",),
+                token_type="access",
+                token_id="document-student",
+            )
+            availability = await client.get(
+                f"/api/v2/devices/{device.id}/availability",
+                params={"start_date": target, "end_date": target},
+            )
+            assert availability.status_code == 200
+            assert availability.json()["data"][0]["status"] == "BLACKOUT"
+
+            current = Principal(
+                user_id=student2.id,
+                username=student2.username,
+                college_id=other_college.id,
+                roles=("STUDENT",),
+                token_type="access",
+                token_id="document-other-college",
+            )
+            forbidden = await client.get(f"/api/v2/devices/{device.id}/documents")
             assert forbidden.status_code == 404
     finally:
         app.dependency_overrides.clear()

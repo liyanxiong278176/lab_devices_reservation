@@ -1,6 +1,12 @@
 import request from './request'
 import type { Page } from '@/types/common'
-import type { DeviceAvailabilityVO, DeviceCalendarItemVO, DeviceQuery, DeviceVO } from '@/types/device'
+import type {
+  DeviceAvailabilityVO,
+  DeviceCalendarItemVO,
+  DeviceDocumentVO,
+  DeviceQuery,
+  DeviceVO,
+} from '@/types/device'
 
 interface V2Device {
   id: number
@@ -163,3 +169,61 @@ export const deleteDevice = (id: number) =>
 // PATCH /devices/{id}/status?status=<s> — status 是 @RequestParam（query string）
 export const patchDeviceStatus = (id: number, status: string) =>
   request.patch<unknown, void>(`/devices/${id}/status`, { status })
+
+interface V2DeviceDocument {
+  id: number
+  device_id: number
+  document_type: 'MANUAL' | 'SOP'
+  title: string
+  original_name: string
+  content_type: string
+  size_bytes: number
+  url: string
+  created_by: number
+  created_at?: string
+}
+
+function mapDocument(row: V2DeviceDocument): DeviceDocumentVO {
+  return {
+    id: row.id,
+    deviceId: row.device_id,
+    documentType: row.document_type,
+    title: row.title,
+    originalName: row.original_name,
+    contentType: row.content_type,
+    sizeBytes: row.size_bytes,
+    url: row.url,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  }
+}
+
+export const listDeviceDocuments = async (deviceId: number): Promise<DeviceDocumentVO[]> => {
+  const rows = await request.get<unknown, V2DeviceDocument[]>(`/devices/${deviceId}/documents`)
+  return rows.map(mapDocument)
+}
+
+export const uploadDeviceDocument = async (
+  deviceId: number,
+  payload: { documentType: 'MANUAL' | 'SOP'; title: string; file: File },
+) => {
+  const body = new FormData()
+  body.append('document_type', payload.documentType)
+  body.append('title', payload.title)
+  body.append('file', payload.file)
+  const row = await request.post<unknown, V2DeviceDocument>(`/devices/${deviceId}/documents`, body)
+  return mapDocument(row)
+}
+
+export const archiveDeviceDocument = (deviceId: number, documentId: number) =>
+  request.delete<unknown, void>(`/devices/${deviceId}/documents/${documentId}`)
+
+export const downloadDeviceDocument = async (document: DeviceDocumentVO) => {
+  const blob = await request.get<Blob, Blob>(document.url, { responseType: 'blob' })
+  const url = URL.createObjectURL(blob)
+  const anchor = window.document.createElement('a')
+  anchor.href = url
+  anchor.download = document.originalName
+  anchor.click()
+  URL.revokeObjectURL(url)
+}

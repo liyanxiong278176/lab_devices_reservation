@@ -92,6 +92,7 @@ async def create_feedback(
         detail={"rating": row.rating},
     )
     await session.commit()
+    await session.refresh(row)
     return ApiResponse.ok(_data(row))
 
 

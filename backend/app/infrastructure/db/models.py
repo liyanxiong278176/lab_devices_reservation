@@ -160,6 +160,10 @@ class Device(TimestampMixin, Base):
         back_populates="device",
         cascade="all, delete-orphan",
     )
+    documents: Mapped[list["DeviceDocument"]] = relationship(
+        back_populates="device",
+        cascade="all, delete-orphan",
+    )
 
 
 class Reservation(TimestampMixin, Base):
@@ -422,6 +426,37 @@ class UploadAsset(Base):
     size_bytes: Mapped[int] = mapped_column(Integer)
     storage_path: Mapped[str] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DeviceDocument(Base):
+    """Published device manual/SOP metadata backed by a private upload asset."""
+
+    __tablename__ = "v2_device_document"
+    __table_args__ = (
+        Index("idx_v2_device_document_device_active", "device_id", "active", "created_at"),
+        Index("idx_v2_device_document_college_active", "college_id", "active", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    device_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("device.id", ondelete="CASCADE"),
+        index=True,
+    )
+    college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
+    asset_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("v2_upload_asset.id", ondelete="CASCADE"),
+        index=True,
+    )
+    document_type: Mapped[str] = mapped_column(String(20), default="MANUAL")
+    title: Mapped[str] = mapped_column(String(200))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_by: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    device: Mapped[Device] = relationship(back_populates="documents")
+    asset: Mapped[UploadAsset] = relationship()
 
 
 class OutboxTask(Base):

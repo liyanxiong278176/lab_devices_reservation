@@ -162,6 +162,7 @@ async def create_blackout(
             },
         )
         await session.commit()
+        await session.refresh(duplicate)
         return ApiResponse.ok(_data(duplicate))
     row = ReservationBlackout(
         scope_type=payload.scope_type,
@@ -183,6 +184,7 @@ async def create_blackout(
         detail={"scope_type": row.scope_type, "blocked_date": row.blocked_date.isoformat()},
     )
     await session.commit()
+    await session.refresh(row)
     return ApiResponse.ok(_data(row))
 
 
