@@ -5,7 +5,7 @@
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="title" value="预约生命周期状态机  (8 态 · 转移标注 create 锁 / approve MQ / 转移推送)" style="text;html=1;align=center;verticalAlign=middle;fontSize=17;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+        <mxCell id="title" value="预约生命周期状态机  (9 态 · Redis 日期锁 / 数据库唯一约束 / Outbox 任务)" style="text;html=1;align=center;verticalAlign=middle;fontSize=17;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
           <mxGeometry x="200" y="10" width="1050" height="28" as="geometry" />
         </mxCell>
 
@@ -27,9 +27,13 @@
           <mxGeometry x="750" y="280" width="170" height="70" as="geometry" />
         </mxCell>
 
+        <mxCell id="s_return_pending" value="RETURN_PENDING&#xa;待负责人验收" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=13;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="280" width="190" height="70" as="geometry" />
+        </mxCell>
+
         <!-- Terminal states: double border -->
         <mxCell id="s_completed" value="COMPLETED&#xa;已完成 (终态)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=13;double=1;strokeWidth=3;" vertex="1" parent="1">
-          <mxGeometry x="1050" y="280" width="190" height="70" as="geometry" />
+          <mxGeometry x="1270" y="280" width="160" height="70" as="geometry" />
         </mxCell>
 
         <mxCell id="s_rejected" value="REJECTED&#xa;已拒绝 (终态)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=13;double=1;strokeWidth=3;" vertex="1" parent="1">
@@ -50,16 +54,16 @@
 
         <!-- ===== Transitions ===== -->
         <!-- init -> PENDING -->
-        <mxCell id="t1" value="create(needApproval=1)&#xa;/ acquire Redisson 锁 🔒" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#6c8ebf;strokeWidth=2;endArrow=classic;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="init" target="s_pending">
+        <mxCell id="t1" value="create(needApproval=1)&#xa;/ Redis 日期锁 + DB 唯一约束" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#6c8ebf;strokeWidth=2;endArrow=classic;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="init" target="s_pending">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <!-- init -> APPROVED (auto approve) -->
-        <mxCell id="t2" value="create(needApproval=0)&#xa;免审批直通 / acquire 锁 🔒" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#6c8ebf;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="init" target="s_approved">
+        <mxCell id="t2" value="create(needApproval=0)&#xa;免审批 / Redis 日期锁 + DB 唯一约束" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#6c8ebf;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="init" target="s_approved">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
         <!-- PENDING -> APPROVED -->
-        <mxCell id="t3" value="approve&#xa;/ MQ: sendTimeout ⏰ → 延迟取消队列&#xa;/ STOMP 推送用户 🔔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=11;fontStyle=1;labelBackgroundColor=#fffbe6;" edge="1" parent="1" source="s_pending" target="s_approved">
+        <mxCell id="t3" value="approve&#xa;/ 建立待交接与爽约任务 · Outbox 通知" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=11;fontStyle=1;labelBackgroundColor=#fffbe6;" edge="1" parent="1" source="s_pending" target="s_approved">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
@@ -74,7 +78,7 @@
         </mxCell>
 
         <!-- APPROVED -> IN_USE -->
-        <mxCell id="t6" value="checkIn(宽限窗口内)&#xa;/ device → IN_USE / 推送 🔔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_approved" target="s_inuse">
+        <mxCell id="t6" value="预约首日负责人现场交接&#xa;/ 记录交接人与设备状态" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_approved" target="s_inuse">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
@@ -83,18 +87,18 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
-        <!-- APPROVED -> CANCELLED (MQ timeout) -->
-        <mxCell id="t8" value="MQ 延迟取消 (per-msg TTL 到期)&#xa;guard: status==APPROVED&#xa;→ markTimeoutCancelled reason=TIMEOUT ⏰ / 推送 🔔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=2;endArrow=classic;dashed=1;fontSize=10;fontStyle=1;labelBackgroundColor=#fff2cc;" edge="1" parent="1" source="s_approved" target="s_cancelled">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-
         <!-- APPROVED -> NO_SHOW -->
-        <mxCell id="t9" value="markNoShow&#xa;(过时未签到)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=1.8;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_approved" target="s_noshow">
+        <mxCell id="t9" value="首日结束仍未交接&#xa;/ Worker 标记 NO_SHOW" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=1.8;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_approved" target="s_noshow">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
-        <!-- IN_USE -> COMPLETED -->
-        <mxCell id="t10" value="checkOut&#xa;/ device → IDLE, 删 items / 推送 🔔" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_inuse" target="s_completed">
+        <!-- IN_USE -> RETURN_PENDING -->
+        <mxCell id="t10" value="用户在结束日提交实际归还&#xa;/ 等待负责人验收" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_inuse" target="s_return_pending">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- RETURN_PENDING -> COMPLETED -->
+        <mxCell id="t13" value="负责人完成归还验收&#xa;/ 更新设备状态并释放日期" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="s_return_pending" target="s_completed">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
@@ -109,7 +113,7 @@
         </mxCell>
 
         <!-- ===== Legend / notes ===== -->
-        <mxCell id="leg" value="状态约定:  蓝色=初始待审 · 绿色=激活(进行中) · 紫色双框=终态 · 红=异常转移.&#xa;三处横切:  🔒 create 持 Redisson 分布式锁(并发防御①);  ⏰ approve 触发 MQ 延迟取消(per-msg TTL+死信, 自动超时取消);  🔔 每次状态转移经 MQ 异步链路 a 触发 STOMP 实时推送(终态不回滚).&#xa;注: 无独立 TIMEOUT 状态 — 超时取消复用 CANCELLED + cancel_reason=TIMEOUT; NO_SHOW/VIOLATED 由管理员经 REST 手动触发, 无 @Scheduled 定时任务." style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#fffbe6;strokeColor=#d6b656;rounded=1;" vertex="1" parent="1">
+        <mxCell id="leg" value="状态约定：蓝色=待审批 · 绿色=履约中 · 紫色双框=终态 · 红色=异常转移。&#xa;创建预约由 Redis 日期锁降低竞争，并由 MySQL 唯一约束兜底；通知与爽约任务持久化在 Outbox，由进程内 Worker 异步处理，WebSocket 仅作实时提示。&#xa;NO_SHOW 表示预约首日未完成负责人交接；预约完成必须经过用户归还与负责人验收。" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#fffbe6;strokeColor=#d6b656;rounded=1;" vertex="1" parent="1">
           <mxGeometry x="40" y="600" width="1380" height="100" as="geometry" />
         </mxCell>
       </root>

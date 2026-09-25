@@ -16,6 +16,7 @@ from app.infrastructure.cache.invalidation import (
 )
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
 from app.infrastructure.db.models import College, DeviceCategory, Lab, User
+from app.infrastructure.db.pagination import delayed_page_ids, page_metadata, page_offset
 from app.infrastructure.db.session import get_db
 
 router = APIRouter(dependencies=[Depends(enforce_authenticated_rate_limit)])
@@ -258,6 +259,7 @@ async def list_labs(
 ) -> ApiResponse[dict[str, object]]:
     if not _can_admin(principal):
         raise ApiError("FORBIDDEN", "当前角色无实验室管理权限", 403)
+    page_offset(page, size)
     scope = college_scope(principal)
     conditions = [Lab.status == 1]
     if scope is not None:
@@ -270,21 +272,29 @@ async def list_labs(
                 ),
             ]
         )
-    stmt = (
-        select(Lab).options(selectinload(Lab.manager), selectinload(Lab.college)).where(*conditions)
-    )
+    id_stmt = select(Lab.id).where(*conditions)
     count_stmt = select(func.count(Lab.id)).select_from(Lab).where(*conditions)
     if scope is not None:
-        stmt = stmt.join(College, College.id == Lab.college_id)
+        id_stmt = id_stmt.join(College, College.id == Lab.college_id)
         count_stmt = count_stmt.join(College, College.id == Lab.college_id)
     total = int(await session.scalar(count_stmt) or 0)
+    page_ids = delayed_page_ids(
+        id_stmt,
+        Lab.id,
+        page=page,
+        page_size=size,
+    )
     labs = list(
         (
             await session.scalars(
-                stmt.order_by(Lab.id.desc()).offset((page - 1) * size).limit(size)
+                select(Lab)
+                .join(page_ids, page_ids.c.id == Lab.id)
+                .options(selectinload(Lab.manager), selectinload(Lab.college))
+                .order_by(Lab.id.desc())
             )
         ).all()
     )
+    pages, truncated = page_metadata(total, size)
     records = [
         LabData(
             id=lab.id,
@@ -305,7 +315,8 @@ async def list_labs(
             "total": total,
             "size": size,
             "current": page,
-            "pages": (total + size - 1) // size,
+            "pages": pages,
+            "truncated": truncated,
         }
     )
 

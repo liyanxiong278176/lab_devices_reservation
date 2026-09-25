@@ -1,25 +1,30 @@
 from fastapi import APIRouter, Body, Depends, Header, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v2.schemas import (
     ApprovalRequest,
-    DeviceScanRequest,
+    HandoverRequest,
     ReservationCreateData,
     ReservationData,
     ReservationPage,
     ReservationPlanRequest,
     ReservationPreflightData,
+    ReturnAcceptanceRequest,
     ReturnInspectionRequest,
+    WaitlistConfirmationData,
     WaitlistCreateRequest,
     WaitlistData,
 )
 from app.application.reservations import ReservationService
 from app.auth.security import Principal, get_current_principal
 from app.common.response import ApiResponse
+from app.core.errors import ApiError
 from app.core.settings import Settings
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
 from app.infrastructure.cache.redis import reservation_lock
+from app.infrastructure.db.models import ReservationWaitlist
 from app.infrastructure.db.session import get_db
 
 router = APIRouter(dependencies=[Depends(enforce_authenticated_rate_limit)])
@@ -66,6 +71,8 @@ async def join_waitlist(
             device_id=payload.device_id,
             reservation_date=payload.reservation_date,
             purpose=payload.purpose,
+            purpose_category=payload.purpose_category,
+            project_reference=payload.project_reference,
         )
     )
 
@@ -90,6 +97,29 @@ async def cancel_waitlist(
     return ApiResponse.ok(None)
 
 
+@router.post(
+    "/reservations/waitlist/{entry_id}/confirm",
+    response_model=ApiResponse[WaitlistConfirmationData],
+)
+async def confirm_waitlist_offer(
+    entry_id: int,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[WaitlistConfirmationData]:
+    entry = await session.scalar(
+        select(ReservationWaitlist).where(
+            ReservationWaitlist.id == entry_id,
+            ReservationWaitlist.user_id == principal.user_id,
+        )
+    )
+    if entry is None:
+        raise ApiError("WAITLIST_OFFER_NOT_FOUND", "候补预约保留已失效", 409)
+    async with reservation_lock(request, entry.device_id, [entry.reservation_date]):
+        data = await _service(request, session, principal).confirm_waitlist_offer(entry_id)
+    return ApiResponse.ok(data)
+
+
 @router.post("/reservations", response_model=ApiResponse[ReservationCreateData], status_code=201)
 async def create_reservation(
     payload: ReservationPlanRequest,
@@ -111,8 +141,8 @@ async def my_reservations(
     request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    cursor: int | None = Query(default=None, ge=1),
     status: str | None = Query(default=None, max_length=20),
+    handover_status: str | None = Query(default=None, max_length=24),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationPage]:
@@ -121,7 +151,7 @@ async def my_reservations(
             page=page,
             page_size=page_size,
             status=status,
-            cursor=cursor,
+            handover_status=handover_status,
         )
     )
 
@@ -132,7 +162,6 @@ async def pending_handovers(
     status: str = Query(default="PENDING", max_length=20),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    cursor: int | None = Query(default=None, ge=1),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationPage]:
@@ -141,7 +170,6 @@ async def pending_handovers(
             status=status,
             page=page,
             page_size=page_size,
-            cursor=cursor,
         )
     )
 
@@ -168,37 +196,49 @@ async def cancel_reservation(
     return ApiResponse.ok(await _service(request, session, principal).cancel(reservation_id))
 
 
-@router.post("/reservations/{reservation_id}/check-in", response_model=ApiResponse[ReservationData])
-async def check_in(
+@router.post(
+    "/reservations/{reservation_id}/cancel-handover-exception",
+    response_model=ApiResponse[ReservationData],
+)
+async def cancel_handover_exception(
     reservation_id: int,
+    payload: ApprovalRequest,
     request: Request,
-    payload: DeviceScanRequest | None = Body(default=None),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationData]:
     return ApiResponse.ok(
-        await _service(request, session, principal).check_in(
+        await _service(request, session, principal).cancel_handover_exception(
             reservation_id,
-            qr_token=payload.qr_token if payload else None,
+            payload.reason or "交接异常，设备进入维修",
         )
     )
+
+
+@router.post("/reservations/{reservation_id}/check-in", response_model=ApiResponse[ReservationData])
+async def check_in(
+    reservation_id: int,
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[ReservationData]:
+    return ApiResponse.ok(await _service(request, session, principal).check_in(reservation_id))
 
 
 @router.post("/reservations/{reservation_id}/return", response_model=ApiResponse[ReservationData])
 async def return_device(
     reservation_id: int,
     request: Request,
-    payload: ReturnInspectionRequest | None = Body(default=None),
+    payload: ReturnInspectionRequest,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationData]:
-    inspection = payload or ReturnInspectionRequest()
     return ApiResponse.ok(
         await _service(request, session, principal).return_device(
             reservation_id,
-            condition=inspection.condition,
-            note=inspection.note,
-            qr_token=inspection.qr_token,
+            condition=payload.condition,
+            note=payload.note,
+            image_urls=payload.image_urls,
         )
     )
 
@@ -210,16 +250,17 @@ async def return_device(
 async def handover_reservation(
     reservation_id: int,
     request: Request,
-    payload: ReturnInspectionRequest | None = Body(default=None),
+    payload: HandoverRequest,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationData]:
-    data = payload or ReturnInspectionRequest()
     return ApiResponse.ok(
         await _service(request, session, principal).handover(
             reservation_id,
-            condition=data.condition,
-            note=data.note,
+            condition=payload.condition,
+            note=payload.note,
+            image_urls=payload.image_urls,
+            checklist=payload.checklist,
         )
     )
 
@@ -231,16 +272,16 @@ async def handover_reservation(
 async def accept_return(
     reservation_id: int,
     request: Request,
-    payload: ReturnInspectionRequest | None = Body(default=None),
+    payload: ReturnAcceptanceRequest,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationData]:
-    data = payload or ReturnInspectionRequest()
     return ApiResponse.ok(
         await _service(request, session, principal).accept_return(
             reservation_id,
-            condition=data.condition,
-            note=data.note,
+            condition=payload.condition,
+            note=payload.note,
+            checklist=payload.checklist,
         )
     )
 
@@ -264,12 +305,11 @@ async def pending_approvals(
     request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    cursor: int | None = Query(default=None, ge=1),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationPage]:
     return ApiResponse.ok(
-        await _service(request, session, principal).pending_approvals(page, page_size, cursor)
+        await _service(request, session, principal).pending_approvals(page, page_size)
     )
 
 

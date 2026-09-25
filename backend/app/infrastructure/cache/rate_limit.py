@@ -9,6 +9,7 @@ from time import monotonic, time
 from fastapi import Depends, Request
 
 from app.auth.security import Principal, get_current_principal
+from app.core.client_ip import resolve_client_ip
 from app.core.errors import ApiError
 from app.infrastructure.cache.redis import (
     REDIS_ERRORS,
@@ -94,7 +95,10 @@ class RateLimiter:
                     self.redis.eval(
                         TOKEN_BUCKET_SCRIPT,
                         len(keys),
-                        *[f"lab:v2:rate:{key}" for key in keys],
+                        # Version the buckets so a policy/threshold rollout
+                        # does not inherit depleted tokens from the previous
+                        # limits and keep healthy users throttled for minutes.
+                        *[f"lab:v2:rate:policy-v2:{policy.name}:{key}" for key in keys],
                         int(time() * 1000),
                         policy.capacity,
                         policy.refill_per_second,
@@ -164,6 +168,19 @@ def policy_for_request(request: Request) -> RateLimitPolicy:
             settings.rate_limit_repair_capacity,
             settings.rate_limit_repair_refill_per_second,
         )
+    if request.method == "POST" and any(
+        path.rstrip("/").endswith(suffix)
+        for suffix in (
+            "/repair-uploads",
+            "/qualification-uploads",
+            "/documents",
+        )
+    ):
+        return RateLimitPolicy(
+            "upload",
+            settings.rate_limit_upload_capacity,
+            settings.rate_limit_upload_refill_per_second,
+        )
     return RateLimitPolicy(
         "default",
         settings.rate_limit_default_capacity,
@@ -172,7 +189,12 @@ def policy_for_request(request: Request) -> RateLimitPolicy:
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    settings = request.app.state.settings
+    return resolve_client_ip(
+        request.client.host if request.client else None,
+        request.headers.get("x-forwarded-for"),
+        settings.trusted_proxy_ips,
+    )
 
 
 async def enforce_authenticated_rate_limit(
@@ -207,17 +229,39 @@ async def enforce_login_rate_limit(request: Request, username: str) -> None:
     if not request.app.state.settings.rate_limit_enabled:
         return
     settings = request.app.state.settings
-    policy = RateLimitPolicy(
+    limiter = RateLimiter(request)
+    ip_policy = RateLimitPolicy(
+        "login_ip",
+        settings.rate_limit_login_ip_capacity,
+        settings.rate_limit_login_ip_refill_per_second,
+    )
+    ip_allowed, ip_retry_after, ip_source = await limiter.allow(
+        [f"ip:{_client_ip(request)}:login"],
+        ip_policy,
+    )
+    if not ip_allowed:
+        metrics = getattr(request.app.state, "metrics", None)
+        if metrics is not None:
+            metrics.increment("rate_limit_rejected_total", labels={"policy": "login_ip"})
+        ip_retry_after = max(1, ip_retry_after)
+        raise ApiError(
+            "RATE_LIMITED",
+            "登录尝试过于频繁，请稍后再试",
+            429,
+            data={"retry_after": ip_retry_after, "source": ip_source},
+            headers={"Retry-After": str(ip_retry_after)},
+        )
+
+    username_policy = RateLimitPolicy(
         "login",
         settings.rate_limit_login_capacity,
         settings.rate_limit_login_refill_per_second,
     )
     username_key = hashlib.sha256(username.strip().lower().encode()).hexdigest()[:24]
-    keys = [
-        f"ip:{_client_ip(request)}:login",
-        f"username:{username_key}:login",
-    ]
-    allowed, retry_after, source = await RateLimiter(request).allow(keys, policy)
+    allowed, retry_after, source = await limiter.allow(
+        [f"username:{username_key}:login"],
+        username_policy,
+    )
     if not allowed:
         metrics = getattr(request.app.state, "metrics", None)
         if metrics is not None:
@@ -226,6 +270,45 @@ async def enforce_login_rate_limit(request: Request, username: str) -> None:
         raise ApiError(
             "RATE_LIMITED",
             "登录尝试过于频繁，请稍后再试",
+            429,
+            data={"retry_after": retry_after, "source": source},
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+async def enforce_registration_rate_limit(request: Request, username: str) -> None:
+    """Rate-limit public account creation before any database work."""
+    if not request.app.state.settings.rate_limit_enabled:
+        return
+    settings = request.app.state.settings
+    limiter = RateLimiter(request)
+    ip_policy = RateLimitPolicy(
+        "register_ip",
+        settings.rate_limit_register_ip_capacity,
+        settings.rate_limit_register_ip_refill_per_second,
+    )
+    allowed, retry_after, source = await limiter.allow(
+        [f"ip:{_client_ip(request)}:register"], ip_policy
+    )
+    username_hash = hashlib.sha256(username.strip().lower().encode()).hexdigest()[:24]
+    username_policy = RateLimitPolicy(
+        "register_username",
+        settings.rate_limit_register_username_capacity,
+        settings.rate_limit_register_username_refill_per_second,
+    )
+    username_allowed, username_retry_after, username_source = await limiter.allow(
+        [f"username:{username_hash}:register"], username_policy
+    )
+    if not allowed or not username_allowed:
+        retry_after = max(1, retry_after, username_retry_after)
+        rejected_policy = "register_ip" if not allowed else "register_username"
+        source = source if not allowed else username_source
+        metrics = getattr(request.app.state, "metrics", None)
+        if metrics is not None:
+            metrics.increment("rate_limit_rejected_total", labels={"policy": rejected_policy})
+        raise ApiError(
+            "RATE_LIMITED",
+            "注册请求过于频繁，请稍后再试",
             429,
             data={"retry_after": retry_after, "source": source},
             headers={"Retry-After": str(retry_after)},

@@ -5,6 +5,8 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
+_METRIC_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"})
+
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
     """Attach a traceable request ID to every response."""
@@ -21,19 +23,24 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         metrics = getattr(request.app.state, "metrics", None)
         if metrics is not None:
             route = request.scope.get("route")
-            metric_path = getattr(route, "path", request.url.path)
+            # Unknown paths are attacker-controlled; keep 404 metrics bounded.
+            metric_path = getattr(route, "path", None) or "__unmatched__"
+            raw_method = request.method
+            metric_method = raw_method if raw_method in _METRIC_METHODS else "OTHER"
+            status = response.status_code
+            metric_status = status if 100 <= status <= 599 else 0
             metrics.increment(
                 "http_requests_total",
                 labels={
-                    "method": request.method,
+                    "method": metric_method,
                     "path": metric_path,
-                    "status": response.status_code,
+                    "status": metric_status,
                 },
             )
             metrics.observe(
                 "http_request_duration_ms",
                 (perf_counter() - started) * 1000,
-                labels={"method": request.method, "path": metric_path},
+                labels={"method": metric_method, "path": metric_path},
             )
         response.headers["X-Request-ID"] = request_id
         return response

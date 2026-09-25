@@ -5,12 +5,21 @@ export type ReservationStatus =
   | 'PENDING'
   | 'APPROVED'
   | 'IN_USE'
-  | 'RETURN_PENDING'
   | 'COMPLETED'
   | 'CANCELLED'
   | 'REJECTED'
   | 'VIOLATED'
   | 'NO_SHOW'
+
+export type ReservationHandoverStatus =
+  | 'NOT_REQUIRED'
+  | 'PENDING'
+  | 'HANDED_OVER'
+  | 'LEGACY_IN_USE'
+  | 'EXCEPTION'
+  | 'RETURN_PENDING'
+  | 'RETURNED'
+  | 'CANCELLED'
 
 /** 后端自然日预约视图。 */
 export interface ReservationVO {
@@ -18,6 +27,8 @@ export interface ReservationVO {
   userId: number
   deviceId: number
   purpose: string
+  purposeCategory?: 'TEACHING' | 'RESEARCH' | 'COMPETITION_GRADUATION' | 'OTHER'
+  projectReference?: string
   deviceName?: string
   startDate?: string
   endDate?: string
@@ -36,10 +47,16 @@ export interface ReservationVO {
   deviceAssetCode?: string
   deviceLabName?: string
   requiresHandover?: boolean
-  handoverStatus?: string
+  handoverStatus?: ReservationHandoverStatus
   safetyRequired?: boolean
   safetyAcknowledged?: boolean
   safetyDocumentVersion?: string
+  handoverImageUrls?: string[]
+  returnImageUrls?: string[]
+  accessorySnapshot?: string[]
+  handoverChecklist?: { name: string; condition: 'NORMAL' | 'DAMAGED' | 'MISSING'; note?: string | null }[]
+  returnChecklist?: { name: string; condition: 'NORMAL' | 'DAMAGED' | 'MISSING'; note?: string | null }[]
+  faultRepairId?: number
 }
 
 /** 创建自然日预约参数。 */
@@ -48,6 +65,8 @@ export interface ReservationCreatePayload {
   startDate: string
   endDate: string
   purpose: string
+  purposeCategory: 'TEACHING' | 'RESEARCH' | 'COMPETITION_GRADUATION' | 'OTHER'
+  projectReference?: string
   commitMode?: 'all_or_nothing' | 'available_only'
   dates?: string[]
 }
@@ -70,6 +89,9 @@ export interface ReservationPreflightVO {
   qualification_required?: boolean
   qualification_approved?: boolean
   safety_document_version?: string | null
+  qualification_valid_until?: string | null
+  same_device_suggestions?: { start_date: string; end_date: string }[]
+  similar_device_suggestions?: { device_id: number; name: string; lab_name?: string | null; category_name?: string | null }[]
 }
 
 export interface ReservationCreateResultVO {
@@ -81,9 +103,9 @@ export interface ReservationCreateResultVO {
 /** 我的预约查询参数。 */
 export interface ReservationQuery {
   status?: ReservationStatus | ''
+  handoverStatus?: ReservationHandoverStatus | ''
   page?: number
   size?: number
-  cursor?: number | null
 }
 
 export type { Page }

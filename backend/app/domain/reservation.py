@@ -4,7 +4,6 @@ ACTIVE_RESERVATION_STATUSES: Final[tuple[str, ...]] = (
     "PENDING",
     "APPROVED",
     "IN_USE",
-    "RETURN_PENDING",
 )
 TERMINAL_RESERVATION_STATUSES: Final[tuple[str, ...]] = (
     "COMPLETED",
@@ -17,8 +16,7 @@ TERMINAL_RESERVATION_STATUSES: Final[tuple[str, ...]] = (
 RESERVATION_TRANSITIONS: Final[dict[str, tuple[str, ...]]] = {
     "PENDING": ("APPROVED", "CANCELLED"),
     "APPROVED": ("IN_USE", "CANCELLED", "NO_SHOW", "VIOLATED"),
-    "IN_USE": ("COMPLETED", "RETURN_PENDING", "VIOLATED"),
-    "RETURN_PENDING": ("COMPLETED", "VIOLATED"),
+    "IN_USE": ("COMPLETED", "VIOLATED"),
     "COMPLETED": (),
     "CANCELLED": (),
     "REJECTED": (),

@@ -37,5 +37,4 @@ export interface UserQuery {
   status?: number
   page?: number
   size?: number
-  cursor?: number | null
 }

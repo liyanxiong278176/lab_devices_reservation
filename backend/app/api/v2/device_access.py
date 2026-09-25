@@ -23,6 +23,7 @@ from app.application.reservations import ReservationService
 from app.auth.security import Principal, get_current_principal
 from app.common.response import ApiResponse
 from app.core.errors import ApiError
+from app.core.uploads import upload_quota_guard
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
 from app.infrastructure.db.models import (
     DeviceDocument,
@@ -240,28 +241,35 @@ async def upload_qualification_material(
         raise ApiError("UPLOAD_TOO_LARGE", "资质材料大小不能超过 5 MB", 413)
     if not _qualification_signature_matches(content_type, content):
         raise ApiError("UPLOAD_CONTENT_INVALID", "资质材料内容与文件类型不匹配", 422)
-    token = secrets.token_urlsafe(32)
-    path = _upload_root(request) / f"{token}{suffix}"
-    await asyncio.to_thread(path.write_bytes, content)
-    original_name = Path(file.filename or "qualification").name
-    original_name = original_name.replace("\r", "").replace("\n", "")[:255] or "qualification"
-    asset = UploadAsset(
-        asset_token=token,
+    async with upload_quota_guard(
+        request,
+        session,
         user_id=principal.user_id,
         college_id=device.college_id,
-        original_name=original_name,
-        content_type=content_type,
-        size_bytes=len(content),
-        storage_path=str(path),
-    )
-    session.add(asset)
-    try:
-        await session.commit()
-        await session.refresh(asset)
-    except Exception:
-        await session.rollback()
-        await asyncio.to_thread(path.unlink, missing_ok=True)
-        raise
+        incoming_bytes=len(content),
+    ):
+        token = secrets.token_urlsafe(32)
+        path = _upload_root(request) / f"{token}{suffix}"
+        await asyncio.to_thread(path.write_bytes, content)
+        original_name = Path(file.filename or "qualification").name
+        original_name = original_name.replace("\r", "").replace("\n", "")[:255] or "qualification"
+        asset = UploadAsset(
+            asset_token=token,
+            user_id=principal.user_id,
+            college_id=device.college_id,
+            original_name=original_name,
+            content_type=content_type,
+            size_bytes=len(content),
+            storage_path=str(path),
+        )
+        session.add(asset)
+        try:
+            await session.commit()
+            await session.refresh(asset)
+        except Exception:
+            await session.rollback()
+            await asyncio.to_thread(path.unlink, missing_ok=True)
+            raise
     return ApiResponse.ok(
         QualificationUploadData(
             asset_id=asset.id,
@@ -311,7 +319,7 @@ async def submit_qualification(
             select(UploadAsset).where(
                 UploadAsset.id == payload.asset_id,
                 UploadAsset.user_id == principal.user_id,
-            )
+            ).with_for_update()
         )
         if asset is None:
             raise ApiError("QUALIFICATION_ASSET_INVALID", "资质材料不存在或无权使用", 422)

@@ -22,6 +22,7 @@ export interface DeviceVO {
   maxReservationDays?: number
   pricePerHour?: number | string
   tags?: string[]
+  accessoryChecklist?: string[]
   description?: string
   assetCode?: string
   serialNumber?: string
@@ -32,7 +33,6 @@ export interface DeviceVO {
   requiresSafetyAck?: boolean
   requiresQualification?: boolean
   maxAdvanceDays?: number
-  qrToken?: string
   createdAt?: string
   updatedAt?: string
 }
@@ -99,7 +99,6 @@ export interface DeviceCategoryNodeVO {
 export interface DeviceQuery {
   page?: number
   size?: number
-  cursor?: number | null
   keyword?: string
   search?: string
   categoryId?: number

@@ -72,6 +72,28 @@ async def test_rate_limit_uses_local_fallback_and_returns_retry_after() -> None:
 
 
 @pytest.mark.asyncio
+async def test_login_limits_accounts_independently_from_shared_ip() -> None:
+    app = FastAPI()
+    app.state.settings = Settings(
+        environment="test",
+        cors_origins=[],
+        rate_limit_login_ip_capacity=2,
+        rate_limit_login_ip_refill_per_second=0.001,
+        rate_limit_login_capacity=5,
+        rate_limit_login_refill_per_second=0.001,
+    )
+    app.state.redis_client = UnavailableRedis()
+
+    await enforce_login_rate_limit(make_request(app), "student-a")
+    await enforce_login_rate_limit(make_request(app), "student-b")
+    with pytest.raises(ApiError) as error:
+        await enforce_login_rate_limit(make_request(app), "student-c")
+
+    assert error.value.status_code == 429
+    assert error.value.data["source"] == "local"
+
+
+@pytest.mark.asyncio
 async def test_dependency_failure_is_exposed_as_structured_503() -> None:
     app = FastAPI()
     request = make_request(app, "/api/v2/ready")
@@ -84,7 +106,7 @@ async def test_dependency_failure_is_exposed_as_structured_503() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reservation_cursor_returns_stable_keyset_pages(seeded) -> None:
+async def test_reservation_can_jump_directly_to_stable_id_page(seeded) -> None:
     factory, _, _, student1, _, _, device, _ = seeded
     principal = Principal(
         user_id=student1.id,
@@ -92,7 +114,7 @@ async def test_reservation_cursor_returns_stable_keyset_pages(seeded) -> None:
         college_id=student1.college_id,
         roles=("STUDENT",),
         token_type="access",
-        token_id="cursor-test",
+        token_id="page-number-test",
     )
     first_day = date.today() + timedelta(days=10)
     async with factory() as session:
@@ -103,25 +125,24 @@ async def test_reservation_cursor_returns_stable_keyset_pages(seeded) -> None:
                     device_id=device.id,
                     start_date=first_day + timedelta(days=offset),
                     end_date=first_day + timedelta(days=offset),
-                    purpose=f"游标分页测试 {offset}",
+                    purpose=f"页码分页测试 {offset}",
                 ),
-                idempotency_key=f"cursor-test-{offset}",
+                idempotency_key=f"page-number-test-{offset}",
             )
 
     async with factory() as session:
         page_one = await ReservationService(session, principal).list_mine(
             page=1,
             page_size=2,
-            cursor=10**9,
         )
         assert len(page_one.items) == 2
-        assert page_one.has_more is True
-        assert page_one.next_cursor is not None
+        assert page_one.pages == 2
+        assert page_one.truncated is False
 
         page_two = await ReservationService(session, principal).list_mine(
-            page=1,
+            page=2,
             page_size=2,
-            cursor=page_one.next_cursor,
         )
-        assert len(page_two.items) >= 1
+        assert len(page_two.items) == 1
+        assert page_two.page == 2
         assert {item.id for item in page_one.items}.isdisjoint({item.id for item in page_two.items})

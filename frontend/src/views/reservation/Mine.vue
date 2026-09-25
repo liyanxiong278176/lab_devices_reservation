@@ -1,23 +1,28 @@
 <script setup lang="ts">
 // 我的预约页(R5.2 重构):PageHeader + SegmentedControl 状态筛选 + GlowCard 卡片列表
-// + EmptyState + 深色分页(全局桥接)。数据来源(API)/状态筛选/取消/签到/归还逻辑零改
-// ——仅换展示层,并补齐既有 check-in/check-out API 的 UI 入口(按状态显隐)。
+// + EmptyState + 深色分页(全局桥接)。展示自然日预约及负责人交接/验收流程。
+// 保留用户归还/取消入口。
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import {
   cancelReservation,
-  checkInReservation,
   checkOutReservation,
   cancelWaitlist,
+  confirmWaitlistOffer,
   myWaitlist,
   myReservations,
 } from '@/api/reservation'
-import type { ReservationQuery, ReservationStatus, ReservationVO } from '@/types/reservation'
+import { uploadRepairImage } from '@/api/repair'
+import type {
+  ReservationHandoverStatus,
+  ReservationQuery,
+  ReservationStatus,
+  ReservationVO,
+} from '@/types/reservation'
 import type { WaitlistVO } from '@/api/reservation'
 import type { Page } from '@/types/common'
-import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import { reservationStatusTag } from '@/composables/useDeviceStatus'
 import { useStagger } from '@/composables/useStagger'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -26,36 +31,33 @@ import GlowCard from '@/components/ui/GlowCard.vue'
 import Tag from '@/components/ui/Tag.vue'
 import TextButton from '@/components/ui/TextButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
+import GradientButton from '@/components/ui/GradientButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
-import DeviceScanner from '@/components/DeviceScanner.vue'
+import PageDepthNotice from '@/components/ui/PageDepthNotice.vue'
 
 const router = useRouter()
 
+type ReservationTabValue = ReservationStatus | 'RETURN_PENDING_HANDOVER' | ''
+const activeTab = ref<ReservationTabValue>('')
 const activeStatus = ref<ReservationStatus | ''>('')
+const activeHandoverStatus = ref<ReservationHandoverStatus | ''>('')
 const query = ref<ReservationQuery>({ page: 1, size: 9 })
 const loading = ref(false)
 const page = ref<Page<ReservationVO>>({ records: [], total: 0, size: 9, current: 1 })
-const cursorPager = useCursorPageChain<ReservationVO>((cursor) => myReservations({
-  page: 1,
-  size: query.value.size,
-  status: activeStatus.value,
-  cursor,
-}))
 const waitlist = ref<WaitlistVO[]>([])
 const returnDialogVisible = ref(false)
 const returningRow = ref<ReservationVO | null>(null)
 const returnCondition = ref<'NORMAL' | 'DAMAGED' | 'MISSING'>('NORMAL')
 const returnNote = ref('')
-const returnQrToken = ref('')
+const returnPhotoFiles = ref<File[]>([])
 
-// SegmentedControl 选项:沿用既有 8 状态 + 全部,1:1 映射后端 status,
-// 不做多状态聚合(避免改 API 单状态契约 / 避免客户端过滤破坏分页)。
-const tabs: { label: string; value: ReservationStatus | '' }[] = [
+// “待验收”是交接子状态，不是预约状态；由服务端过滤。
+const tabs: { label: string; value: ReservationTabValue }[] = [
   { label: '全部', value: '' },
   { label: '待审批', value: 'PENDING' },
   { label: '已通过', value: 'APPROVED' },
   { label: '使用中', value: 'IN_USE' },
-  { label: '待验收', value: 'RETURN_PENDING' },
+  { label: '待验收', value: 'RETURN_PENDING_HANDOVER' },
   { label: '已完成', value: 'COMPLETED' },
   { label: '已取消', value: 'CANCELLED' },
   { label: '已拒绝', value: 'REJECTED' },
@@ -70,7 +72,12 @@ const { reveal } = useStagger(listRef, { delay: 60 })
 async function load(targetPage = query.value.page || 1) {
   loading.value = true
   try {
-    page.value = await cursorPager.load(targetPage)
+    page.value = await myReservations({
+      ...query.value,
+      page: targetPage,
+      status: activeStatus.value,
+      handoverStatus: activeHandoverStatus.value,
+    })
   } catch {
     // 拦截器已提示
   } finally {
@@ -81,9 +88,11 @@ async function load(targetPage = query.value.page || 1) {
 }
 
 function onStatusChange(v: string | number) {
-  activeStatus.value = (v as ReservationStatus | '') ?? ''
+  const selected = (v as ReservationTabValue) ?? ''
+  activeTab.value = selected
+  activeStatus.value = selected === 'RETURN_PENDING_HANDOVER' ? '' : selected
+  activeHandoverStatus.value = selected === 'RETURN_PENDING_HANDOVER' ? 'RETURN_PENDING' : ''
   query.value.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -114,6 +123,16 @@ async function onCancelWaitlist(row: WaitlistVO) {
   }
 }
 
+async function onConfirmWaitlist(row: WaitlistVO) {
+  try {
+    await confirmWaitlistOffer(row.id)
+    ElMessage.success('候补已确认，预约已按设备规则创建')
+    await Promise.all([loadWaitlist(), load()])
+  } catch {
+    // 拦截器已提示
+  }
+}
+
 function onPageChange(p: number) {
   query.value.page = p
   void load(p)
@@ -122,7 +141,6 @@ function onPageChange(p: number) {
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -143,14 +161,9 @@ function canCancel(row: ReservationVO): boolean {
   return row.status === 'PENDING' || row.status === 'APPROVED'
 }
 
-/** APPROVED 可签到(后端校验时间窗)。 */
-function canCheckIn(row: ReservationVO): boolean {
-  return row.status === 'APPROVED' && !row.requiresHandover
-}
-
 /** IN_USE 可归还。 */
 function canCheckOut(row: ReservationVO): boolean {
-  return row.status === 'IN_USE'
+  return row.status === 'IN_USE' && row.handoverStatus !== 'RETURN_PENDING'
 }
 
 async function onCancel(row: ReservationVO) {
@@ -166,21 +179,9 @@ async function onCancel(row: ReservationVO) {
   try {
     await cancelReservation(row.id)
     ElMessage.success('已取消')
-    cursorPager.reset()
     await load()
   } catch {
     // 拦截器已提示
-  }
-}
-
-async function onCheckIn(row: ReservationVO) {
-  try {
-    await checkInReservation(row.id)
-    ElMessage.success('签到成功')
-    cursorPager.reset()
-    await load()
-  } catch {
-    // 拦截器已提示(时间窗 / 状态不符等由后端返回)
   }
 }
 
@@ -188,23 +189,43 @@ async function onCheckOut(row: ReservationVO) {
   returningRow.value = row
   returnCondition.value = 'NORMAL'
   returnNote.value = ''
-  returnQrToken.value = ''
+  returnPhotoFiles.value = []
   returnDialogVisible.value = true
+}
+
+function onReturnPhotoChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  if (files.length < 1 || files.length > 6) {
+    ElMessage.warning('请上传 1 至 6 张归还现场照片')
+    input.value = ''
+    returnPhotoFiles.value = []
+  } else if (files.some((file) => file.size > 5 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type))) {
+    ElMessage.warning('照片仅支持 5 MB 以内 JPG、PNG 或 WebP')
+    input.value = ''
+    returnPhotoFiles.value = []
+  } else {
+    returnPhotoFiles.value = files
+  }
 }
 
 async function submitReturn() {
   const row = returningRow.value
   if (!row) return
   try {
+    if (returnPhotoFiles.value.length < 1 || returnPhotoFiles.value.length > 6) {
+      ElMessage.warning('请先上传 1 至 6 张归还现场照片')
+      return
+    }
+    const uploads = await Promise.all(returnPhotoFiles.value.map((file) => uploadRepairImage(file)))
     await checkOutReservation(row.id, {
       condition: returnCondition.value,
       note: returnNote.value.trim() || undefined,
-      qrToken: row.requiresHandover ? returnQrToken.value.trim() || undefined : undefined,
+      imageUrls: uploads.map((image) => image.url),
     })
     returnDialogVisible.value = false
     returningRow.value = null
-    ElMessage.success('归还成功')
-    cursorPager.reset()
+    ElMessage.success('已提交归还，等待负责人验收')
     await load()
   } catch {
     // 拦截器已提示
@@ -243,7 +264,7 @@ onMounted(() => {
     <!-- 状态筛选:SegmentedControl(沿用既有 8 状态 + 全部) -->
     <div class="mine__filter">
       <SegmentedControl
-        :model-value="activeStatus"
+        :model-value="activeTab"
         :options="tabs"
         size="sm"
         @update:model-value="onStatusChange"
@@ -262,12 +283,13 @@ onMounted(() => {
         <div v-for="row in waitlist" :key="row.id" class="mine__waitlist-row">
           <div>
             <strong>{{ row.deviceName || `设备 #${row.deviceId}` }}</strong>
-            <span>{{ row.reservationDate }} · {{ row.purpose }}</span>
+            <span>{{ row.reservationDate }} · {{ row.purpose }}<template v-if="row.offeredUntil"> · 保留至 {{ fmt(row.offeredUntil) }}</template></span>
           </div>
           <div class="mine__waitlist-actions">
-            <Tag :variant="row.status === 'NOTIFIED' ? 'success' : 'warning'" size="small" round>
-              {{ row.status === 'NOTIFIED' ? '已释放，请重新预约' : '排队中' }}
+            <Tag :variant="row.status === 'OFFERED' ? 'success' : 'warning'" size="small" round>
+              {{ row.status === 'OFFERED' ? '待确认保留' : '候补中' }}
             </Tag>
+            <GradientButton v-if="row.status === 'OFFERED'" size="small" @click="onConfirmWaitlist(row)">确认预约</GradientButton>
             <TextButton size="small" @click="onCancelWaitlist(row)">取消</TextButton>
           </div>
         </div>
@@ -287,6 +309,9 @@ onMounted(() => {
           <header class="mine__card-head">
             <Tag :variant="statusVariant(row.status)" effect="light" size="small" round>
               {{ statusLabel(row.status) }}
+            </Tag>
+            <Tag v-if="row.handoverStatus === 'RETURN_PENDING'" variant="warning" effect="light" size="small" round>
+              待负责人验收
             </Tag>
             <span class="mine__card-id">#{{ row.id }}</span>
           </header>
@@ -328,15 +353,8 @@ onMounted(() => {
             </span>
             <div class="mine__card-actions">
               <TextButton size="small" @click="goDetail(row)">详情</TextButton>
-              <GhostButton
-                v-if="canCheckIn(row)"
-                size="small"
-                @click="onCheckIn(row)"
-              >
-                签到
-              </GhostButton>
               <Tag v-if="row.status === 'APPROVED' && row.requiresHandover" variant="warning" size="small" round>
-                等待管理员交接
+                等待负责人交接
               </Tag>
               <GhostButton
                 v-if="canCheckOut(row)"
@@ -370,10 +388,11 @@ onMounted(() => {
 
     <!-- 分页(深色全局已桥接) -->
     <div v-if="page.records.length > 0" class="mine__pager">
+      <PageDepthNotice v-if="page.truncated" :total="page.total" />
       <el-pagination
         :current-page="page.current"
         :page-size="page.size"
-        :total="page.total"
+        :total="page.truncated ? Math.min(page.total, (page.pages || 1) * page.size) : page.total"
         :page-sizes="[9, 18, 36]"
         layout="total, sizes, prev, pager, next"
         background
@@ -382,13 +401,13 @@ onMounted(() => {
       />
     </div>
 
-    <el-dialog v-model="returnDialogVisible" title="归还验收" width="520px">
+    <el-dialog v-model="returnDialogVisible" title="提交归还" width="520px">
       <div class="mine__return-form">
         <p class="mine__return-hint">
-          请选择设备归还时的状态；如发现损坏或缺失，请填写处理备注。
+          设备实际归还后提交申请；请如实说明设备状态，负责人将现场验收。
         </p>
         <el-radio-group v-model="returnCondition">
-          <el-radio value="NORMAL">验收正常</el-radio>
+          <el-radio value="NORMAL">设备状态正常</el-radio>
           <el-radio value="DAMAGED">发现损坏</el-radio>
           <el-radio value="MISSING">设备缺失</el-radio>
         </el-radio-group>
@@ -400,18 +419,11 @@ onMounted(() => {
           show-word-limit
           placeholder="补充验收备注（可选）"
         />
-        <el-input
-          v-if="returningRow?.requiresHandover"
-          v-model="returnQrToken"
-          maxlength="96"
-          placeholder="外借设备请填写设备 QR token（可由现场负责人提供）"
-        />
-        <DeviceScanner
-          v-if="returningRow?.requiresHandover"
-          v-model="returnQrToken"
-          label="扫码或手工输入"
-          hint="电脑浏览器支持摄像头时可直接扫描；没有摄像头时继续使用上面的输入框。"
-        />
+        <label class="mine__return-photos">
+          <span>归还现场照片（必填，1–6 张）</span>
+          <input type="file" accept="image/jpeg,image/png,image/webp" multiple @change="onReturnPhotoChange" />
+          <small>{{ returnPhotoFiles.length }} 张已选择</small>
+        </label>
       </div>
       <template #footer>
         <GhostButton @click="returnDialogVisible = false">取消</GhostButton>
@@ -497,6 +509,16 @@ onMounted(() => {
     align-items: center;
     flex: none;
     gap: 10px;
+  }
+
+  &__return-photos {
+    display: grid;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+
+    input { color: var(--text-tertiary); }
+    small { color: var(--text-tertiary); }
   }
 
   // ---- 卡片网格 -----------------------------------------------------------

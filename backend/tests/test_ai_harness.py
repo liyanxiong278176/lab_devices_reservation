@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from app.ai.config import encrypt_api_key, get_runtime_config
+from app.ai.config import get_runtime_config
 from app.ai.graph.harness import AgentHarness, _heuristic_intent
 from app.ai.rag.qdrant_store import QdrantKnowledgeStore
 from app.api.v2.ai import confirm_ai_action, list_messages
@@ -11,7 +11,6 @@ from app.infrastructure.db.models import (
     AiConfirmation,
     AiConversation,
     AiMessage,
-    AiProviderConfig,
     AiRun,
     Role,
     User,
@@ -89,7 +88,7 @@ async def test_unconfigured_ai_explains_model_configuration(seeded, monkeypatch)
     done = next(event for event in events if event["type"] == "done")
     assert done["text"] == (
         "当前 AI 模型尚未配置，暂时无法进行通用对话。"
-        "请系统管理员在 AI 工作台右上角配置模型、API Key 并启用后重试。"
+        "请系统管理员检查后端 .env 中的聊天与 Embedding 配置并重启服务。"
     )
 
 
@@ -207,30 +206,18 @@ async def test_langgraph_write_tool_stops_at_persisted_confirmation(seeded, monk
 
 
 @pytest.mark.asyncio
-async def test_college_ai_config_overrides_global(seeded) -> None:
+async def test_ai_provider_runtime_config_comes_only_from_environment(seeded) -> None:
     factory, _, _, student1, _, _, _, _ = seeded
-    settings = Settings(environment="test", cors_origins=[], enable_workers=False)
+    settings = Settings(
+        environment="test",
+        cors_origins=[],
+        enable_workers=False,
+        ai_provider="deepseek",
+        ai_model="deepseek-flash",
+        ai_api_key="environment-chat-key",
+        ai_base_url="https://api.deepseek.com",
+    )
     async with factory() as session:
-        session.add_all(
-            [
-                AiProviderConfig(
-                    scope_key="global",
-                    provider="openai",
-                    model="gpt-4o-mini",
-                    api_key_encrypted=encrypt_api_key(settings, "global-key"),
-                    enabled=True,
-                ),
-                AiProviderConfig(
-                    scope_key=f"college:{student1.college_id}",
-                    college_id=student1.college_id,
-                    provider="openai",
-                    model="gpt-4.1-mini",
-                    api_key_encrypted=encrypt_api_key(settings, "college-key"),
-                    enabled=True,
-                ),
-            ]
-        )
-        await session.commit()
         runtime = await get_runtime_config(
             session,
             Principal(
@@ -244,9 +231,9 @@ async def test_college_ai_config_overrides_global(seeded) -> None:
             settings,
         )
 
-    assert runtime is not None
-    assert runtime.model == "gpt-4.1-mini"
-    assert runtime.api_key == "college-key"
+    assert runtime.model == "deepseek-flash"
+    assert runtime.api_key == "environment-chat-key"
+    assert runtime.base_url == "https://api.deepseek.com"
 
 
 @pytest.mark.asyncio
@@ -393,7 +380,9 @@ async def test_executed_confirmation_is_idempotent(seeded) -> None:
 
 
 @pytest.mark.asyncio
-async def test_global_ai_config_is_admin_only_and_used_by_students(seeded) -> None:
+async def test_admin_reads_environment_ai_config_without_persisting_keys(
+    seeded, monkeypatch
+) -> None:
     factory, _, _, student1, _, _, _, _ = seeded
     async with factory() as session:
         admin_role = Role(role_code="SYS_ADMIN", role_name="系统管理员")
@@ -411,10 +400,23 @@ async def test_global_ai_config_is_admin_only_and_used_by_students(seeded) -> No
         environment="test",
         cors_origins=[],
         enable_workers=False,
-        jwt_secret="ai-config-test-secret",
+        jwt_secret="ai-config-test-secret-with-at-least-32-bytes",
+        ai_api_key="environment-chat-key",
+        ai_embedding_api_key="environment-embedding-key",
+        ai_mineru_api_key="environment-mineru-key",
+        ai_user_daily_token_cap=1000,
+        ai_college_daily_token_cap=10000,
+        ai_global_daily_token_cap=100000,
     )
 
     app = create_app(settings)
+
+    async def successful_provider_test(*_args, **_kwargs):
+        from app.ai.providers import ProviderTestResult
+
+        return ProviderTestResult(success=True, message="连接成功", latency_ms=12)
+
+    monkeypatch.setattr("app.api.v2.ai.test_provider", successful_provider_test)
 
     async def override_db():
         async with factory() as session:
@@ -428,27 +430,50 @@ async def test_global_ai_config_is_admin_only_and_used_by_students(seeded) -> No
         )
         assert login.status_code == 200
         admin_token = login.json()["data"]["access_token"]
-        updated = await client.put(
+        configs = await client.get(
+            "/api/v2/ai/config/components",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert configs.status_code == 200
+        config_data = {item["component"]: item for item in configs.json()["data"]}
+        assert set(config_data) == {"chat", "embedding", "mineru"}
+        for component in config_data.values():
+            assert component["source"] == "environment"
+            assert component["configured"] is True
+            assert component["enabled"] is True
+            assert "api_key" not in component
+        assert config_data["chat"]["scope"] == "environment"
+        assert config_data["chat"]["provider"] == "deepseek"
+        assert config_data["chat"]["model"] == "deepseek-flash"
+        assert config_data["chat"]["user_daily_token_cap"] == 1000
+        assert config_data["chat"]["college_daily_token_cap"] == 10000
+        assert config_data["chat"]["global_daily_token_cap"] == 100000
+        assert "environment-chat-key" not in configs.text
+        assert "environment-embedding-key" not in configs.text
+        assert "environment-mineru-key" not in configs.text
+        test_result = await client.post(
+            "/api/v2/ai/config/chat/test",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={},
+        )
+        assert test_result.status_code == 200
+        assert test_result.json()["data"]["success"] is True
+        rejected_write = await client.put(
             "/api/v2/ai/config",
             headers={"Authorization": f"Bearer {admin_token}"},
-            json={
-                "provider": "openai",
-                "model": "gpt-4o-mini",
-                "api_key": "global-test-key",
-                "base_url": "https://api.openai.com/v1",
-                "enabled": True,
-                "daily_quota": 100,
-            },
+            json={"api_key": "must-not-be-stored"},
         )
-        assert updated.status_code == 200
-        assert updated.json()["data"] == {
-            "scope": "global",
-            "provider": "openai",
-            "model": "gpt-4o-mini",
-            "base_url": "https://api.openai.com/v1",
-            "configured": True,
-            "enabled": True,
-            "daily_quota": 100,
+        assert rejected_write.status_code == 405
+        readiness_response = await client.get(
+            "/api/v2/ai/status",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert readiness_response.status_code == 200
+        assert readiness_response.json()["data"] == {
+            "available": True,
+            "chat_configured": True,
+            "embedding_configured": True,
+            "message": "AI 服务已就绪",
         }
 
     app.dependency_overrides.clear()
@@ -468,5 +493,5 @@ async def test_global_ai_config_is_admin_only_and_used_by_students(seeded) -> No
         )
 
     assert runtime is not None
-    assert runtime.model == "gpt-4o-mini"
-    assert runtime.api_key == "global-test-key"
+    assert runtime.model == "deepseek-flash"
+    assert runtime.api_key == "environment-chat-key"

@@ -6,7 +6,7 @@ from app.api.v2.dashboard import dashboard_me, dashboard_overview
 from app.application.repairs import RepairService
 from app.auth.security import Principal
 from app.core.errors import ApiError
-from app.infrastructure.db.models import RepairReport, Reservation
+from app.infrastructure.db.models import OutboxTask, RepairReport, RepairWorklog, Reservation
 from sqlalchemy import select
 
 
@@ -80,6 +80,109 @@ async def test_repair_create_respects_college_boundary(seeded) -> None:
                 image_urls=None,
             )
         assert error.value.code == "DEVICE_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_manager_can_reject_a_pending_repair(seeded) -> None:
+    factory, _, _, student, _, manager, device, _ = seeded
+    async with factory() as session:
+        created = await RepairService(session, principal(student, "STUDENT")).create(
+            device_id=device.id,
+            title="设备无法启动",
+            description="开机无响应",
+            image_urls=None,
+        )
+
+    async with factory() as session:
+        rejected = await RepairService(session, principal(manager, "LAB_ADMIN")).reject(
+            created.id,
+            "经核实为操作问题，不属于设备故障",
+        )
+
+    assert rejected.status == "REJECTED"
+    assert rejected.resolution_note == "经核实为操作问题，不属于设备故障"
+    async with factory() as session:
+        worklogs = list(
+            (
+                await session.scalars(
+                    select(RepairWorklog)
+                    .where(RepairWorklog.report_id == created.id)
+                    .order_by(RepairWorklog.id)
+                )
+            ).all()
+        )
+        assert [worklog.status for worklog in worklogs] == ["PENDING", "REJECTED"]
+
+
+@pytest.mark.asyncio
+async def test_reopened_repair_can_be_resolved_again_without_duplicate_outbox_keys(seeded) -> None:
+    factory, _, _, student, _, manager, device, _ = seeded
+    async with factory() as session:
+        created = await RepairService(session, principal(student, "STUDENT")).create(
+            device_id=device.id,
+            title="设备间歇性断电",
+            description="使用中会突然关机",
+            image_urls=None,
+        )
+
+    async with factory() as session:
+        await RepairService(session, principal(manager, "LAB_ADMIN")).take(created.id)
+    async with factory() as session:
+        await RepairService(session, principal(manager, "LAB_ADMIN")).resolve(
+            created.id,
+            "更换电源后完成初次处理",
+        )
+
+    task_key = f"repair:{created.id}:auto-close"
+    async with factory() as session:
+        original_task = await session.scalar(
+            select(OutboxTask).where(OutboxTask.task_key == task_key)
+        )
+        assert original_task is not None
+        original_task_id = original_task.id
+        original_deadline = original_task.execute_at
+
+    async with factory() as session:
+        reopened = await RepairService(session, principal(student, "STUDENT")).confirm(
+            created.id,
+            confirmed=False,
+            note="问题仍然存在",
+        )
+        assert reopened.status == "PROCESSING"
+
+    async with factory() as session:
+        cancelled_task = await session.scalar(
+            select(OutboxTask).where(OutboxTask.task_key == task_key)
+        )
+        assert cancelled_task is not None
+        assert cancelled_task.status == "CANCELLED"
+
+    async with factory() as session:
+        resolved_again = await RepairService(
+            session,
+            principal(manager, "LAB_ADMIN"),
+        ).resolve(created.id, "重新检修后完成处理")
+        assert resolved_again.status == "RESOLVED"
+
+    async with factory() as session:
+        reset_task = await session.scalar(select(OutboxTask).where(OutboxTask.task_key == task_key))
+        assert reset_task is not None
+        assert reset_task.id == original_task_id
+        assert reset_task.status == "PENDING"
+        assert reset_task.attempts == 0
+        assert reset_task.execute_at >= original_deadline
+        notification_keys = list(
+            (
+                await session.scalars(
+                    select(OutboxTask.task_key).where(
+                        OutboxTask.task_type == "NOTIFICATION",
+                        OutboxTask.aggregate_key == f"repair:{created.id}",
+                    )
+                )
+            ).all()
+        )
+        assert len(notification_keys) == 5
+        assert len(notification_keys) == len(set(notification_keys))
 
 
 @pytest.mark.asyncio

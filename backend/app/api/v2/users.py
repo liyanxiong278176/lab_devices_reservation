@@ -14,6 +14,7 @@ from app.common.response import ApiResponse
 from app.core.errors import ApiError
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
 from app.infrastructure.db.models import College, RefreshSession, Role, User
+from app.infrastructure.db.pagination import delayed_page_ids, page_metadata, page_offset
 from app.infrastructure.db.session import get_db
 
 router = APIRouter(dependencies=[Depends(enforce_authenticated_rate_limit)])
@@ -99,13 +100,11 @@ async def list_users(
     status: int | None = Query(default=None, ge=0, le=1),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
-    cursor: int | None = Query(default=None, ge=1),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, object]]:
     _require_admin(principal)
-    if page != 1 and cursor is None:
-        raise ApiError("CURSOR_REQUIRED", "深页查询必须携带上一页游标", 422)
+    page_offset(page, size)
     conditions = []
     if username:
         conditions.append(User.username.like(f"%{username.strip()}%"))
@@ -114,33 +113,31 @@ async def list_users(
     if status is not None:
         conditions.append(User.status == status)
     total = int(await session.scalar(select(func.count(User.id)).where(*conditions)) or 0)
-    query_conditions = list(conditions)
-    if cursor is not None:
-        query_conditions.append(User.id < cursor)
+    page_ids = delayed_page_ids(
+        select(User.id).where(*conditions),
+        User.id,
+        page=page,
+        page_size=size,
+    )
     rows = list(
         (
             await session.scalars(
                 select(User)
+                .join(page_ids, page_ids.c.id == User.id)
                 .options(selectinload(User.roles))
-                .where(*query_conditions)
                 .order_by(User.id.desc())
-                .offset((page - 1) * size if cursor is None else 0)
-                .limit(size + 1)
             )
         ).all()
     )
-    has_more = len(rows) > size
-    if has_more:
-        rows = rows[:size]
+    pages, truncated = page_metadata(total, size)
     return ApiResponse.ok(
         {
             "records": [_data(user) for user in rows],
             "total": total,
             "size": size,
             "current": page,
-            "pages": (total + size - 1) // size,
-            "next_cursor": rows[-1].id if has_more and rows else None,
-            "has_more": has_more,
+            "pages": pages,
+            "truncated": truncated,
         }
     )
 
@@ -281,9 +278,17 @@ async def update_user_status(
     _require_admin(principal)
     if user_id == principal.user_id and status == 0:
         raise ApiError("SELF_DISABLE_FORBIDDEN", "不能禁用当前登录账号", 409)
-    user = await session.scalar(select(User).where(User.id == user_id))
+    user = await session.scalar(
+        select(User).options(selectinload(User.roles)).where(User.id == user_id)
+    )
     if user is None:
         raise ApiError("USER_NOT_FOUND", "用户不存在", 404)
+    if (
+        status == 1
+        and user.college_id is None
+        and not any(role.role_code == "SYS_ADMIN" for role in user.roles)
+    ):
+        raise ApiError("COLLEGE_REQUIRED", "启用普通用户前必须先分配所属学院", 422)
     user.status = status
     if status == 0:
         await session.execute(

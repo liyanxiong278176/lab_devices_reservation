@@ -1,7 +1,8 @@
 import asyncio
+import secrets
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import select, text, update
@@ -34,14 +35,28 @@ def _health_data(settings: Settings) -> HealthData:
     )
 
 
-@router.get("/live", response_model=ApiResponse[HealthData])
-async def live(request: Request) -> ApiResponse[HealthData]:
-    settings: Settings = request.app.state.settings
-    return ApiResponse.ok(_health_data(settings), request.state.request_id)
+@router.get("/live", response_model=ApiResponse[dict[str, str]])
+async def live(request: Request) -> ApiResponse[dict[str, str]]:
+    # The public container probe needs only liveness, not service/version/config details.
+    return ApiResponse.ok({"status": "ok"}, request.state.request_id)
 
 
 @router.get("/metrics", response_class=PlainTextResponse, include_in_schema=False)
-async def metrics(request: Request) -> PlainTextResponse:
+async def metrics(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> PlainTextResponse:
+    settings: Settings = request.app.state.settings
+    configured_token = settings.metrics_token
+    provided_token = (
+        authorization[len("Bearer ") :]
+        if authorization and authorization.startswith("Bearer ")
+        else ""
+    )
+    if not configured_token:
+        raise ApiError("NOT_FOUND", "资源不存在", 404)
+    if not secrets.compare_digest(provided_token, configured_token):
+        raise ApiError("AUTH_REQUIRED", "无权访问监控指标", 401)
     registry = getattr(request.app.state, "metrics", None)
     return PlainTextResponse(registry.render_prometheus() if registry is not None else "")
 
@@ -113,7 +128,10 @@ async def retry_outbox_task(
 
 
 @router.get("/ready", response_model=ApiResponse[HealthData])
-async def ready(request: Request) -> ApiResponse[HealthData]:
+async def ready(
+    request: Request,
+    principal: Principal = Depends(get_current_principal),
+) -> ApiResponse[HealthData]:
     """Check the durable dependency before accepting traffic.
 
     Tests intentionally use the lightweight configuration-only path. Redis is
@@ -121,6 +139,7 @@ async def ready(request: Request) -> ApiResponse[HealthData]:
     reservation lock is best-effort and the database uniqueness constraint is
     authoritative.
     """
+    _require_system_admin(principal)
     settings: Settings = request.app.state.settings
     if settings.environment == "test":
         return ApiResponse.ok(_health_data(settings), request.state.request_id)

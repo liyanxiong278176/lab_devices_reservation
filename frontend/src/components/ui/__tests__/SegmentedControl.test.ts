@@ -78,6 +78,17 @@ describe('SegmentedControl', () => {
     expect(i.trim()).toBe('1')
   })
 
+  it('纵向模式按选项数分行，滑块可按纵向选中项定位', () => {
+    const wrapper = mount(SegmentedControl, {
+      props: { modelValue: 'b', options: OPTS, orientation: 'vertical' },
+    })
+    const root = wrapper.find('.segmented')
+    const slider = wrapper.find('.segmented__slider')
+    expect(root.classes()).toContain('segmented--vertical')
+    expect(root.element.getAttribute('style')).toContain('--n: 3')
+    expect(slider.element.getAttribute('style')).toContain('--i: 1')
+  })
+
   it('受控更新:--i 跟随 modelValue 变化', async () => {
     const wrapper = mount(SegmentedControl, {
       props: { modelValue: 'a', options: OPTS },

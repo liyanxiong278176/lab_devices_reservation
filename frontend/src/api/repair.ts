@@ -10,6 +10,7 @@ import type {
 interface V2Repair {
   id: number
   device_id: number
+  reservation_id?: number | null
   device_name: string
   reporter_id: number
   reporter_name?: string | null
@@ -34,14 +35,15 @@ interface V2RepairPage {
   total: number
   page: number
   page_size: number
-  next_cursor?: number | null
-  has_more?: boolean
+  pages: number
+  truncated: boolean
 }
 
 function mapRepair(row: V2Repair): RepairReportVO {
   return {
     id: row.id,
     deviceId: row.device_id,
+    reservationId: row.reservation_id ?? undefined,
     deviceName: row.device_name,
     reporterId: row.reporter_id,
     reporterName: row.reporter_name || undefined,
@@ -88,32 +90,30 @@ export const uploadRepairImage = (file: File) => {
   return request.post<unknown, { url: string }>('/repair-uploads', body)
 }
 
-export const myRepairs = (page = 1, size = 10, cursor?: number | null) =>
+export const myRepairs = (page = 1, size = 10) =>
   request
-    .get<unknown, V2RepairPage>('/repair-reports/mine', { params: { page, size, cursor: cursor || undefined } })
+    .get<unknown, V2RepairPage>('/repair-reports/mine', { params: { page, size } })
     .then((data): Page<RepairReportVO> => ({
       records: data.items.map(mapRepair),
       total: data.total,
       size: data.page_size,
       current: data.page,
-      pages: Math.ceil(data.total / data.page_size),
-      nextCursor: data.next_cursor,
-      hasMore: data.has_more,
+      pages: data.pages,
+      truncated: data.truncated,
     }))
 
-export const listRepairs = (status: RepairStatus | '' = '', page = 1, size = 10, cursor?: number | null) =>
+export const listRepairs = (status: RepairStatus | '' = '', page = 1, size = 10) =>
   request
     .get<unknown, V2RepairPage>('/repair-reports', {
-      params: { status: status || undefined, page, size, cursor: cursor || undefined },
+      params: { status: status || undefined, page, size },
     })
     .then((data): Page<RepairReportVO> => ({
       records: data.items.map(mapRepair),
       total: data.total,
       size: data.page_size,
       current: data.page,
-      pages: Math.ceil(data.total / data.page_size),
-      nextCursor: data.next_cursor,
-      hasMore: data.has_more,
+      pages: data.pages,
+      truncated: data.truncated,
     }))
 
 export const takeRepair = (id: number) =>

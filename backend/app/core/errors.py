@@ -5,6 +5,7 @@ from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,12 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
 
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled request error", exc_info=exc)
+    if isinstance(exc, SQLAlchemyTimeoutError):
+        return JSONResponse(
+            status_code=503,
+            content=_error_body(request, "SERVICE_BUSY", "当前请求较多，请稍后重试"),
+            headers={"Retry-After": "1"},
+        )
     if isinstance(exc, (TimeoutError, ConnectionError, OSError)) or (
         isinstance(exc, DBAPIError) and exc.connection_invalidated
     ):

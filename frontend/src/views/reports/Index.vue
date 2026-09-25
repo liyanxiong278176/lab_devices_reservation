@@ -43,7 +43,12 @@ const metrics = computed(() => {
     { label: '可管理设备', value: value.deviceCount, unit: '台', tone: 'accent' },
     { label: '预约记录', value: value.reservationCount, unit: '条', tone: 'blue' },
     { label: '报修工单', value: value.repairCount, unit: '条', tone: 'amber' },
-    { label: '设备利用率', value: formatPercent(value.utilizationRate), unit: '', tone: 'green' },
+    { label: '预约占用率', value: formatPercent(value.occupancyRate), unit: '', tone: 'green' },
+    { label: '实际使用率', value: formatPercent(value.actualUsageRate), unit: '', tone: 'blue' },
+    { label: '可预约设备日', value: value.bookableDeviceDays, unit: '设备日', tone: 'accent' },
+    { label: '维修停机', value: value.maintenanceDowntimeDays, unit: '设备日', tone: 'amber' },
+    { label: '平均审批耗时', value: value.averageApprovalHours.toFixed(1), unit: '小时', tone: 'blue' },
+    { label: '候补转化率', value: formatPercent(value.waitlistConversionRate), unit: '', tone: 'green' },
   ]
 })
 
@@ -56,7 +61,6 @@ function statusLabel(value: string) {
     PENDING: '待处理',
     APPROVED: '已通过',
     IN_USE: '使用中',
-    RETURN_PENDING: '待验收',
     COMPLETED: '已完成',
     CANCELLED: '已取消',
     REJECTED: '已拒绝',
@@ -152,6 +156,10 @@ onBeforeUnmount(stopPolling)
       <GradientButton :loading="loading" @click="load">刷新统计</GradientButton>
     </section>
 
+    <p class="reports-page__definition">
+      占用率统计已被预约的设备日；实际使用率统计完成交接的设备日。两者均以可预约设备日为分母，维修、停用和配置的不可预约日不计入；爽约只计入预约占用。
+    </p>
+
     <section v-loading="loading" class="reports-page__metrics">
       <GlowCard v-for="metric in metrics" :key="metric.label" class="report-metric" :class="`report-metric--${metric.tone}`">
         <span>{{ metric.label }}</span>
@@ -218,6 +226,7 @@ onBeforeUnmount(stopPolling)
 .reports-page__field { display: grid; gap: 6px; min-width: 170px; }.reports-page__field label { color: var(--text-tertiary); font-size: 11px; }.reports-page__field input { height: 36px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: var(--radius-control); color: var(--text-primary); background: var(--bg-elevated); }
 .reports-page__metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; min-height: 118px; }.report-metric { display: grid; gap: 14px; }.report-metric > span { color: var(--text-tertiary); font-size: 12px; }.report-metric strong { color: var(--text-primary); font-family: var(--font-display); font-size: 34px; letter-spacing: -.05em; }.report-metric small { margin-left: 5px; color: var(--text-tertiary); font-family: var(--font-sans); font-size: 12px; font-weight: 500; }.report-metric--accent { box-shadow: inset 0 2px 0 var(--accent), var(--shadow-soft-light); }.report-metric--blue { box-shadow: inset 0 2px 0 var(--accent-blue), var(--shadow-soft-light); }.report-metric--amber { box-shadow: inset 0 2px 0 var(--status-warning), var(--shadow-soft-light); }.report-metric--green { box-shadow: inset 0 2px 0 var(--status-success), var(--shadow-soft-light); }
 .reports-page__empty { grid-column: 1 / -1; display: grid; place-items: center; min-height: 100px; color: var(--text-tertiary); }.reports-page__columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }.reports-panel { display: grid; gap: 16px; }.reports-panel__head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }.reports-panel__head h2 { margin: 5px 0 0; color: var(--text-primary); font-family: var(--font-display); font-size: 18px; }.reports-panel__head > span { color: var(--text-tertiary); font-size: 12px; }.reports-page__eyebrow { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; letter-spacing: .13em; }.reports-panel__status-list { display: grid; gap: 8px; }.reports-panel__status-row { display: flex; justify-content: space-between; padding: 10px 12px; border-radius: var(--radius-control); background: var(--bg-elevated); color: var(--text-secondary); font-size: 13px; }.reports-panel__status-row strong { color: var(--text-primary); font-family: var(--font-mono); }.reports-panel__note { margin: 0; color: var(--text-tertiary); font-size: 12px; }.reports-panel--exports { margin-top: 0; }.reports-page__exports { display: grid; gap: 8px; }.reports-page__export-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: var(--radius-control); background: var(--bg-elevated); }.reports-page__export-item div:first-child { display: grid; gap: 4px; }.reports-page__export-item strong { color: var(--text-primary); font-size: 13px; }.reports-page__export-item span { color: var(--text-tertiary); font-size: 11px; }.reports-page__export-actions { display: flex; gap: 8px; }.reports-page__task { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font-size: 12px; }.reports-page__task .text-button { margin-left: auto; }
+.reports-page__definition { margin: -8px 0 0; color: var(--text-tertiary); font-size: 12px; line-height: 1.65; }
 @media (max-width: 900px) { .reports-page__metrics { grid-template-columns: repeat(2, 1fr); }.reports-page__columns { grid-template-columns: 1fr; } }
 @media (max-width: 620px) { .reports-page__metrics { grid-template-columns: 1fr; }.reports-page__toolbar { align-items: stretch; flex-direction: column; }.reports-page__field { min-width: 0; }.reports-page__export-item { align-items: flex-start; flex-direction: column; }.reports-page__export-actions { align-self: flex-end; } }
 </style>

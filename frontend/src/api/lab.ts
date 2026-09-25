@@ -22,6 +22,7 @@ interface V2LabPage {
   size: number
   current: number
   pages?: number
+  truncated: boolean
 }
 
 const mapLab = (row: V2Lab): Lab => ({
@@ -45,6 +46,7 @@ export const listLabs = (page = 1, size = 100) =>
     size: data.size,
     current: data.current,
     pages: data.pages,
+    truncated: data.truncated,
   }))
 
 const payload = (data: LabWritePayload) => ({

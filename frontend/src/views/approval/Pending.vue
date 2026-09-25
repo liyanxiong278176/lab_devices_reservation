@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 审批队列页：PageHeader + 活动流 + 右侧详情/处理抽屉。
-// 数据来源(API)/approve/reject/batch-approve 逻辑零改 —— 仅换展示层。
+// 审批通过后预约进入负责人设备交接队列。
 // reject(id, reason) 与批量 approve 契约不变，列表按钮保留给真实链路使用。
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -8,7 +8,6 @@ import dayjs from 'dayjs'
 import { approve, batchApprove, pendingApprovals, reject } from '@/api/approval'
 import type { ApprovalItemVO } from '@/types/approval'
 import type { Page } from '@/types/common'
-import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import { useNotificationStore } from '@/stores/notification'
 import { useStagger } from '@/composables/useStagger'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -16,17 +15,13 @@ import Tag from '@/components/ui/Tag.vue'
 import GradientButton from '@/components/ui/GradientButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import PageDepthNotice from '@/components/ui/PageDepthNotice.vue'
 
 const notifStore = useNotificationStore()
 
 const loading = ref(false)
 const page = ref<Page<ApprovalItemVO>>({ records: [], total: 0, size: 9, current: 1 })
 const query = ref<{ page: number; size: number }>({ page: 1, size: 9 })
-const cursorPager = useCursorPageChain<ApprovalItemVO>((cursor) => pendingApprovals(
-  1,
-  query.value.size,
-  cursor,
-))
 
 // 批量通过:选中 id 集合(原 selection: ApprovalItemVO[] → 简化为 id[],
 // batchApprove 仍接收 ids,契约不变)
@@ -46,7 +41,7 @@ const { reveal } = useStagger(listRef, { delay: 60 })
 async function load() {
   loading.value = true
   try {
-    page.value = await cursorPager.load(query.value.page)
+    page.value = await pendingApprovals(query.value.page, query.value.size)
     // 翻页/重载后清掉离开当前页的选中,避免跨页误批量
     const live = new Set(page.value.records.map((r) => r.id))
     selectedIds.value = selectedIds.value.filter((id) => live.has(id))
@@ -70,7 +65,6 @@ function onPageChange(p: number) {
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -98,9 +92,8 @@ function closeApproval() {
 async function onApprove(row: ApprovalItemVO) {
   try {
     await approve(row.id)
-    ElMessage.success('已通过')
+    ElMessage.success('已通过，预约进入设备交接队列')
     if (selectedApproval.value?.id === row.id) closeApproval()
-    cursorPager.reset()
     await load()
     notifStore.loadUnread()
   } catch {
@@ -132,7 +125,6 @@ async function onRejectConfirm(row: ApprovalItemVO) {
     closeApproval()
     rejectingId.value = null
     rejectReason.value = ''
-    cursorPager.reset()
     await load()
     notifStore.loadUnread()
   } catch {
@@ -149,9 +141,8 @@ async function onBatchApprove() {
   }
   try {
     await batchApprove([...selectedIds.value])
-    ElMessage.success(`已批量通过 ${selectedIds.value.length} 条`)
+    ElMessage.success(`已批量通过 ${selectedIds.value.length} 条，预约进入设备交接队列`)
     selectedIds.value = []
-    cursorPager.reset()
     await load()
     notifStore.loadUnread()
   } catch {
@@ -281,17 +272,18 @@ onMounted(load)
         <EmptyState
           icon="Checked"
           title="暂无待审批申请"
-          description="当前没有需要负责人处理的预约；自动确认设备的预约不会出现在这里。"
+          description="当前没有需要审批的预约；审批通过或自动确认的预约会进入设备交接队列。"
         />
       </div>
     </div>
 
     <!-- 分页(深色全局已桥接) -->
     <div v-if="page.records.length > 0" class="approval__pager">
+      <PageDepthNotice v-if="page.truncated" :total="page.total" />
       <el-pagination
         :current-page="page.current"
         :page-size="page.size"
-        :total="page.total"
+        :total="page.truncated ? Math.min(page.total, (page.pages || 1) * page.size) : page.total"
         :page-sizes="[9, 18, 36]"
         layout="total, sizes, prev, pager, next"
         background

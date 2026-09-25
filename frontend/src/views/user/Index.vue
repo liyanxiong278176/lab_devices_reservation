@@ -17,17 +17,12 @@ import GradientButton from '@/components/ui/GradientButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
 import TextButton from '@/components/ui/TextButton.vue'
 import Tag from '@/components/ui/Tag.vue'
-import { useCursorPageChain } from '@/composables/useCursorPageChain'
+import PageDepthNotice from '@/components/ui/PageDepthNotice.vue'
 
 const loading = ref(false)
 const page = ref<Page<UserVO>>({ records: [], total: 0, size: 10, current: 1 })
 const query = ref<UserQuery>({ page: 1, size: 10, username: '', realName: '' })
 const colleges = ref<CollegeVO[]>([])
-const cursorPager = useCursorPageChain<UserVO>((cursor) => listUsers({
-  ...query.value,
-  page: 1,
-  cursor,
-}))
 
 // 角色选项(表单下拉用)
 const roleOptions = [
@@ -119,7 +114,7 @@ const rules: FormRules = {
 async function load(targetPage = query.value.page || 1) {
   loading.value = true
   try {
-    const users = await cursorPager.load(targetPage)
+    const users = await listUsers({ ...query.value, page: targetPage })
     page.value = users
     if (!colleges.value.length) colleges.value = await listColleges()
   } catch {
@@ -131,7 +126,6 @@ async function load(targetPage = query.value.page || 1) {
 
 function onSearch() {
   query.value.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -142,7 +136,6 @@ function onPageChange(p: number) {
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -213,6 +206,7 @@ async function onSubmit() {
       ElMessage.success('已更新')
     }
     drawerVisible.value = false
+    query.value.page = 1
     await load()
   } catch {
     // 拦截器已提示
@@ -242,20 +236,26 @@ async function onToggleStatus(row: UserVO) {
   }
 }
 
-async function onDelete(row: UserVO) {
+async function onDisable(row: UserVO) {
   try {
-    await ElMessageBox.confirm(`确认删除用户「${row.username}」？`, '删除用户', {
+    await ElMessageBox.confirm(
+      `确认停用用户「${row.username}」？停用后会撤销其登录会话，历史业务记录会保留。`,
+      '停用账号',
+      {
       type: 'warning',
-      confirmButtonText: '删除',
+      confirmButtonText: '停用',
       cancelButtonText: '取消',
-    })
+      },
+    )
   } catch {
     return
   }
   try {
     await deleteUser(row.id)
-    ElMessage.success('已删除')
-    load()
+    ElMessage.success('账号已停用，历史记录已保留')
+    row.status = 0
+    query.value.page = 1
+    await load()
   } catch {
     // 拦截器已提示
   }
@@ -363,12 +363,12 @@ onMounted(load)
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <TextButton @click="openEdit(row)">编辑</TextButton>
-            <TextButton @click="onToggleStatus(row)">
-              {{ row.status === 1 ? '禁用' : '启用' }}
+            <TextButton v-if="row.status === 1" @click="onDisable(row)">
+              停用账号
             </TextButton>
-            <el-button link type="danger" class="umanage__delete" @click="onDelete(row)">
-              删除
-            </el-button>
+            <TextButton v-else @click="onToggleStatus(row)">
+              启用账号
+            </TextButton>
           </template>
         </el-table-column>
         <template #empty>
@@ -377,10 +377,11 @@ onMounted(load)
       </el-table>
 
       <div class="umanage__pager">
+        <PageDepthNotice v-if="page.truncated" :total="page.total" />
         <el-pagination
           :current-page="page.current"
           :page-size="page.size"
-          :total="page.total"
+          :total="page.truncated ? Math.min(page.total, (page.pages || 1) * page.size) : page.total"
           :page-sizes="[10, 20, 50]"
           :layout="`total, sizes, prev, pager, next`"
           :total-text="totalLabel"

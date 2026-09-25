@@ -13,7 +13,7 @@ import {
   uploadQualificationMaterial,
   deviceAvailability,
 } from '@/api/device'
-import { createReservation, preflightReservation } from '@/api/reservation'
+import { createReservation, joinWaitlist, preflightReservation } from '@/api/reservation'
 import type { DeviceAvailabilityVO, DeviceVO } from '@/types/device'
 import type { ReservationCreatePayload, ReservationPreflightVO } from '@/types/reservation'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -39,7 +39,17 @@ const qualificationSubmitting = ref(false)
 const qualificationNote = ref('')
 const qualificationFile = ref<File | null>(null)
 const selectedDates = ref<[string, string] | null>(null)
-const form = ref({ purpose: '' })
+const purposeCategories = [
+  { label: '教学实验', value: 'TEACHING' },
+  { label: '科研项目', value: 'RESEARCH' },
+  { label: '竞赛 / 毕业设计', value: 'COMPETITION_GRADUATION' },
+  { label: '其他', value: 'OTHER' },
+] as const
+const form = ref({
+  purpose: '',
+  purposeCategory: 'OTHER' as ReservationCreatePayload['purposeCategory'],
+  projectReference: '',
+})
 
 const rules: FormRules = {
   purpose: [{ required: true, min: 2, message: '请填写至少 2 个字的使用用途', trigger: 'blur' }],
@@ -103,6 +113,17 @@ async function loadDevice() {
   loading.value = true
   try {
     device.value = await getDevice(deviceId.value)
+    const startDate = route.query.startDate
+    const endDate = route.query.endDate
+    if (
+      typeof startDate === 'string'
+      && typeof endDate === 'string'
+      && dayjs(startDate, 'YYYY-MM-DD', true).isValid()
+      && dayjs(endDate, 'YYYY-MM-DD', true).isValid()
+      && !dayjs(endDate).isBefore(startDate, 'day')
+    ) {
+      selectedDates.value = [startDate, endDate]
+    }
     await loadAvailability()
   } finally {
     loading.value = false
@@ -121,6 +142,8 @@ async function runPreflight() {
       startDate: selectedDates.value[0],
       endDate: selectedDates.value[1],
       purpose: form.value.purpose || '设备使用',
+      purposeCategory: form.value.purposeCategory,
+      projectReference: form.value.projectReference.trim() || undefined,
     })
     if (preflight.value.safety_required || preflight.value.qualification_required) {
       const [docs, mine] = await Promise.all([
@@ -199,6 +222,8 @@ async function onSubmit() {
       startDate: selectedDates.value[0],
       endDate: selectedDates.value[1],
       purpose: form.value.purpose.trim(),
+      purposeCategory: form.value.purposeCategory,
+      projectReference: form.value.projectReference.trim() || undefined,
       commitMode: 'all_or_nothing',
     }
     const result = await createReservation(payload)
@@ -207,6 +232,46 @@ async function onSubmit() {
   } finally {
     submitting.value = false
   }
+}
+
+async function onJoinWaitlist(day: string) {
+  if (!device.value || form.value.purpose.trim().length < 2) {
+    ElMessage.warning('请先填写至少 2 个字的使用用途，再加入候补')
+    return
+  }
+  try {
+    await joinWaitlist({
+      deviceId: device.value.id,
+      reservationDate: day,
+      purpose: form.value.purpose.trim(),
+      purposeCategory: form.value.purposeCategory,
+      projectReference: form.value.projectReference.trim() || undefined,
+    })
+    ElMessage.success(`${day} 候补申请已提交；轮到后会为你保留 24 小时`)
+  } catch {
+    // 请求拦截器已展示错误
+  }
+}
+
+function applyDateSuggestion(suggestion: { start_date: string; end_date: string }) {
+  selectedDates.value = [suggestion.start_date, suggestion.end_date]
+}
+
+function applyDeviceSuggestion(suggestion: { device_id: number }) {
+  void router.push({
+    name: 'reservation-create',
+    query: {
+      deviceId: String(suggestion.device_id),
+      startDate: selectedDates.value?.[0],
+      endDate: selectedDates.value?.[1],
+    },
+  })
+}
+
+function canWaitlist(conflict: { date: string; status?: string | null }) {
+  return selectedDates.value?.[0] === selectedDates.value?.[1]
+    && conflict.date === selectedDates.value?.[0]
+    && ['PENDING', 'APPROVED', 'IN_USE'].includes(conflict.status || '')
 }
 
 function onCancel() {
@@ -285,6 +350,14 @@ onMounted(loadDevice)
           <el-form-item label="使用用途" prop="purpose">
             <el-input v-model="form.purpose" type="textarea" :rows="4" maxlength="500" show-word-limit placeholder="例如：完成材料拉伸实验并采集三组数据" />
           </el-form-item>
+          <el-form-item label="用途类别" required>
+            <el-select v-model="form.purposeCategory" class="date-picker" aria-label="用途类别">
+              <el-option v-for="item in purposeCategories" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="课程 / 项目编号（选填）">
+            <el-input v-model="form.projectReference" maxlength="160" placeholder="便于后续统计，不填也可以" />
+          </el-form-item>
         </el-form>
 
         <section class="preflight-card panel-card" :class="{ 'is-conflict': conflictCount > 0, 'is-loading': preflightLoading }">
@@ -300,8 +373,34 @@ onMounted(loadDevice)
             </div>
             <div v-if="conflictCount" class="conflict-tip">存在冲突日期，连续区间不能提交；请重新选择一段完全可用的日期。</div>
             <ul v-if="conflictCount" class="conflict-list">
-              <li v-for="conflict in preflight.conflicts" :key="conflict.date"><strong>{{ conflict.date }}</strong><span>{{ conflict.reason }}</span></li>
+              <li v-for="conflict in preflight.conflicts" :key="conflict.date">
+                <strong>{{ conflict.date }}</strong>
+                <span>{{ conflict.reason }}</span>
+                <GhostButton v-if="canWaitlist(conflict)" size="small" @click="onJoinWaitlist(conflict.date)">加入候补</GhostButton>
+              </li>
             </ul>
+            <section v-if="conflictCount && preflight.same_device_suggestions?.length" class="preflight-options">
+              <h4>同设备可用日期</h4>
+              <GhostButton
+                v-for="range in preflight.same_device_suggestions"
+                :key="`${range.start_date}-${range.end_date}`"
+                size="small"
+                @click="applyDateSuggestion(range)"
+              >
+                {{ range.start_date === range.end_date ? range.start_date : `${range.start_date} 至 ${range.end_date}` }}
+              </GhostButton>
+            </section>
+            <section v-if="conflictCount && preflight.similar_device_suggestions?.length" class="preflight-options">
+              <h4>本学院同类设备</h4>
+              <GhostButton
+                v-for="item in preflight.similar_device_suggestions"
+                :key="item.device_id"
+                size="small"
+                @click="applyDeviceSuggestion(item)"
+              >
+                {{ item.name }}{{ item.lab_name ? ` · ${item.lab_name}` : '' }}
+              </GhostButton>
+            </section>
           </template>
         </section>
 
@@ -338,15 +437,18 @@ onMounted(loadDevice)
               <strong>使用资质审核</strong>
               <p v-if="qualification?.status === 'PENDING'">申请已提交，等待实验室负责人审核。</p>
               <p v-else-if="qualification?.status === 'REJECTED'">上次申请未通过，请补充说明后重新提交。</p>
-              <p v-else-if="qualification?.status === 'APPROVED'">资质有效期至 {{ qualification.validUntil || '长期有效' }}。</p>
+              <p v-else-if="qualification?.status === 'APPROVED' && !preflight.qualification_approved">
+                资质有效期至 {{ qualification.validUntil }}，未覆盖本次预约结束日 {{ selectedDates?.[1] }}；请重新提交有效材料。
+              </p>
+              <p v-else-if="qualification?.status === 'APPROVED'">资质有效期至 {{ qualification.validUntil || '长期有效' }}，已覆盖本次预约日期。</p>
               <p v-else>该设备需要先提交培训或操作资质。</p>
-              <div v-if="qualification?.status !== 'APPROVED'" class="access-card__apply">
+              <div v-if="qualification?.status !== 'APPROVED' || !preflight.qualification_approved" class="access-card__apply">
                 <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" @change="onQualificationFileChange" />
                 <el-input v-model="qualificationNote" maxlength="500" placeholder="培训记录、证书或申请说明（可选）" />
               </div>
             </div>
             <GradientButton
-              v-if="qualification?.status !== 'PENDING' && qualification?.status !== 'APPROVED'"
+              v-if="qualification?.status !== 'PENDING' && (qualification?.status !== 'APPROVED' || !preflight.qualification_approved)"
               size="small"
               :loading="qualificationSubmitting"
               @click="applyQualification"
@@ -354,7 +456,7 @@ onMounted(loadDevice)
               提交资质申请
             </GradientButton>
             <Tag v-else-if="qualification?.status === 'PENDING'" variant="warning" size="small" round>审核中</Tag>
-            <Tag v-else variant="success" size="small" round>已通过</Tag>
+            <Tag v-else-if="preflight.qualification_approved" variant="success" size="small" round>已通过</Tag>
           </div>
         </section>
       </section>

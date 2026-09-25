@@ -8,7 +8,6 @@ import { getDevice, searchDevices } from '@/api/device'
 import type { DeviceQuery, DeviceStatus, DeviceVO } from '@/types/device'
 import type { Page } from '@/types/common'
 import { useStagger } from '@/composables/useStagger'
-import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import GlowCard from '@/components/ui/GlowCard.vue'
@@ -16,6 +15,7 @@ import StatusDot from '@/components/ui/StatusDot.vue'
 import Tag from '@/components/ui/Tag.vue'
 import TextButton from '@/components/ui/TextButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import PageDepthNotice from '@/components/ui/PageDepthNotice.vue'
 
 const router = useRouter()
 
@@ -33,11 +33,6 @@ const page = ref<Page<DeviceVO>>({ records: [], total: 0, size: 24, current: 1 }
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const selectedDevice = ref<DeviceVO | null>(null)
-const cursorPager = useCursorPageChain<DeviceVO>((cursor) => searchDevices({
-  ...query,
-  page: 1,
-  cursor,
-}))
 
 // SegmentedControl 选项:status ''=全部
 const statusOptions: { label: string; value: DeviceStatus | '' }[] = [
@@ -57,7 +52,7 @@ const subtitle = computed(() => `共 ${page.value.total} 台设备`)
 async function load() {
   loading.value = true
   try {
-    page.value = await cursorPager.load(query.page || 1)
+    page.value = await searchDevices({ ...query, page: query.page || 1 })
   } catch {
     // 拦截器已提示
   } finally {
@@ -69,7 +64,6 @@ async function load() {
 
 function onSearch() {
   query.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -78,7 +72,6 @@ function onReset() {
   query.status = ''
   query.categoryId = undefined
   query.labId = undefined
-  cursorPager.reset()
   onSearch()
 }
 
@@ -96,7 +89,6 @@ function onPageChange(p: number) {
 function onSizeChange(s: number) {
   query.size = s
   query.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -139,6 +131,7 @@ onMounted(load)
         :model-value="query.status ?? ''"
         :options="statusOptions"
         size="sm"
+        orientation="vertical"
         @update:model-value="onStatusChange"
       />
 
@@ -215,10 +208,11 @@ onMounted(load)
 
     <!-- 分页 -->
     <div v-if="page.records.length > 0" class="device-page__pager">
+      <PageDepthNotice v-if="page.truncated" :total="page.total" />
       <el-pagination
         :current-page="page.current"
         :page-size="page.size"
-        :total="page.total"
+        :total="page.truncated ? Math.min(page.total, (page.pages || 1) * page.size) : page.total"
         :page-sizes="[24, 48, 96]"
         layout="total, sizes, prev, pager, next"
         background

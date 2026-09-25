@@ -2,7 +2,7 @@
 
 ## 状态
 
-已采用（非 AI 范围）。
+已采用（非 AI 范围；第 2 项由 [ADR-0030](./0030-universal-reservation-handover.md) 更新）。
 
 ## 背景
 

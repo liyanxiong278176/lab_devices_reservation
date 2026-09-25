@@ -8,12 +8,12 @@ from fastapi import Depends, Request, WebSocket
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pwdlib.exceptions import UnknownHashError
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.errors import ApiError
-from app.infrastructure.db.models import User
+from app.infrastructure.db.models import RefreshSession, User
 from app.infrastructure.db.session import get_db
 
 password_hash = PasswordHash.recommended()
@@ -28,6 +28,7 @@ class Principal:
     roles: tuple[str, ...]
     token_type: Literal["access", "refresh"]
     token_id: str
+    session_id: str | None = None
 
     @property
     def is_system_admin(self) -> bool:
@@ -58,6 +59,7 @@ def create_token(
     user: User,
     token_type: Literal["access", "refresh"],
     token_id: str | None = None,
+    session_id: str | None = None,
 ) -> str:
     settings = request.app.state.settings
     now = datetime.now(UTC)
@@ -74,6 +76,7 @@ def create_token(
         "roles": role_codes,
         "type": token_type,
         "jti": token_id or uuid4().hex,
+        "sid": session_id,
         "iss": settings.jwt_issuer,
         "iat": now,
         "exp": now + ttl,
@@ -93,13 +96,15 @@ def decode_token(
             settings.jwt_secret,
             algorithms=["HS256"],
             issuer=settings.jwt_issuer,
-            options={"require": ["sub", "type", "jti", "iss", "exp"]},
+            options={"require": ["sub", "type", "jti", "sid", "iss", "exp"]},
         )
     except jwt.PyJWTError as exc:
         raise ApiError("TOKEN_INVALID", "令牌无效或已过期", 401) from exc
 
     if payload.get("type") != expected_type:
         raise ApiError("TOKEN_TYPE_INVALID", "令牌类型不正确", 401)
+    if not isinstance(payload.get("sid"), str) or not payload["sid"]:
+        raise ApiError("TOKEN_INVALID", "令牌会话无效", 401)
     try:
         user_id = int(payload["sub"])
     except (TypeError, ValueError) as exc:
@@ -111,6 +116,7 @@ def decode_token(
         roles=tuple(str(value) for value in payload.get("roles", [])),
         token_type=expected_type,  # type: ignore[arg-type]
         token_id=str(payload["jti"]),
+        session_id=str(payload["sid"]),
     )
 
 
@@ -122,10 +128,19 @@ async def get_current_principal(
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise ApiError("AUTH_REQUIRED", "请先登录", 401)
     token_principal = decode_token(request, credentials.credentials)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    active_session = exists(
+        select(RefreshSession.id).where(
+            RefreshSession.family_id == token_principal.session_id,
+            RefreshSession.user_id == token_principal.user_id,
+            RefreshSession.revoked_at.is_(None),
+            RefreshSession.expires_at > now,
+        )
+    )
     user = await session.scalar(
         select(User)
         .options(selectinload(User.roles))
-        .where(User.id == token_principal.user_id, User.status == 1)
+        .where(User.id == token_principal.user_id, User.status == 1, active_session)
     )
     if user is None:
         raise ApiError("USER_NOT_FOUND", "用户不存在或已禁用", 401)
@@ -136,6 +151,7 @@ async def get_current_principal(
         roles=tuple(role.role_code for role in user.roles),
         token_type=token_principal.token_type,
         token_id=token_principal.token_id,
+        session_id=token_principal.session_id,
     )
 
 

@@ -38,30 +38,35 @@ class ConfirmationData(BaseModel):
     expires_at: datetime
 
 
-class AiConfigUpdateRequest(BaseModel):
-    provider: str = Field(min_length=1, max_length=40)
-    model: str = Field(min_length=1, max_length=120)
-    api_key: str | None = Field(default=None, min_length=8, max_length=1000)
-    base_url: str | None = Field(default=None, max_length=500)
-    enabled: bool = True
-    daily_quota: int = Field(default=0, ge=0, le=1_000_000)
-
-
 class AiConfigData(BaseModel):
-    scope: str
+    component: str = "chat"
+    scope: str = "environment"
+    source: Literal["environment", "missing"] = "missing"
     provider: str | None
     model: str | None
     base_url: str | None
     configured: bool
     enabled: bool
     daily_quota: int
+    user_daily_token_cap: int = 0
+    college_daily_token_cap: int = 0
+    global_daily_token_cap: int = 0
+    last_tested_at: datetime | None = None
+
+
+class AiConfigTestData(BaseModel):
+    component: str
+    success: bool
+    message: str
+    model: str
+    latency_ms: int
 
 
 class KnowledgeCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     source_type: str = Field(default="FAQ", min_length=1, max_length=40)
     college_id: int | None = Field(default=None, gt=0)
-    body: str = Field(min_length=20, max_length=200_000)
+    body: str = Field(default="", max_length=200_000)
 
 
 class KnowledgeData(BaseModel):
@@ -74,3 +79,27 @@ class KnowledgeData(BaseModel):
     chunk_count: int = 0
     created_at: datetime | None = None
     published_at: datetime | None = None
+    source_file_name: str | None = None
+    parse_status: str = "NOT_REQUESTED"
+    parse_error: str | None = None
+
+
+class KnowledgeReviewRequest(BaseModel):
+    reviewed_text: str = Field(min_length=20, max_length=500_000)
+
+
+class AiEmbeddingRebuildRequest(BaseModel):
+    """Rebuild using the active Embedding configuration loaded from backend .env."""
+
+
+class AiEmbeddingRebuildData(BaseModel):
+    id: int
+    status: str
+    source_collection: str
+    target_collection: str
+    model: str
+    total_points: int
+    indexed_points: int
+    error_code: str | None = None
+    created_at: datetime | None = None
+    completed_at: datetime | None = None

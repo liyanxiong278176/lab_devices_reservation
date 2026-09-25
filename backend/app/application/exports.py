@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import csv
+import hashlib
+import io
+import json
+import re
+from collections.abc import AsyncIterator
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -21,6 +27,40 @@ def _serial(value: Any) -> Any:
     return value
 
 
+def safe_csv_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Prevent spreadsheet formula execution while preserving numeric cells."""
+    result: dict[str, Any] = {}
+    for key, value in row.items():
+        if isinstance(value, str) and re.match(r"^[\s\x00-\x1f]*[=+\-@]", value):
+            value = "'" + value
+        result[key] = value
+    return result
+
+
+def csv_chunk_text(
+    rows: list[dict[str, Any]],
+    fieldnames: list[str],
+    *,
+    include_header: bool = False,
+) -> str:
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    if include_header:
+        writer.writeheader()
+    writer.writerows(safe_csv_row(row) for row in rows)
+    return output.getvalue()
+
+
+def scope_fingerprint(device_ids: list[int] | None, scope: int | None) -> str:
+    """Stable fingerprint used to invalidate exports after manager scope changes."""
+    payload = json.dumps(
+        {"college_id": scope, "device_ids": sorted(device_ids) if device_ids is not None else None},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 async def managed_device_ids(
     session: AsyncSession,
     principal: Principal,
@@ -33,11 +73,7 @@ async def managed_device_ids(
         if college_id is None:
             return None, None
         rows = list(
-            (
-                await session.scalars(
-                    select(Device.id).where(Device.college_id == college_id)
-                )
-            ).all()
+            (await session.scalars(select(Device.id).where(Device.college_id == college_id))).all()
         )
         return [int(item) for item in rows], college_id
     scope = college_scope(principal)
@@ -62,12 +98,14 @@ async def managed_device_ids(
     return [int(item) for item in rows], scope
 
 
-async def export_rows(
+async def iter_export_rows(
     session: AsyncSession,
     principal: Principal,
     kind: ExportKind,
     filters: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+    *,
+    max_rows: int | None = None,
+) -> AsyncIterator[dict[str, Any]]:
     values = filters or {}
     requested_college = values.get("college_id")
     device_ids, scope = await managed_device_ids(
@@ -86,52 +124,54 @@ async def export_rows(
             conditions.append(Device.id.in_(device_ids) if device_ids else Device.id == -1)
         if values.get("status"):
             conditions.append(Device.status == str(values["status"]))
-        rows = list(
-            (
-                await session.execute(
-                    select(
-                        Device.id,
-                        Device.asset_code,
-                        Device.serial_number,
-                        Device.name,
-                        Device.brand,
-                        Device.model,
-                        Device.status,
-                        Device.risk_level,
-                        Device.allow_external_loan,
-                        Device.purchase_date,
-                        Device.warranty_until,
-                        Lab.name.label("lab_name"),
-                        College.name.label("college_name"),
-                    )
-                    .outerjoin(Lab, Lab.id == Device.lab_id)
-                    .outerjoin(College, College.id == Device.college_id)
-                    .where(*conditions)
-                    .order_by(Device.id)
-                )
-            ).all()
+        statement = (
+            select(
+                Device.id,
+                Device.asset_code,
+                Device.serial_number,
+                Device.name,
+                Device.brand,
+                Device.model,
+                Device.status,
+                Device.risk_level,
+                Device.allow_external_loan,
+                Device.purchase_date,
+                Device.warranty_until,
+                Lab.name.label("lab_name"),
+                College.name.label("college_name"),
+            )
+            .outerjoin(Lab, Lab.id == Device.lab_id)
+            .outerjoin(College, College.id == Device.college_id)
+            .where(*conditions)
+            .order_by(Device.id)
         )
-        return [
-            {
-                "设备ID": row.id,
-                "资产编号": row.asset_code,
-                "序列号": row.serial_number,
-                "设备名称": row.name,
-                "品牌": row.brand,
-                "型号": row.model,
-                "状态": row.status,
-                "风险等级": row.risk_level,
-                "允许外借": "是" if row.allow_external_loan else "否",
-                "购置日期": _serial(row.purchase_date),
-                "保修截止": _serial(row.warranty_until),
-                "实验室": row.lab_name,
-                "学院": row.college_name,
-            }
-            for row in rows
-        ]
+        if max_rows is not None:
+            statement = statement.limit(max_rows)
+        result = await session.stream(statement)
+        try:
+            async for partition in result.partitions(500):
+                for row in partition:
+                    yield {
+                        "设备ID": row.id,
+                        "资产编号": row.asset_code,
+                        "序列号": row.serial_number,
+                        "设备名称": row.name,
+                        "品牌": row.brand,
+                        "型号": row.model,
+                        "状态": row.status,
+                        "风险等级": row.risk_level,
+                        "允许外借": "是" if row.allow_external_loan else "否",
+                        "购置日期": _serial(row.purchase_date),
+                        "保修截止": _serial(row.warranty_until),
+                        "实验室": row.lab_name,
+                        "学院": row.college_name,
+                    }
+        finally:
+            await result.close()
+        return
 
     if device_ids is not None and not device_ids:
-        return []
+        return
     device_condition = Device.id.in_(device_ids) if device_ids is not None else True
     if kind == "reservations":
         conditions = [device_condition]
@@ -141,50 +181,56 @@ async def export_rows(
             conditions.append(Reservation.start_date <= end)
         if values.get("status"):
             conditions.append(Reservation.status == str(values["status"]))
-        rows = list(
-            (
-                await session.execute(
-                    select(
-                        Reservation.id,
-                        Reservation.start_date,
-                        Reservation.end_date,
-                        Reservation.status,
-                        Reservation.purpose,
-                        Reservation.created_at,
-                        Device.id.label("device_id"),
-                        Device.asset_code,
-                        Device.name.label("device_name"),
-                        Lab.name.label("lab_name"),
-                        User.username,
-                        User.real_name,
-                        College.name.label("college_name"),
-                    )
-                    .join(Device, Device.id == Reservation.device_id)
-                    .outerjoin(Lab, Lab.id == Device.lab_id)
-                    .outerjoin(User, User.id == Reservation.user_id)
-                    .outerjoin(College, College.id == Device.college_id)
-                    .where(*conditions)
-                    .order_by(Reservation.id)
-                )
-            ).all()
+        statement = (
+            select(
+                Reservation.id,
+                Reservation.start_date,
+                Reservation.end_date,
+                Reservation.status,
+                Reservation.purpose,
+                Reservation.purpose_category,
+                Reservation.project_reference,
+                Reservation.created_at,
+                Device.id.label("device_id"),
+                Device.asset_code,
+                Device.name.label("device_name"),
+                Lab.name.label("lab_name"),
+                User.username,
+                User.real_name,
+                College.name.label("college_name"),
+            )
+            .join(Device, Device.id == Reservation.device_id)
+            .outerjoin(Lab, Lab.id == Device.lab_id)
+            .outerjoin(User, User.id == Reservation.user_id)
+            .outerjoin(College, College.id == Device.college_id)
+            .where(*conditions)
+            .order_by(Reservation.id)
         )
-        return [
-            {
-                "预约ID": row.id,
-                "设备ID": row.device_id,
-                "资产编号": row.asset_code,
-                "设备名称": row.device_name,
-                "实验室": row.lab_name,
-                "预约人": row.real_name or row.username,
-                "学院": row.college_name,
-                "开始日期": _serial(row.start_date),
-                "结束日期": _serial(row.end_date),
-                "状态": row.status,
-                "用途": row.purpose,
-                "提交时间": _serial(row.created_at),
-            }
-            for row in rows
-        ]
+        if max_rows is not None:
+            statement = statement.limit(max_rows)
+        result = await session.stream(statement)
+        try:
+            async for partition in result.partitions(500):
+                for row in partition:
+                    yield {
+                        "预约ID": row.id,
+                        "设备ID": row.device_id,
+                        "资产编号": row.asset_code,
+                        "设备名称": row.device_name,
+                        "实验室": row.lab_name,
+                        "预约人": row.real_name or row.username,
+                        "学院": row.college_name,
+                        "开始日期": _serial(row.start_date),
+                        "结束日期": _serial(row.end_date),
+                        "状态": row.status,
+                        "用途": row.purpose,
+                        "用途类别": row.purpose_category,
+                        "课程或项目": row.project_reference,
+                        "提交时间": _serial(row.created_at),
+                    }
+        finally:
+            await result.close()
+        return
 
     if kind == "repairs":
         conditions = [device_condition]
@@ -193,59 +239,79 @@ async def export_rows(
                 RepairReport.created_at >= datetime.combine(start, datetime.min.time())
             )
         if end:
-            conditions.append(
-                RepairReport.created_at < datetime.combine(end, datetime.max.time())
-            )
+            conditions.append(RepairReport.created_at < datetime.combine(end, datetime.max.time()))
         if values.get("status"):
             conditions.append(RepairReport.status == str(values["status"]))
-        rows = list(
-            (
-                await session.execute(
-                    select(
-                        RepairReport.id,
-                        RepairReport.title,
-                        RepairReport.priority,
-                        RepairReport.status,
-                        RepairReport.created_at,
-                        RepairReport.taken_at,
-                        RepairReport.resolved_at,
-                        RepairReport.closed_at,
-                        Device.id.label("device_id"),
-                        Device.asset_code,
-                        Device.name.label("device_name"),
-                        User.username,
-                        User.real_name,
-                        College.name.label("college_name"),
-                    )
-                    .join(Device, Device.id == RepairReport.device_id)
-                    .outerjoin(User, User.id == RepairReport.reporter_id)
-                    .outerjoin(College, College.id == Device.college_id)
-                    .where(*conditions)
-                    .order_by(RepairReport.id)
-                )
-            ).all()
+        statement = (
+            select(
+                RepairReport.id,
+                RepairReport.title,
+                RepairReport.priority,
+                RepairReport.status,
+                RepairReport.created_at,
+                RepairReport.taken_at,
+                RepairReport.resolved_at,
+                RepairReport.closed_at,
+                Device.id.label("device_id"),
+                Device.asset_code,
+                Device.name.label("device_name"),
+                User.username,
+                User.real_name,
+                College.name.label("college_name"),
+            )
+            .join(Device, Device.id == RepairReport.device_id)
+            .outerjoin(User, User.id == RepairReport.reporter_id)
+            .outerjoin(College, College.id == Device.college_id)
+            .where(*conditions)
+            .order_by(RepairReport.id)
         )
-        return [
-            {
-                "报修ID": row.id,
-                "设备ID": row.device_id,
-                "资产编号": row.asset_code,
-                "设备名称": row.device_name,
-                "报修人": row.real_name or row.username,
-                "学院": row.college_name,
-                "优先级": row.priority,
-                "状态": row.status,
-                "提交时间": _serial(row.created_at),
-                "受理时间": _serial(row.taken_at),
-                "解决时间": _serial(row.resolved_at),
-                "关闭时间": _serial(row.closed_at),
-                "处理时长(天)": (
-                    (row.closed_at - row.created_at).days
-                    if row.closed_at and row.created_at
-                    else None
-                ),
-            }
-            for row in rows
-        ]
+        if max_rows is not None:
+            statement = statement.limit(max_rows)
+        result = await session.stream(statement)
+        try:
+            async for partition in result.partitions(500):
+                for row in partition:
+                    yield {
+                        "报修ID": row.id,
+                        "设备ID": row.device_id,
+                        "资产编号": row.asset_code,
+                        "设备名称": row.device_name,
+                        "报修人": row.real_name or row.username,
+                        "学院": row.college_name,
+                        "优先级": row.priority,
+                        "状态": row.status,
+                        "提交时间": _serial(row.created_at),
+                        "受理时间": _serial(row.taken_at),
+                        "解决时间": _serial(row.resolved_at),
+                        "关闭时间": _serial(row.closed_at),
+                        "处理时长(天)": (
+                            (row.closed_at - row.created_at).days
+                            if row.closed_at and row.created_at
+                            else None
+                        ),
+                    }
+        finally:
+            await result.close()
+        return
 
     raise ApiError("EXPORT_TYPE_INVALID", "不支持的导出类型", 422)
+
+
+async def export_rows(
+    session: AsyncSession,
+    principal: Principal,
+    kind: ExportKind,
+    filters: dict[str, Any] | None = None,
+    *,
+    max_rows: int | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        row
+        async for row in iter_export_rows(
+            session,
+            principal,
+            kind,
+            filters,
+            max_rows=max_rows,
+        )
+    ]

@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+MAX_RESERVATION_PLAN_DAYS = 31
+
 
 class DateWindow(BaseModel):
     start_date: date
@@ -12,9 +14,13 @@ class DateWindow(BaseModel):
     def validate_order(self) -> "DateWindow":
         if self.end_date < self.start_date:
             raise ValueError("结束日期不能早于开始日期")
+        if (self.end_date - self.start_date).days + 1 > MAX_RESERVATION_PLAN_DAYS:
+            raise ValueError("单次预约最多支持 31 个自然日")
         return self
 
     def dates(self) -> list[date]:
+        if (self.end_date - self.start_date).days + 1 > MAX_RESERVATION_PLAN_DAYS:
+            raise ValueError("单次预约最多支持 31 个自然日")
         return [
             date.fromordinal(value)
             for value in range(self.start_date.toordinal(), self.end_date.toordinal() + 1)
@@ -24,10 +30,12 @@ class DateWindow(BaseModel):
 class ReservationPlanRequest(BaseModel):
     device_id: int = Field(gt=0)
     purpose: str = Field(min_length=2, max_length=500)
+    purpose_category: Literal["TEACHING", "RESEARCH", "COMPETITION_GRADUATION", "OTHER"] = "OTHER"
+    project_reference: str | None = Field(default=None, max_length=160)
     start_date: date | None = None
     end_date: date | None = None
-    dates: list[date] | None = None
-    windows: list[DateWindow] | None = None
+    dates: list[date] | None = Field(default=None, max_length=MAX_RESERVATION_PLAN_DAYS)
+    windows: list[DateWindow] | None = Field(default=None, max_length=MAX_RESERVATION_PLAN_DAYS)
     commit_mode: Literal["all_or_nothing", "available_only"] = "all_or_nothing"
 
     @model_validator(mode="after")
@@ -45,6 +53,16 @@ class ReservationPlanRequest(BaseModel):
             if len(set(self.dates)) != len(self.dates):
                 raise ValueError("日期列表不能重复")
             self.dates = sorted(self.dates)
+        if self.start_date is not None and self.end_date is not None:
+            requested_days = (self.end_date - self.start_date).days + 1
+            if requested_days > MAX_RESERVATION_PLAN_DAYS:
+                raise ValueError("单次预约最多支持 31 个自然日")
+        elif self.windows:
+            requested_days = sum(
+                (window.end_date - window.start_date).days + 1 for window in self.windows
+            )
+            if requested_days > MAX_RESERVATION_PLAN_DAYS:
+                raise ValueError("单次预约最多支持 31 个自然日")
         return self
 
     def windows_for_request(self) -> list[DateWindow]:
@@ -87,6 +105,7 @@ class DeviceSummary(BaseModel):
     need_approval: bool
     max_reservation_days: int
     tags: list[str] | None = None
+    accessory_checklist: list[str] = Field(default_factory=list)
     asset_code: str | None = None
     serial_number: str | None = None
     purchase_date: date | None = None
@@ -96,7 +115,6 @@ class DeviceSummary(BaseModel):
     requires_safety_ack: bool = False
     requires_qualification: bool = False
     max_advance_days: int | None = None
-    qr_token: str | None = None
 
 
 class DeviceDetail(DeviceSummary):
@@ -149,6 +167,8 @@ class ReservationData(BaseModel):
     username: str | None = None
     real_name: str | None = None
     purpose: str | None
+    purpose_category: Literal["TEACHING", "RESEARCH", "COMPETITION_GRADUATION", "OTHER"] = "OTHER"
+    project_reference: str | None = None
     start_date: date
     end_date: date
     dates: list[date]
@@ -168,6 +188,24 @@ class ReservationData(BaseModel):
     safety_required: bool = False
     safety_acknowledged: bool = False
     safety_document_version: str | None = None
+    handover_image_urls: list[str] = Field(default_factory=list)
+    return_image_urls: list[str] = Field(default_factory=list)
+    accessory_snapshot: list[str] = Field(default_factory=list)
+    handover_checklist: list[dict[str, object]] = Field(default_factory=list)
+    return_checklist: list[dict[str, object]] = Field(default_factory=list)
+    fault_repair_id: int | None = None
+
+
+class ReservationDateSuggestion(BaseModel):
+    start_date: date
+    end_date: date
+
+
+class ReservationDeviceSuggestion(BaseModel):
+    device_id: int
+    name: str
+    lab_name: str | None = None
+    category_name: str | None = None
 
 
 class ReservationPreflightData(BaseModel):
@@ -181,6 +219,9 @@ class ReservationPreflightData(BaseModel):
     qualification_required: bool = False
     qualification_approved: bool = False
     safety_document_version: str | None = None
+    qualification_valid_until: date | None = None
+    same_device_suggestions: list[ReservationDateSuggestion] = Field(default_factory=list)
+    similar_device_suggestions: list[ReservationDeviceSuggestion] = Field(default_factory=list)
 
 
 class ReservationCreateData(BaseModel):
@@ -194,8 +235,8 @@ class ReservationPage(BaseModel):
     total: int
     page: int
     page_size: int
-    next_cursor: int | None = None
-    has_more: bool = False
+    pages: int = 0
+    truncated: bool = False
 
 
 class FeedbackCreateRequest(BaseModel):
@@ -220,16 +261,26 @@ class TransitionRequest(BaseModel):
 class ReturnInspectionRequest(BaseModel):
     condition: Literal["NORMAL", "DAMAGED", "MISSING"] = "NORMAL"
     note: str | None = Field(default=None, max_length=1000)
-    qr_token: str | None = Field(default=None, min_length=8, max_length=96)
+    image_urls: list[str] = Field(min_length=1, max_length=6)
+
+
+class AccessoryCheckInput(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    condition: Literal["NORMAL", "DAMAGED", "MISSING"]
+    note: str | None = Field(default=None, max_length=300)
 
 
 class HandoverRequest(BaseModel):
     condition: Literal["NORMAL", "DAMAGED", "MISSING"] = "NORMAL"
     note: str | None = Field(default=None, max_length=1000)
+    image_urls: list[str] = Field(min_length=1, max_length=6)
+    checklist: list[AccessoryCheckInput] = Field(default_factory=list, max_length=30)
 
 
-class DeviceScanRequest(BaseModel):
-    qr_token: str | None = Field(default=None, min_length=8, max_length=96)
+class ReturnAcceptanceRequest(BaseModel):
+    condition: Literal["NORMAL", "DAMAGED", "MISSING"] = "NORMAL"
+    note: str | None = Field(default=None, max_length=1000)
+    checklist: list[AccessoryCheckInput] = Field(default_factory=list, max_length=30)
 
 
 class SafetyAcknowledgementRequest(BaseModel):
@@ -262,6 +313,8 @@ class WaitlistCreateRequest(BaseModel):
     device_id: int = Field(gt=0)
     reservation_date: date
     purpose: str = Field(min_length=2, max_length=500)
+    purpose_category: Literal["TEACHING", "RESEARCH", "COMPETITION_GRADUATION", "OTHER"] = "OTHER"
+    project_reference: str | None = Field(default=None, max_length=160)
 
 
 class WaitlistData(BaseModel):
@@ -270,8 +323,16 @@ class WaitlistData(BaseModel):
     device_name: str | None = None
     reservation_date: date
     purpose: str
+    purpose_category: Literal["TEACHING", "RESEARCH", "COMPETITION_GRADUATION", "OTHER"] = "OTHER"
+    project_reference: str | None = None
     status: str
     created_at: datetime | None = None
+    offered_until: datetime | None = None
+
+
+class WaitlistConfirmationData(BaseModel):
+    waitlist_id: int
+    reservation: ReservationData
 
 
 class BlackoutCreateRequest(BaseModel):
@@ -298,6 +359,7 @@ class ApprovalRequest(BaseModel):
 class RepairData(BaseModel):
     id: int
     device_id: int
+    reservation_id: int | None = None
     device_name: str
     college_id: int | None = None
     reporter_id: int
@@ -383,5 +445,5 @@ class RepairPage(BaseModel):
     total: int
     page: int
     page_size: int
-    next_cursor: int | None = None
-    has_more: bool = False
+    pages: int = 0
+    truncated: bool = False

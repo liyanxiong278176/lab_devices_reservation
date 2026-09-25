@@ -22,8 +22,8 @@ interface V2ApprovalPage {
   total: number
   page: number
   page_size: number
-  next_cursor?: number | null
-  has_more?: boolean
+  pages: number
+  truncated: boolean
 }
 
 function mapApproval(item: V2Approval): ApprovalItemVO {
@@ -52,19 +52,18 @@ function mapApproval(item: V2Approval): ApprovalItemVO {
  *  - POST /approvals/{id}/reject                → 拒绝（body: { reason }，PENDING→REJECTED 释放槽）
  *  - POST /approvals/batch-approve              → 批量通过（body: { ids: [] }，任一非 PENDING 回滚整体）
  */
-export const pendingApprovals = (page = 1, size = 10, cursor?: number | null) =>
+export const pendingApprovals = (page = 1, size = 10) =>
   request
     .get<unknown, V2ApprovalPage>('/approvals/pending', {
-      params: { page, page_size: size, cursor: cursor || undefined },
+      params: { page, page_size: size },
     })
     .then((data): Page<ApprovalItemVO> => ({
       records: data.items.map(mapApproval),
       total: data.total,
       size: data.page_size,
       current: data.page,
-      pages: Math.ceil(data.total / data.page_size),
-      nextCursor: data.next_cursor,
-      hasMore: data.has_more,
+      pages: data.pages,
+      truncated: data.truncated,
     }))
 
 export const approve = (id: number) =>

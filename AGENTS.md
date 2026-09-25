@@ -19,13 +19,15 @@ frontend/e2e             Playwright 浏览器链路测试
 
 ```powershell
 # 启动开发依赖
+# 首次运行前复制 .env.example 为 .env，并填写 DB_ROOT_PASSWORD、DB_APP_PASSWORD。
+# Copy-Item .env.example .env
 docker compose up -d mysql redis qdrant
 
 # 后端
 cd backend
 uv sync
 uv run alembic upgrade head
-uv run uvicorn app.main:app --reload --port 8000
+uv run uvicorn app.main:app --loop app.core.uvicorn_loop:platform_loop_factory --reload --port 8000
 
 # 后端检查
 uv run ruff check .
@@ -49,7 +51,7 @@ pnpm test
 - 预约状态只能由应用服务集中流转：`PENDING → APPROVED → IN_USE → COMPLETED`；待审批/已批准且尚未开始可取消；批准/使用中可违规；批准后可爽约；驳回使用独立的 `REJECTED` 终态。
 - 签到只允许预约首日，归还只允许预约结束日；内部可保存精确审计时间，但不作为用户预约粒度。
 - 同一设备同一天由数据库唯一约束最终防超约，Redis 锁只做减少冲突的优化；锁失败必须回到数据库约束路径。
-- 深页列表使用稳定的主键游标：`ORDER BY id DESC`、`id < cursor`；不能新增大 OFFSET 深页接口。
+- 列表支持直接页码跳转，使用延迟关联：先按稳定主键 `ORDER BY id DESC` 在 ID 查询中分页，再关联读取本页完整记录；后端最多允许跳过 100,000 条匹配记录，前端限制可访问页并提示缩小筛选。学院/负责人权限过滤必须在 ID 子查询中执行，不能先取全行再 OFFSET。
 - 所有写接口都要做服务端学院范围校验，不能依赖前端隐藏菜单。
 - 新增或改表只能追加 Alembic revision，禁止修改已经执行过的 migration 文件。
 - AI 目录、LangChain、LangGraph、Qdrant 属于独立业务边界。本轮非 AI 改造不得修改 AI Agent、RAG、模型配置或确认协议。
@@ -66,7 +68,7 @@ pnpm test
 
 ## 数据库迁移
 
-当前 Alembic head 为 `0013_reservation_feedback`。新增表或索引时：
+当前 Alembic head 为 `0023_refresh_session_families`。新增表或索引时：
 
 1. 新建 `backend/migrations/versions/00xx_*.py`。
 2. 更新 ORM 模型和测试夹具。

@@ -1,8 +1,7 @@
-import secrets
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -47,6 +46,7 @@ class DeviceCreateRequest(BaseModel):
     need_approval: bool = False
     max_reservation_days: int = Field(default=8, ge=1, le=31)
     tags: list[str] | None = None
+    accessory_checklist: list[str] = Field(default_factory=list, max_length=30)
     asset_code: str | None = Field(default=None, min_length=2, max_length=80)
     serial_number: str | None = Field(default=None, max_length=120)
     purchase_date: date | None = None
@@ -56,6 +56,16 @@ class DeviceCreateRequest(BaseModel):
     requires_safety_ack: bool = False
     requires_qualification: bool = False
     max_advance_days: int | None = Field(default=None, ge=1, le=365)
+
+    @field_validator("accessory_checklist")
+    @classmethod
+    def normalize_accessories(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values if value.strip()]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("配件清单不能包含重复项目")
+        if any(len(value) > 100 for value in normalized):
+            raise ValueError("单个配件名称不能超过 100 个字符")
+        return normalized
 
 
 class DeviceUpdateRequest(DeviceCreateRequest):
@@ -90,9 +100,8 @@ async def list_devices(
     search: str | None = Query(default=None, max_length=100),
     lab_id: int | None = Query(default=None, gt=0),
     status: str | None = Query(default=None, max_length=20),
-    page: int = Query(default=1, ge=1, le=10000),
+    page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    cursor: int | None = Query(default=None, ge=1),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, object]]:
@@ -103,13 +112,12 @@ async def list_devices(
         get_redis_circuit(request.app),
     )
     service = ReservationService(session, principal, cache=cache)
-    items, total, next_cursor, has_more = await service.list_devices(
+    items, total, pages, truncated = await service.list_devices(
         search=search,
         lab_id=lab_id,
         status=status,
         page=page,
         page_size=page_size,
-        cursor=cursor,
         include_meta=True,
     )
     return ApiResponse.ok(
@@ -118,8 +126,8 @@ async def list_devices(
             "total": total,
             "page": page,
             "page_size": page_size,
-            "next_cursor": next_cursor,
-            "has_more": has_more,
+            "pages": pages,
+            "truncated": truncated,
         }
     )
 
@@ -179,6 +187,7 @@ async def create_device(
         need_approval=payload.need_approval,
         max_reservation_days=payload.max_reservation_days,
         tags=payload.tags,
+        accessory_checklist=payload.accessory_checklist,
         asset_code=payload.asset_code.strip() if payload.asset_code else None,
         serial_number=payload.serial_number.strip() if payload.serial_number else None,
         purchase_date=payload.purchase_date,
@@ -188,7 +197,6 @@ async def create_device(
         requires_safety_ack=payload.requires_safety_ack,
         requires_qualification=payload.requires_qualification,
         max_advance_days=payload.max_advance_days,
-        qr_token=secrets.token_urlsafe(48),
         status="IDLE",
     )
     session.add(device)
@@ -223,6 +231,7 @@ async def create_device(
             need_approval=device.need_approval,
             max_reservation_days=device.max_reservation_days,
             tags=device.tags,
+            accessory_checklist=device.accessory_checklist or [],
             asset_code=device.asset_code,
             serial_number=device.serial_number,
             purchase_date=device.purchase_date,
@@ -232,7 +241,6 @@ async def create_device(
             requires_safety_ack=device.requires_safety_ack,
             requires_qualification=device.requires_qualification,
             max_advance_days=device.max_advance_days,
-            qr_token=device.qr_token,
             category_name=None,
         )
     )
@@ -282,6 +290,7 @@ async def update_device(
     device.need_approval = payload.need_approval
     device.max_reservation_days = payload.max_reservation_days
     device.tags = payload.tags
+    device.accessory_checklist = payload.accessory_checklist
     device.asset_code = payload.asset_code.strip() if payload.asset_code else None
     device.serial_number = payload.serial_number.strip() if payload.serial_number else None
     device.purchase_date = payload.purchase_date
@@ -291,8 +300,6 @@ async def update_device(
     device.requires_safety_ack = payload.requires_safety_ack
     device.requires_qualification = payload.requires_qualification
     device.max_advance_days = payload.max_advance_days
-    if not device.qr_token:
-        device.qr_token = secrets.token_urlsafe(48)
     append_audit(
         session,
         user_id=principal.user_id,
@@ -323,7 +330,7 @@ async def delete_device(
         await session.scalar(
             select(func.count(Reservation.id)).where(
                 Reservation.device_id == device_id,
-                Reservation.status.in_(("PENDING", "APPROVED", "IN_USE", "RETURN_PENDING")),
+                Reservation.status.in_(("PENDING", "APPROVED", "IN_USE")),
             )
         )
         or 0
@@ -397,9 +404,7 @@ async def update_device_status(
             reservation.status = "REJECTED"
             reservation.reject_reason = f"设备已进入{payload.status}状态，暂不可预约"
             await session.execute(
-                delete(ReservationItem).where(
-                    ReservationItem.reservation_id == reservation.id
-                )
+                delete(ReservationItem).where(ReservationItem.reservation_id == reservation.id)
             )
             session.add(
                 OutboxTask(

@@ -9,3 +9,10 @@ target/
 **/__pycache__/
 backend/.venv/
 backend/.pytest_cache/
+# Runtime secrets are injected by Compose; never send them in the image context.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example

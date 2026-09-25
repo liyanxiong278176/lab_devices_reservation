@@ -7,6 +7,7 @@ from app.common.response import ApiResponse
 from app.core.errors import ApiError
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
 from app.infrastructure.db.models import Notification
+from app.infrastructure.db.pagination import delayed_page_ids, page_metadata, page_offset
 from app.infrastructure.db.session import get_db
 
 router = APIRouter(dependencies=[Depends(enforce_authenticated_rate_limit)])
@@ -41,41 +42,36 @@ async def my_notifications(
     only_unread: bool = Query(default=False, alias="onlyUnread"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=10, ge=1, le=100),
-    cursor: int | None = Query(default=None, ge=1),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, object]]:
-    if page != 1 and cursor is None:
-        raise ApiError("CURSOR_REQUIRED", "深页查询必须携带上一页游标", 422)
+    page_offset(page, size)
     conditions = _conditions(principal, only_unread)
     total = int(await session.scalar(select(func.count(Notification.id)).where(*conditions)) or 0)
-    query_conditions = list(conditions)
-    if cursor is not None:
-        query_conditions.append(Notification.id < cursor)
-    order_columns = (Notification.id.desc(),)
+    page_ids = delayed_page_ids(
+        select(Notification.id).where(*conditions),
+        Notification.id,
+        page=page,
+        page_size=size,
+    )
     rows = list(
         (
             await session.scalars(
                 select(Notification)
-                .where(*query_conditions)
-                .order_by(*order_columns)
-                .offset(0)
-                .limit(size + 1)
+                .join(page_ids, page_ids.c.id == Notification.id)
+                .order_by(Notification.id.desc())
             )
         ).all()
     )
-    has_more = len(rows) > size
-    if has_more:
-        rows = rows[:size]
+    pages, truncated = page_metadata(total, size)
     return ApiResponse.ok(
         {
             "records": [_row(row) for row in rows],
             "total": total,
             "size": size,
             "current": page,
-            "pages": (total + size - 1) // size if total else 0,
-            "next_cursor": rows[-1].id if has_more and rows else None,
-            "has_more": has_more,
+            "pages": pages,
+            "truncated": truncated,
         }
     )
 

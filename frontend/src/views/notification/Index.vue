@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// 通知中心(R6 重构):PageHeader + SegmentedControl(全部/未读)+ 通知行列表
-// 未读左侧 2px 青色指示条 + 已读弱化(--text-tertiary)+ 点击未读标记已读 + 空态。
-// 已读操作同时更新当前列表和全局未读徽标，避免必须刷新页面才能看到最新状态。
+// 通知中心(R6 重构):PageHeader + SegmentedControl(全部/未读)+ 通知行列表和详情抽屉
+// 点击通知打开详情；未读项同时标记已读，但保留在当前列表和筛选结果中。
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
@@ -9,13 +8,13 @@ import { markAllRead, markRead, myNotifications } from '@/api/notification'
 import type { NotificationVO } from '@/types/notification'
 import type { Page } from '@/types/common'
 import { useNotificationStore } from '@/stores/notification'
-import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import { useStagger } from '@/composables/useStagger'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
 import Tag from '@/components/ui/Tag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import PageDepthNotice from '@/components/ui/PageDepthNotice.vue'
 
 const notifStore = useNotificationStore()
 
@@ -23,12 +22,9 @@ const loading = ref(false)
 const onlyUnread = ref(false)
 const page = ref<Page<NotificationVO>>({ records: [], total: 0, size: 10, current: 1 })
 const query = ref<{ page: number; size: number }>({ page: 1, size: 10 })
-const cursorPager = useCursorPageChain<NotificationVO>((cursor) => myNotifications({
-  onlyUnread: onlyUnread.value || undefined,
-  page: 1,
-  size: query.value.size,
-  cursor,
-}))
+const selectedNotification = ref<NotificationVO | null>(null)
+const detailVisible = ref(false)
+const markingRead = new Set<number>()
 
 // SegmentedControl 选项:全部 / 未读(对齐既有 onlyUnread 布尔;API 仅支持 all/unread,
 // 不强行加"已读"以免改查询逻辑——守住"逻辑零改")
@@ -47,7 +43,11 @@ const { reveal } = useStagger(listRef, { delay: 50 })
 async function load(targetPage = query.value.page) {
   loading.value = true
   try {
-    page.value = await cursorPager.load(targetPage)
+    page.value = await myNotifications({
+      onlyUnread: onlyUnread.value || undefined,
+      page: targetPage,
+      size: query.value.size,
+    })
   } catch {
     // 拦截器已提示
   } finally {
@@ -59,7 +59,6 @@ async function load(targetPage = query.value.page) {
 
 function onFilterChange() {
   query.value.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -76,11 +75,12 @@ function onPageChange(p: number) {
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  cursorPager.reset()
   void load()
 }
 
 async function onMarkRead(row: NotificationVO) {
+  if (row.isRead !== 0 || markingRead.has(row.id)) return
+  markingRead.add(row.id)
   try {
     await markRead(row.id)
     row.isRead = 1
@@ -90,6 +90,8 @@ async function onMarkRead(row: NotificationVO) {
     await notifStore.loadUnread()
   } catch {
     // 拦截器已提示
+  } finally {
+    markingRead.delete(row.id)
   }
 }
 
@@ -107,9 +109,11 @@ async function onMarkAllRead() {
   }
 }
 
-// 行点击:未读 → 标记已读(已读项无操作)。回车键可达性同效。
+// 点击任意通知查看完整详情；未读通知打开时自动标记已读。
 function onRowClick(row: NotificationVO) {
-  if (row.isRead === 0) onMarkRead(row)
+  selectedNotification.value = row
+  detailVisible.value = true
+  if (row.isRead === 0) void onMarkRead(row)
 }
 
 function typeLabel(t: string): string {
@@ -157,7 +161,9 @@ function fmt(t?: string): string {
 
 const totalLabel = computed(() => `共 ${page.value.total} 条`)
 
-onMounted(load)
+onMounted(() => {
+  void Promise.all([load(), notifStore.loadUnread()])
+})
 </script>
 
 <template>
@@ -186,6 +192,7 @@ onMounted(load)
         :model-value="filterValue"
         :options="filterOptions"
         size="sm"
+        orientation="vertical"
         @update:model-value="onFilterSegment"
       />
     </div>
@@ -199,11 +206,12 @@ onMounted(load)
         :class="{ 'notif-row--unread': row.isRead === 0 }"
         :data-read="row.isRead === 1 ? 'read' : 'unread'"
         data-stagger
-        :tabindex="row.isRead === 0 ? 0 : undefined"
-        :role="row.isRead === 0 ? 'button' : undefined"
-        :aria-label="row.isRead === 0 ? `${row.title}（未读，点击标记已读）` : undefined"
+        tabindex="0"
+        role="button"
+        :aria-label="`${row.title}（${row.isRead === 0 ? '未读' : '已读'}，点击查看详情）`"
         @click="onRowClick(row)"
         @keydown.enter.prevent="onRowClick(row)"
+        @keydown.space.prevent="onRowClick(row)"
       >
         <div class="notif-row__main">
           <div class="notif-row__head">
@@ -230,10 +238,11 @@ onMounted(load)
 
     <!-- 分页(EP pagination 已由 theme.dark.scss 桥接深色)-->
     <div v-if="page.records.length > 0" class="notif-page__pager">
+      <PageDepthNotice v-if="page.truncated" :total="page.total" />
       <el-pagination
         :current-page="page.current"
         :page-size="page.size"
-        :total="page.total"
+        :total="page.truncated ? Math.min(page.total, (page.pages || 1) * page.size) : page.total"
         :page-sizes="[10, 20, 50]"
         :layout="`total, sizes, prev, pager, next`"
         :total-text="totalLabel"
@@ -242,6 +251,44 @@ onMounted(load)
         @size-change="onSizeChange"
       />
     </div>
+
+    <el-drawer
+      v-model="detailVisible"
+      :title="selectedNotification?.title || '通知详情'"
+      size="520px"
+      direction="rtl"
+      modal-class="notification-detail-drawer"
+      :close-on-click-modal="true"
+    >
+      <div v-if="selectedNotification" class="notif-detail">
+        <div class="notif-detail__heading">
+          <Tag :variant="typeVariant(selectedNotification.type)" round>
+            {{ typeLabel(selectedNotification.type) }}
+          </Tag>
+          <span :class="['notif-detail__status', { 'notif-detail__status--unread': selectedNotification.isRead === 0 }]">
+            {{ selectedNotification.isRead === 0 ? '未读' : '已读' }}
+          </span>
+        </div>
+
+        <section class="notif-detail__message" aria-label="通知内容">
+          <p>{{ selectedNotification.content || '暂无详细内容。' }}</p>
+        </section>
+
+        <dl class="notif-detail__facts">
+          <div>
+            <dt>通知时间</dt>
+            <dd>{{ fmt(selectedNotification.createdAt) }}</dd>
+          </div>
+          <div v-if="selectedNotification.relatedType || selectedNotification.relatedId">
+            <dt>关联业务</dt>
+            <dd>
+              {{ selectedNotification.relatedType || '业务记录' }}
+              <template v-if="selectedNotification.relatedId">#{{ selectedNotification.relatedId }}</template>
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -321,21 +368,19 @@ onMounted(load)
     box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
   }
 
-  // 未读项 hover/焦点:抬升面 + 青边轻微强化(可点信号)
-  &--unread {
-    cursor: pointer;
+  // 所有通知都可打开详情；未读状态仅由上方青色指示条表达。
+  // hover/焦点时抬升面并轻微强化青边。
+  cursor: pointer;
 
-    &:hover,
-    &:focus-visible {
-      background: var(--bg-elevated);
-      border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-      outline: none;
-    }
+  &:hover,
+  &:focus-visible {
+    background: var(--bg-elevated);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    outline: none;
   }
 
-  // 已读项:整体弱化(无青条 + 三级文字 + 默认光标)
+  // 已读项:整体弱化(无青条 + 三级文字)
   &[data-read='read'] {
-    cursor: default;
     color: var(--text-tertiary);
 
     .notif-row__title,
@@ -403,6 +448,60 @@ onMounted(load)
   }
 }
 
+.notif-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 8px 4px 24px;
+
+  &__heading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  &__status {
+    color: var(--text-tertiary);
+    font-size: 12px;
+
+    &--unread { color: var(--accent); }
+  }
+
+  &__message {
+    padding: 18px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-control);
+    background: var(--bg-sunken);
+
+    p {
+      margin: 0;
+      color: var(--text-primary);
+      font-size: 14px;
+      line-height: 1.8;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  &__facts {
+    display: grid;
+    gap: 0;
+    margin: 0;
+    border-top: 1px solid var(--border-subtle);
+
+    div {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    dt { color: var(--text-tertiary); font-size: 12px; }
+    dd { margin: 0; color: var(--text-primary); font-size: 12px; text-align: right; }
+  }
+}
+
 @media (max-width: 720px) {
   .notif-overview { align-items: flex-start; flex-direction: column; }
   .notif-overview__count { padding: 10px 0 0; border-top: 1px solid var(--border-default); border-left: 0; }
@@ -413,5 +512,40 @@ onMounted(load)
   .notif-row {
     transition: none !important;
   }
+}
+</style>
+
+<style lang="scss">
+.notification-detail-drawer {
+  --el-drawer-bg-color: var(--bg-surface);
+  --el-drawer-title-text-color: var(--text-primary);
+
+  .el-drawer {
+    background: var(--bg-surface);
+    border-left: 1px solid var(--border-default);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .el-drawer__header {
+    margin-bottom: 0;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+  }
+
+  .el-drawer__title {
+    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .el-drawer__close-btn {
+    color: var(--text-secondary);
+
+    &:hover { color: var(--accent); }
+  }
+
+  .el-drawer__body { padding: 24px; }
 }
 </style>

@@ -5,9 +5,11 @@ import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, TypedDict
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
@@ -15,6 +17,8 @@ from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.config import AiRuntimeConfig
+from app.ai.graph.mysql_checkpointer import MySQLCheckpointSaver
+from app.ai.rag.hybrid import hybrid_search
 from app.ai.rag.qdrant_store import QdrantKnowledgeStore, SearchHit
 from app.ai.tools.policy import TOOL_POLICIES
 from app.ai.tools.registry import build_tool_catalog
@@ -25,7 +29,7 @@ from app.infrastructure.db.models import AiConfirmation, AiMessage, AiRun, Knowl
 
 AI_NOT_CONFIGURED_MESSAGE = (
     "当前 AI 模型尚未配置，暂时无法进行通用对话。"
-    "请系统管理员在 AI 工作台右上角配置模型、API Key 并启用后重试。"
+    "请系统管理员检查后端 .env 中的聊天与 Embedding 配置并重启服务。"
 )
 
 
@@ -43,6 +47,25 @@ class AgentState(TypedDict, total=False):
     answer: str
     steps: list[dict[str, Any]]
     degraded: bool
+    history: list[dict[str, str]]
+
+
+class TokenUsageAccumulator(BaseCallbackHandler):
+    def __init__(self) -> None:
+        self.input_tokens = 0
+        self.output_tokens = 0
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        del kwargs
+        usage = (getattr(response, "llm_output", None) or {}).get("token_usage") or {}
+        generations = getattr(response, "generations", [])
+        if generations and generations[0]:
+            message = getattr(generations[0][0], "message", None)
+            usage = getattr(message, "usage_metadata", None) or usage
+        self.input_tokens += int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+        self.output_tokens += int(
+            usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0
+        )
 
 
 class PlanDecision(BaseModel):
@@ -138,6 +161,8 @@ class AgentHarness:
         runtime: AiRuntimeConfig | None,
         run: AiRun,
         thread_id: str,
+        session_factory: Any | None = None,
+        embedding_runtime: AiRuntimeConfig | None = None,
     ) -> None:
         self.session = session
         self.principal = principal
@@ -145,7 +170,11 @@ class AgentHarness:
         self.runtime = runtime
         self.run = run
         self.thread_id = thread_id
-        self.store = QdrantKnowledgeStore(settings, runtime)
+        self.usage = TokenUsageAccumulator()
+        self.checkpointer = (
+            MySQLCheckpointSaver(session_factory) if session_factory else MemorySaver()
+        )
+        self.store = QdrantKnowledgeStore(settings, embedding_runtime)
         self.tools = {
             tool.name: tool
             for tool in build_tool_catalog(
@@ -155,6 +184,24 @@ class AgentHarness:
             )
         }
         self.graph = self._build_graph()
+
+    def _create_chat_model(self, *, temperature: float, stream_usage: bool = False):
+        if self.runtime is None:
+            raise RuntimeError("AI chat runtime is not configured")
+        from langchain_openai import ChatOpenAI
+
+        options = {
+            "model": self.runtime.model,
+            "api_key": self.runtime.api_key,
+            "base_url": self.runtime.base_url,
+            "temperature": temperature,
+            "timeout": self.settings.ai_provider_timeout_seconds,
+            "max_retries": 2,
+            "max_tokens": self.settings.ai_max_output_tokens,
+        }
+        if stream_usage:
+            options["stream_usage"] = True
+        return ChatOpenAI(**options)
 
     def _build_graph(self):
         builder = StateGraph(AgentState)
@@ -175,14 +222,16 @@ class AgentHarness:
             {END: END, "answer": "answer"},
         )
         builder.add_edge("answer", END)
-        return builder.compile(checkpointer=MemorySaver())
+        return builder.compile(checkpointer=self.checkpointer)
 
     async def _retrieve_node(self, state: AgentState) -> dict[str, Any]:
         started = datetime.now(UTC)
         try:
-            hits = await self.store.search(
+            hits = await hybrid_search(
+                self.session,
+                self.store,
                 state["input_text"],
-                self.principal.college_id,
+                self.principal,
                 self.settings.ai_max_context_documents,
             )
             allowed_ids = await self._authorized_document_ids([hit.document_id for hit in hits])
@@ -214,13 +263,16 @@ class AgentHarness:
             KnowledgeDocument.id.in_(document_ids),
             KnowledgeDocument.status == "PUBLISHED",
         ]
-        if self.principal.college_id is not None and not self.principal.is_system_admin:
-            conditions.append(
-                or_(
-                    KnowledgeDocument.college_id.is_(None),
-                    KnowledgeDocument.college_id == self.principal.college_id,
+        if not self.principal.is_system_admin:
+            if self.principal.college_id is None:
+                conditions.append(KnowledgeDocument.college_id.is_(None))
+            else:
+                conditions.append(
+                    or_(
+                        KnowledgeDocument.college_id.is_(None),
+                        KnowledgeDocument.college_id == self.principal.college_id,
+                    )
                 )
-            )
         rows = await self.session.scalars(select(KnowledgeDocument.id).where(*conditions))
         return {int(value) for value in rows}
 
@@ -252,16 +304,7 @@ class AgentHarness:
         if self.runtime is None or not self.runtime.api_key:
             return None
         try:
-            from langchain_openai import ChatOpenAI
-
-            model = ChatOpenAI(
-                model=self.runtime.model,
-                api_key=self.runtime.api_key,
-                base_url=self.runtime.base_url,
-                temperature=0,
-                timeout=15,
-                max_retries=1,
-            )
+            model = self._create_chat_model(temperature=0)
             prompt = ChatPromptTemplate.from_messages(
                 [
                     (
@@ -283,16 +326,15 @@ class AgentHarness:
                 {
                     "sources": json.dumps(sources, ensure_ascii=False),
                     "question": question,
-                }
+                },
+                config={"callbacks": [self.usage]},
             )
             if isinstance(decision, PlanDecision) and (
                 decision.intent == "answer" or decision.intent in self.tools
             ):
                 return decision
-        except Exception:
-            # Model planning is an enhancement; deterministic planning keeps
-            # the operational path available during provider degradation.
-            return None
+        except Exception as exc:
+            raise RuntimeError("AI provider planning failed after bounded retries") from exc
         return None
 
     async def _tool_node(self, state: AgentState) -> dict[str, Any]:
@@ -383,16 +425,7 @@ class AgentHarness:
     async def _llm_answer(self, state: AgentState) -> str:
         tool_result = state.get("tool_result", {})
         try:
-            from langchain_openai import ChatOpenAI
-
-            model = ChatOpenAI(
-                model=self.runtime.model,
-                api_key=self.runtime.api_key,
-                base_url=self.runtime.base_url,
-                temperature=0.1,
-                timeout=20,
-                max_retries=1,
-            )
+            model = self._create_chat_model(temperature=0.1, stream_usage=True)
             prompt = ChatPromptTemplate.from_messages(
                 [
                     (
@@ -402,19 +435,31 @@ class AgentHarness:
                         "如果缺少事实就明确说不知道，不要编造设备状态、预约结果或权限。\n"
                         "知识片段：{sources}\n工具结果：{tool_result}",
                     ),
+                    MessagesPlaceholder("history"),
                     ("human", "{question}"),
                 ]
             )
             chain = prompt | model | StrOutputParser()
-            return await chain.ainvoke(
+            writer = get_stream_writer()
+            answer_parts: list[str] = []
+            async for token in chain.astream(
                 {
                     "sources": json.dumps(state.get("sources", []), ensure_ascii=False),
                     "tool_result": json.dumps(tool_result, ensure_ascii=False),
+                    "history": [
+                        ("human" if item["role"] == "user" else "ai", item["content"])
+                        for item in state.get("history", [])
+                    ],
                     "question": state["input_text"],
-                }
-            )
-        except Exception:
-            return self._fallback_answer(state)
+                },
+                config={"callbacks": [self.usage]},
+            ):
+                if token:
+                    answer_parts.append(token)
+                    writer({"type": "token", "text": token})
+            return "".join(answer_parts)
+        except Exception as exc:
+            raise RuntimeError("AI provider answer failed after bounded retries") from exc
 
     def _fallback_answer(self, state: AgentState) -> str:
         intent = state.get("intent")
@@ -464,14 +509,37 @@ class AgentHarness:
             "college_id": self.principal.college_id,
             "steps": [],
         }
+        history_rows = list(
+            (
+                await self.session.scalars(
+                    select(AiMessage)
+                    .where(AiMessage.conversation_id == self.run.conversation_id)
+                    .order_by(AiMessage.id.desc())
+                    .limit(13)
+                )
+            ).all()
+        )
+        history_rows.reverse()
+        history: list[dict[str, str]] = []
+        for row in history_rows:
+            metadata = row.metadata_json or {}
+            if metadata.get("run_key") == self.run.run_key:
+                continue
+            if row.role in {"user", "assistant"}:
+                history.append({"role": row.role, "content": row.content[:12_000]})
+        initial["history"] = history[-12:]
         merged: AgentState = dict(initial)
         yield {"type": "run_started", "run_id": self.run.id}
         try:
-            async for update in self.graph.astream(
+            async for mode, update in self.graph.astream(
                 initial,
                 config={"configurable": {"thread_id": self.thread_id}},
-                stream_mode="updates",
+                stream_mode=["updates", "custom"],
             ):
+                if mode == "custom":
+                    if isinstance(update, dict):
+                        yield update
+                    continue
                 for node, value in update.items():
                     merged.update(value)
                     if node == "retrieve":
@@ -498,10 +566,16 @@ class AgentHarness:
                         }
                         if merged.get("pending"):
                             yield {"type": "confirmation_required", **merged["pending"]}
-                    elif node == "answer" and merged.get("answer"):
-                        yield {"type": "token", "text": merged["answer"]}
             if merged.get("pending"):
-                self.run.status = "WAITING_CONFIRMATION"
+                result = await self.session.execute(
+                    sql_update(AiRun)
+                    .where(AiRun.id == self.run.id, AiRun.status == "RUNNING")
+                    .values(status="WAITING_CONFIRMATION")
+                )
+                if result.rowcount != 1:
+                    await self.session.rollback()
+                    yield {"type": "done", "status": "CANCELLED", "message": "任务已停止"}
+                    return
                 self.run.state_json = self._json_safe(merged)
                 self.run.citations_json = merged.get("sources", [])
                 self.session.add(
@@ -515,6 +589,7 @@ class AgentHarness:
                             "run_id": self.run.id,
                             "pending_confirmation": merged["pending"],
                             "steps": merged.get("steps", []),
+                            "citations": merged.get("sources", []),
                         },
                     )
                 )
@@ -526,11 +601,22 @@ class AgentHarness:
                 }
             else:
                 answer = merged.get("answer", "")
-                self.run.status = "COMPLETED"
+                result = await self.session.execute(
+                    sql_update(AiRun)
+                    .where(AiRun.id == self.run.id, AiRun.status == "RUNNING")
+                    .values(
+                        status="COMPLETED",
+                        output_text=answer,
+                        completed_at=datetime.now(UTC).replace(tzinfo=None),
+                    )
+                )
+                if result.rowcount != 1:
+                    await self.session.rollback()
+                    yield {"type": "done", "status": "CANCELLED", "message": "任务已停止"}
+                    return
                 self.run.output_text = answer
                 self.run.state_json = self._json_safe(merged)
                 self.run.citations_json = merged.get("sources", [])
-                self.run.completed_at = datetime.now(UTC).replace(tzinfo=None)
                 self.session.add(
                     AiMessage(
                         conversation_id=self.run.conversation_id,
@@ -538,7 +624,11 @@ class AgentHarness:
                         college_id=self.principal.college_id,
                         role="assistant",
                         content=answer,
-                        metadata_json={"run_id": self.run.id, "steps": merged.get("steps", [])},
+                        metadata_json={
+                            "run_id": self.run.id,
+                            "steps": merged.get("steps", []),
+                            "citations": merged.get("sources", []),
+                        },
                     )
                 )
                 await self.session.commit()
@@ -554,7 +644,7 @@ class AgentHarness:
             await self.session.rollback()
             await self.session.execute(
                 sql_update(AiRun)
-                .where(AiRun.id == self.run.id)
+                .where(AiRun.id == self.run.id, AiRun.status == "RUNNING")
                 .values(
                     status="FAILED",
                     error_code="AI_RUN_FAILED",
@@ -580,6 +670,7 @@ class AgentHarness:
             "score": round(hit.score, 4),
             "source_type": hit.source_type,
             "college_id": hit.college_id,
+            "section": hit.section,
         }
 
     @staticmethod

@@ -11,26 +11,28 @@ name: labprod
 services:
   mysql:
     image: mysql:8.0
+    networks: [lab-internal]
     container_name: lab-mysql-prod
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD must be set}
       MYSQL_DATABASE: lab_reservation
+      MYSQL_USER: ${DB_APP_USER:?DB_APP_USER must be set}
+      MYSQL_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD must be set}
       TZ: Asia/Shanghai
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
     volumes: ["mysql_data:/var/lib/mysql"]
-    # 公网直连:监听 0.0.0.0 让外部直接访问。腾讯云安全组务必限制源 IP 或确认 DB_PASSWORD 是强密码!
-    ports:
-      - "0.0.0.0:3306:3306"
+    # 数据库只允许 Docker 内部 app 服务访问，不发布到宿主机/公网。
     mem_limit: 512m
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD:?DB_PASSWORD must be set}"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$${MYSQL_ROOT_PASSWORD}\""]
       interval: 5s
       timeout: 5s
       retries: 30
       start_period: 30s
   redis:
     image: redis:7-alpine
+    networks: [lab-internal]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -38,12 +40,11 @@ services:
       timeout: 3s
       retries: 10
     volumes: ["redis_data:/data"]
-    # 公网直连:监听 0.0.0.0 让外部直接访问。腾讯云安全组务必限制源 IP 或确认没有 requirepass 风险!
-    ports:
-      - "0.0.0.0:6379:6379"
+    # Redis 只允许 Docker 内部 app 服务访问，不发布到宿主机/公网。
     mem_limit: 128m
   qdrant:
     image: qdrant/qdrant:v1.14.1
+    networks: [lab-internal]
     restart: unless-stopped
     volumes: ["qdrant_data:/qdrant/storage"]
     expose: ["6333"]
@@ -55,7 +56,10 @@ services:
       retries: 12
   app:
     build: .
+    networks: [lab-internal]
     restart: unless-stopped
+    env_file:
+      - ./backend/.env
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -63,11 +67,14 @@ services:
     environment:
       LAB_ENVIRONMENT: prod
       LAB_DEBUG: "false"
-      LAB_MYSQL_DSN: mysql+asyncmy://root:${DB_PASSWORD:?DB_PASSWORD must be set}@mysql:3306/lab_reservation?charset=utf8mb4
+      # Runtime uses the application account scoped to lab_reservation, never MySQL root.
+      LAB_MYSQL_DSN: mysql+asyncmy://${DB_APP_USER:?DB_APP_USER must be set}:${DB_APP_PASSWORD:?DB_APP_PASSWORD must be set}@mysql:3306/lab_reservation?charset=utf8mb4
       LAB_REDIS_URL: redis://redis:6379/0
       LAB_QDRANT_URL: http://qdrant:6333
       LAB_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       LAB_CORS_ORIGINS: '["http://localhost"]'
+      # frontend nginx + Docker host gateway; the host TLS proxy must append the real client IP.
+      LAB_TRUSTED_PROXY_IPS: '["172.29.0.1/32","172.29.0.2/32"]'
       LAB_ENABLE_WORKERS: "true"
     volumes:
       - app_data:/app/backend/.data
@@ -80,8 +87,12 @@ services:
       start_period: 60s
   frontend:
     build: ./frontend
+    networks:
+      lab-internal:
+        ipv4_address: 172.29.0.2
     restart: unless-stopped
-    ports: ["80:80"]
+    # 由宿主机上的 TLS 反向代理转发到本地端口；不要直接将明文 HTTP 暴露公网。
+    ports: ["127.0.0.1:8080:80"]
     depends_on:
       app: { condition: service_healthy }
     mem_limit: 64m
@@ -90,3 +101,8 @@ volumes:
   redis_data:
   qdrant_data:
   app_data:
+networks:
+  lab-internal:
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24

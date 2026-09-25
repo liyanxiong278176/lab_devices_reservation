@@ -24,8 +24,11 @@ from app.infrastructure.db.models import (
     College,
     CreditEvent,
     Device,
+    DeviceCategory,
     DeviceDocument,
+    DeviceHandover,
     DeviceStatusHistory,
+    ExportTask,
     IdempotencyKey,
     Lab,
     Notification,
@@ -38,6 +41,7 @@ from app.infrastructure.db.models import (
     ReservationInspection,
     ReservationItem,
     ReservationWaitlist,
+    ReservationWaitlistOffer,
     Role,
     UploadAsset,
     User,
@@ -60,6 +64,7 @@ async def seed(prefix: str) -> None:
     password = "E2e-123456"
     username = f"{prefix}-user"
     device_name = f"{prefix}-device"
+    second_device_name = f"{prefix}-device-2"
     manager_username = f"{prefix}-manager"
     try:
         async with factory() as session:
@@ -73,6 +78,7 @@ async def seed(prefix: str) -> None:
                 name=f"E2E 测试学院 {prefix}",
                 status=1,
             )
+            category = DeviceCategory(name=f"{prefix}-category", parent_id=0, sort=0)
             manager = User(
                 username=manager_username,
                 password_hash=hash_password(password),
@@ -89,7 +95,15 @@ async def seed(prefix: str) -> None:
                 status=1,
                 roles=[student_role],
             )
-            college.users.extend([manager, student])
+            waitlist_user = User(
+                username=f"{prefix}-user2",
+                password_hash=hash_password(password),
+                real_name="E2E 候补用户",
+                user_type="STUDENT",
+                status=1,
+                roles=[student_role],
+            )
+            college.users.extend([manager, student, waitlist_user])
             lab = Lab(
                 name=f"{prefix}-lab",
                 location="E2E 测试楼",
@@ -106,11 +120,29 @@ async def seed(prefix: str) -> None:
                 status="IDLE",
                 need_approval=True,
                 max_reservation_days=8,
+                accessory_checklist=["电源线"],
                 description="浏览器回归测试专用设备",
                 college=college,
                 lab=lab,
+                category=category,
             )
-            session.add_all([college, manager, student, lab, device])
+            second_device = Device(
+                name=second_device_name,
+                brand="E2E",
+                model=second_device_name,
+                specs="E2E regression fixture",
+                status="IDLE",
+                need_approval=True,
+                max_reservation_days=8,
+                accessory_checklist=["电源线"],
+                description="浏览器回归测试备用设备",
+                college=college,
+                lab=lab,
+                category=category,
+            )
+            session.add_all(
+                [college, manager, student, waitlist_user, lab, category, device, second_device]
+            )
             await session.flush()
             college.manager_id = manager.id
             await session.commit()
@@ -120,9 +152,12 @@ async def seed(prefix: str) -> None:
                         "prefix": prefix,
                         "username": username,
                         "password": password,
+                        "alternate_username": f"{prefix}-user2",
                         "manager_username": manager_username,
                         "device_id": device.id,
                         "device_name": device_name,
+                        "second_device_id": second_device.id,
+                        "second_device_name": second_device.name,
                         "college_id": college.id,
                         "created_at": datetime.now(UTC).isoformat(),
                     },
@@ -161,6 +196,16 @@ async def cleanup(prefix: str) -> None:
                     )
                 ).all()
             )
+            export_scope = ExportTask.college_id == college.id
+            if user_ids:
+                export_scope = export_scope | ExportTask.requester_id.in_(user_ids)
+            export_files = list(
+                (
+                    await session.execute(
+                        select(ExportTask.id, ExportTask.file_path).where(export_scope)
+                    )
+                ).all()
+            )
             document_assets = list(
                 (
                     await session.execute(
@@ -184,6 +229,11 @@ async def cleanup(prefix: str) -> None:
                 )
             if device_ids:
                 await session.execute(
+                    delete(ReservationWaitlistOffer).where(
+                        ReservationWaitlistOffer.device_id.in_(device_ids)
+                    )
+                )
+                await session.execute(
                     delete(ReservationWaitlist).where(
                         ReservationWaitlist.device_id.in_(device_ids)
                     )
@@ -197,6 +247,11 @@ async def cleanup(prefix: str) -> None:
                     )
                 )
             if reservation_ids:
+                await session.execute(
+                    delete(DeviceHandover).where(
+                        DeviceHandover.reservation_id.in_(reservation_ids)
+                    )
+                )
                 await session.execute(
                     delete(ReservationFeedback).where(
                         ReservationFeedback.reservation_id.in_(reservation_ids)
@@ -224,6 +279,7 @@ async def cleanup(prefix: str) -> None:
                 )
             await session.execute(delete(Notification).where(Notification.college_id == college.id))
             await session.execute(delete(OutboxTask).where(OutboxTask.college_id == college.id))
+            await session.execute(delete(ExportTask).where(export_scope))
             if user_ids:
                 await session.execute(
                     delete(IdempotencyKey).where(IdempotencyKey.user_id.in_(user_ids))
@@ -249,6 +305,12 @@ async def cleanup(prefix: str) -> None:
             await session.commit()
             for _, storage_path in document_assets:
                 Path(storage_path).unlink(missing_ok=True)
+            export_root = (Path(settings.upload_dir).resolve() / "exports").resolve()
+            for _, storage_path in export_files:
+                if storage_path:
+                    export_path = Path(storage_path).resolve()
+                    if export_path.parent == export_root:
+                        export_path.unlink(missing_ok=True)
     finally:
         await engine.dispose()
 

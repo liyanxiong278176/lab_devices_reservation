@@ -16,18 +16,16 @@ interface V2NotificationPage {
   size: number
   current: number
   pages?: number
-  next_cursor?: number | null
-  has_more?: boolean
+  truncated: boolean
 }
 
 export const myNotifications = async (params: {
   onlyUnread?: boolean
   page?: number
   size?: number
-  cursor?: number | null
 } = {}): Promise<Page<NotificationVO>> => {
   const data = await request.get<unknown, V2NotificationPage>('/notifications/mine', {
-    params: { ...params, cursor: params.cursor || undefined },
+    params,
   })
   return {
     records: data.records,
@@ -35,8 +33,7 @@ export const myNotifications = async (params: {
     size: data.size,
     current: data.current,
     pages: data.pages,
-    nextCursor: data.next_cursor,
-    hasMore: data.has_more,
+    truncated: data.truncated,
   }
 }
 

@@ -8,13 +8,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { confirmRepair, myRepairs } from '@/api/repair'
 import type { RepairReportVO, RepairStatus } from '@/types/repair'
 import type { Page } from '@/types/common'
-import { useCursorPageChain } from '@/composables/useCursorPageChain'
 import { useStagger } from '@/composables/useStagger'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import GlowCard from '@/components/ui/GlowCard.vue'
 import Tag from '@/components/ui/Tag.vue'
 import Timeline from '@/components/ui/Timeline.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import PageDepthNotice from '@/components/ui/PageDepthNotice.vue'
 
 type TimelineStatus = 'done' | 'current' | 'todo'
 interface TimelineItem {
@@ -28,11 +28,6 @@ interface TimelineItem {
 const loading = ref(false)
 const page = ref<Page<RepairReportVO>>({ records: [], total: 0, size: 10, current: 1 })
 const query = ref<{ page: number; size: number }>({ page: 1, size: 9 })
-const cursorPager = useCursorPageChain<RepairReportVO>((cursor) => myRepairs(
-  1,
-  query.value.size,
-  cursor,
-))
 
 // 卡片错峰容器(同 R5 reservation/Mine):首次进入视口 60ms 错峰 fade+rise
 const listRef = ref<HTMLElement | null>(null)
@@ -41,7 +36,7 @@ const { reveal } = useStagger(listRef, { delay: 60 })
 async function load() {
   loading.value = true
   try {
-    page.value = await cursorPager.load(query.value.page)
+    page.value = await myRepairs(query.value.page, query.value.size)
   } catch {
     // 拦截器已提示
   } finally {
@@ -58,7 +53,6 @@ function onPageChange(p: number) {
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -221,7 +215,6 @@ async function onConfirmRepair(row: RepairReportVO, confirmed: boolean) {
   try {
     await confirmRepair(row.id, confirmed, note)
     ElMessage.success(confirmed ? '报修已完成' : '已退回管理员处理')
-    cursorPager.reset()
     await load()
   } catch {
     // 拦截器已提示
@@ -327,10 +320,11 @@ onMounted(load)
 
     <!-- 分页(深色全局已桥接) -->
     <div v-if="page.records.length > 0" class="rmine__pager">
+      <PageDepthNotice v-if="page.truncated" :total="page.total" />
       <el-pagination
         :current-page="page.current"
         :page-size="page.size"
-        :total="page.total"
+        :total="page.truncated ? Math.min(page.total, (page.pages || 1) * page.size) : page.total"
         :page-sizes="[9, 18, 36]"
         layout="total, sizes, prev, pager, next"
         background

@@ -14,6 +14,7 @@ from app.application.repairs import RepairService
 from app.auth.security import Principal, college_scope, get_current_principal
 from app.common.response import ApiResponse
 from app.core.errors import ApiError
+from app.core.uploads import upload_quota_guard
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
 from app.infrastructure.db.models import UploadAsset
 from app.infrastructure.db.session import get_db
@@ -104,27 +105,34 @@ async def upload_repair_image(
         raise ApiError("UPLOAD_TOO_LARGE", "图片大小不能超过 5 MB", 413)
     if not _matches_image_signature(content_type, content):
         raise ApiError("UPLOAD_CONTENT_INVALID", "图片内容与文件类型不匹配", 422)
-    token = secrets.token_urlsafe(32)
-    path = _upload_root(request) / f"{token}{suffix}"
-    await asyncio.to_thread(path.write_bytes, content)
-    original_name = Path(file.filename or "attachment").name
-    original_name = original_name.replace("\r", "").replace("\n", "")[:255] or "attachment"
-    asset = UploadAsset(
-        asset_token=token,
+    async with upload_quota_guard(
+        request,
+        session,
         user_id=principal.user_id,
         college_id=college_scope(principal),
-        original_name=original_name,
-        content_type=content_type,
-        size_bytes=len(content),
-        storage_path=str(path),
-    )
-    session.add(asset)
-    try:
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        await asyncio.to_thread(path.unlink, missing_ok=True)
-        raise
+        incoming_bytes=len(content),
+    ):
+        token = secrets.token_urlsafe(32)
+        path = _upload_root(request) / f"{token}{suffix}"
+        await asyncio.to_thread(path.write_bytes, content)
+        original_name = Path(file.filename or "attachment").name
+        original_name = original_name.replace("\r", "").replace("\n", "")[:255] or "attachment"
+        asset = UploadAsset(
+            asset_token=token,
+            user_id=principal.user_id,
+            college_id=college_scope(principal),
+            original_name=original_name,
+            content_type=content_type,
+            size_bytes=len(content),
+            storage_path=str(path),
+        )
+        session.add(asset)
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            await asyncio.to_thread(path.unlink, missing_ok=True)
+            raise
     return ApiResponse.ok(
         UploadData(
             url=f"/api/v2/repair-uploads/{token}",
@@ -176,13 +184,10 @@ async def my_repairs(
     request: Request,
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
-    cursor: int | None = Query(default=None, ge=1),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RepairPage]:
-    return ApiResponse.ok(
-        await RepairService(session, principal, request.app).mine(page, size, cursor)
-    )
+    return ApiResponse.ok(await RepairService(session, principal, request.app).mine(page, size))
 
 
 @router.get("/repair-reports", response_model=ApiResponse[RepairPage])
@@ -191,7 +196,6 @@ async def managed_repairs(
     status: str | None = Query(default=None, max_length=20),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
-    cursor: int | None = Query(default=None, ge=1),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RepairPage]:
@@ -200,7 +204,6 @@ async def managed_repairs(
             status=status,
             page=page,
             page_size=size,
-            cursor=cursor,
         )
     )
 

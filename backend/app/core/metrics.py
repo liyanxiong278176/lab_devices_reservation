@@ -24,8 +24,12 @@ class MetricsRegistry:
     outside this application's reliability scope.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_series: int = 2048) -> None:
+        if max_series < 1:
+            raise ValueError("max_series must be positive")
         self._lock = Lock()
+        self._max_series = max_series
+        self._series: set[tuple[str, str, tuple[tuple[str, str], ...]]] = set()
         self._counters: defaultdict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(
             float
         )
@@ -41,7 +45,13 @@ class MetricsRegistry:
     ) -> None:
         normalized = tuple(sorted((key, str(item)) for key, item in (labels or {}).items()))
         with self._lock:
-            self._counters[(name, normalized)] += value
+            key = (name, normalized)
+            series_key = ("counter", *key)
+            if series_key not in self._series:
+                if len(self._series) >= self._max_series:
+                    return
+                self._series.add(series_key)
+            self._counters[key] += value
 
     def observe(
         self,
@@ -51,7 +61,13 @@ class MetricsRegistry:
     ) -> None:
         normalized = tuple(sorted((key, str(item)) for key, item in (labels or {}).items()))
         with self._lock:
-            item = self._histograms[(name, normalized)]
+            key = (name, normalized)
+            series_key = ("histogram", *key)
+            if series_key not in self._series:
+                if len(self._series) >= self._max_series:
+                    return
+                self._series.add(series_key)
+            item = self._histograms[key]
             item["count"] += 1
             item["sum"] += value
 

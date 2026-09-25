@@ -5,12 +5,12 @@ let socket: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let shouldReconnect = false
 
-function websocketUrl(token: string) {
+function websocketUrl() {
   const configured = String(import.meta.env.VITE_WS_BASE ?? '').trim()
   const base = configured
     ? configured.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
     : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
-  return `${base}/api/v2/ws?token=${encodeURIComponent(token)}`
+  return `${base}/api/v2/ws`
 }
 
 /**
@@ -22,9 +22,11 @@ export function connectWs() {
   const user = useUserStore()
   if (!user.accessToken || socket) return
   shouldReconnect = true
-  socket = new WebSocket(websocketUrl(user.accessToken))
+  socket = new WebSocket(websocketUrl())
   socket.onopen = () => {
-    if (socket?.readyState === WebSocket.OPEN) socket.send('ping')
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'auth', token: user.accessToken }))
+    }
   }
   socket.onmessage = (event) => {
     try {

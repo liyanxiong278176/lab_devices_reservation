@@ -22,7 +22,7 @@ import GradientButton from '@/components/ui/GradientButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
 import TextButton from '@/components/ui/TextButton.vue'
 import Tag from '@/components/ui/Tag.vue'
-import { useCursorPageChain } from '@/composables/useCursorPageChain'
+import PageDepthNotice from '@/components/ui/PageDepthNotice.vue'
 
 const loading = ref(false)
 const page = ref<Page<DeviceVO>>({ records: [], total: 0, size: 10, current: 1 })
@@ -30,11 +30,6 @@ const query = ref<DeviceQuery>({ page: 1, size: 10, keyword: '' })
 
 const categories = ref<DeviceCategoryNodeVO[]>([])
 const labs = ref<Lab[]>([])
-const cursorPager = useCursorPageChain<DeviceVO>((cursor) => searchDevices({
-  ...query.value,
-  page: 1,
-  cursor,
-}))
 const router = useRouter()
 
 // 编辑对话框
@@ -55,6 +50,7 @@ const form = ref({
   needApproval: 0,
   maxReservationDays: '' as number | string,
   tagsText: '',
+  accessoriesText: '',
   description: '',
 })
 
@@ -93,7 +89,7 @@ function statusVariant(s: DeviceStatus): 'default' | 'accent' | 'warning' | 'dan
 async function load() {
   loading.value = true
   try {
-    page.value = await cursorPager.load(query.value.page || 1)
+    page.value = await searchDevices({ ...query.value, page: query.value.page || 1 })
   } catch {
     // 拦截器已提示
   } finally {
@@ -113,7 +109,6 @@ async function loadOptions() {
 
 function onSearch() {
   query.value.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -124,7 +119,6 @@ function onPageChange(p: number) {
 function onSizeChange(s: number) {
   query.value.size = s
   query.value.page = 1
-  cursorPager.reset()
   void load()
 }
 
@@ -141,6 +135,7 @@ function resetForm() {
     needApproval: 0,
     maxReservationDays: '',
     tagsText: '',
+    accessoriesText: '',
     description: '',
   }
 }
@@ -167,6 +162,7 @@ function openEdit(row: DeviceVO) {
     needApproval: row.needApproval,
     maxReservationDays: row.maxReservationDays ?? '',
     tagsText: (row.tags || []).join(', '),
+    accessoriesText: (row.accessoryChecklist || []).join('\n'),
     description: row.description || '',
   }
   dialogVisible.value = true
@@ -178,6 +174,7 @@ function buildPayload() {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
+  const accessoryChecklist = [...new Set(f.accessoriesText.split(/[\n,，]/).map((s) => s.trim()).filter(Boolean))]
   return {
     name: f.name.trim(),
     categoryId: f.categoryId!,
@@ -189,6 +186,7 @@ function buildPayload() {
     needApproval: f.needApproval,
     maxReservationDays: f.maxReservationDays === '' ? undefined : f.maxReservationDays,
     tags: tags.length ? tags : undefined,
+    accessoryChecklist,
     description: f.description || undefined,
   }
 }
@@ -208,6 +206,7 @@ async function onSubmit() {
       ElMessage.success('已更新')
     }
     dialogVisible.value = false
+    query.value.page = 1
     await load()
   } catch {
     // 拦截器已提示
@@ -229,7 +228,8 @@ async function onDelete(row: DeviceVO) {
   try {
     await deleteDevice(row.id)
     ElMessage.success('已删除')
-    load()
+    query.value.page = 1
+    await load()
   } catch {
     // 拦截器已提示
   }
@@ -353,10 +353,11 @@ onMounted(() => {
       </el-table>
 
       <div class="dmanage__pager">
+        <PageDepthNotice v-if="page.truncated" :total="page.total" />
         <el-pagination
           :current-page="page.current"
           :page-size="page.size"
-          :total="page.total"
+          :total="page.truncated ? Math.min(page.total, (page.pages || 1) * page.size) : page.total"
           :page-sizes="[10, 20, 50]"
           :layout="`total, sizes, prev, pager, next`"
           :total-text="totalLabel"
@@ -433,6 +434,15 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="标签">
           <el-input v-model="form.tagsText" placeholder="多个标签用英文逗号分隔" />
+        </el-form-item>
+        <el-form-item label="交接配件">
+          <el-input
+            v-model="form.accessoriesText"
+            type="textarea"
+            :rows="3"
+            maxlength="3000"
+            placeholder="每行一个配件，例如：电源线、数据线；交接和归还时将逐项核对"
+          />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="3" maxlength="300" show-word-limit />

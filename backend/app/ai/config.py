@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import base64
 import hashlib
-from dataclasses import dataclass
+import hmac
+from dataclasses import dataclass, replace
+from typing import Literal
 from urllib.parse import urlparse
 
-from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.security import Principal, college_scope
+from app.auth.security import Principal
 from app.core.errors import ApiError
 from app.core.settings import Settings
-from app.infrastructure.db.models import AiProviderConfig
+from app.infrastructure.db.models import AiKnowledgeIndexState
+
+AiComponent = Literal["chat", "embedding", "mineru"]
 
 
 @dataclass(frozen=True)
@@ -22,33 +24,78 @@ class AiRuntimeConfig:
     api_key: str | None
     base_url: str | None
     enabled: bool
+    collection_name: str | None = None
 
 
-def _fernet(settings: Settings) -> Fernet:
-    key = base64.urlsafe_b64encode(hashlib.sha256(settings.jwt_secret.encode()).digest())
-    return Fernet(key)
+def _clean_key(value: str | None) -> str | None:
+    normalized = value.strip() if value else ""
+    return normalized or None
 
 
-def encrypt_api_key(settings: Settings, api_key: str) -> str:
-    return _fernet(settings).encrypt(api_key.encode()).decode()
+def runtime_config(settings: Settings, component: AiComponent) -> AiRuntimeConfig:
+    """Build provider configuration exclusively from process environment settings."""
+    if component == "chat":
+        api_key = _clean_key(settings.ai_api_key)
+        return AiRuntimeConfig(
+            provider=settings.ai_provider,
+            model=settings.ai_model,
+            api_key=api_key,
+            base_url=settings.ai_base_url,
+            enabled=api_key is not None,
+        )
+    if component == "embedding":
+        api_key = _clean_key(settings.ai_embedding_api_key)
+        return AiRuntimeConfig(
+            provider=settings.ai_embedding_provider,
+            model=settings.ai_embedding_model,
+            api_key=api_key,
+            base_url=settings.ai_embedding_base_url,
+            enabled=api_key is not None,
+            collection_name=settings.ai_qdrant_collection,
+        )
+    if component == "mineru":
+        api_key = _clean_key(settings.ai_mineru_api_key)
+        return AiRuntimeConfig(
+            provider="mineru",
+            model=settings.ai_mineru_model,
+            api_key=api_key,
+            base_url=settings.ai_mineru_base_url,
+            enabled=api_key is not None,
+        )
+    raise ApiError("AI_COMPONENT_INVALID", "未知的 AI 服务类型", 404)
 
 
-def decrypt_api_key(settings: Settings, ciphertext: str | None) -> str | None:
-    if not ciphertext:
-        return None
-    try:
-        return _fernet(settings).decrypt(ciphertext.encode()).decode()
-    except (InvalidToken, ValueError):
-        raise ApiError("AI_CONFIG_INVALID", "AI 密钥无法解密，请重新配置", 500) from None
+def config_fingerprint(settings: Settings, runtime: AiRuntimeConfig) -> str:
+    """Persist only a keyed fingerprint, never a provider credential, in task rows."""
+    secret = _clean_key(runtime.api_key) or ""
+    payload = "\0".join(
+        (runtime.provider, runtime.model, runtime.base_url or "", secret)
+    ).encode()
+    return hmac.new(settings.jwt_secret.encode(), payload, hashlib.sha256).hexdigest()
 
 
-def validate_provider_config(settings: Settings, *, model: str, base_url: str | None) -> None:
-    if model not in settings.ai_allowed_models:
-        raise ApiError("AI_MODEL_NOT_ALLOWED", "该模型不在系统允许列表中", 422)
+def validate_provider_config(
+    settings: Settings,
+    *,
+    model: str,
+    base_url: str | None,
+    component: str = "chat",
+) -> None:
+    allowed_models = {
+        "chat": set(settings.ai_allowed_models),
+        "embedding": {settings.ai_embedding_model},
+        "mineru": {settings.ai_mineru_model},
+    }.get(component, set())
+    if model not in allowed_models:
+        raise ApiError("AI_MODEL_NOT_ALLOWED", "该模型不在环境配置允许列表中", 422)
     if base_url is None:
         return
     parsed = urlparse(base_url)
     normalized = base_url.rstrip("/")
+    if component == "mineru":
+        if parsed.scheme != "https" or normalized != settings.ai_mineru_base_url.rstrip("/"):
+            raise ApiError("AI_BASE_URL_NOT_ALLOWED", "MinerU 服务地址不可自定义", 422)
+        return
     allowed = {item.rstrip("/") for item in settings.ai_allowed_base_urls}
     if parsed.scheme != "https" or normalized not in allowed:
         raise ApiError("AI_BASE_URL_NOT_ALLOWED", "AI 服务地址不在系统白名单中", 422)
@@ -58,49 +105,31 @@ async def get_runtime_config(
     session: AsyncSession,
     principal: Principal,
     settings: Settings,
-) -> AiRuntimeConfig | None:
-    scope = college_scope(principal)
-    config = None
-    # A college override must win over global configuration. Lexicographic
-    # ordering of scope keys is not a safe way to express that precedence.
-    if scope is not None:
-        config = await session.scalar(
-            select(AiProviderConfig).where(
-                AiProviderConfig.scope_key == f"college:{scope}",
-                AiProviderConfig.enabled.is_(True),
+) -> AiRuntimeConfig:
+    del session, principal  # Provider settings are server-side environment configuration.
+    return runtime_config(settings, "chat")
+
+
+async def get_component_config(
+    session: AsyncSession,
+    settings: Settings,
+    component: str,
+) -> AiRuntimeConfig:
+    if component not in {"chat", "embedding", "mineru"}:
+        raise ApiError("AI_COMPONENT_INVALID", "未知的 AI 服务类型", 404)
+    config = runtime_config(settings, component)  # type: ignore[arg-type]
+    if component == "embedding":
+        active_collection = await session.scalar(
+            select(AiKnowledgeIndexState.collection_name).where(
+                AiKnowledgeIndexState.component == "embedding"
             )
         )
-    if config is None:
-        config = await session.scalar(
-            select(AiProviderConfig).where(
-                AiProviderConfig.scope_key == "global",
-                AiProviderConfig.enabled.is_(True),
-            )
-        )
-    if config is not None:
-        return AiRuntimeConfig(
-            provider=config.provider,
-            model=config.model,
-            api_key=decrypt_api_key(settings, config.api_key_encrypted),
-            base_url=config.base_url,
-            enabled=config.enabled,
-        )
-    if settings.environment in {"local", "test", "dev"} and settings.ai_api_key:
-        validate_provider_config(settings, model=settings.ai_model, base_url=settings.ai_base_url)
-        return AiRuntimeConfig(
-            provider=settings.ai_provider,
-            model=settings.ai_model,
-            api_key=settings.ai_api_key,
-            base_url=settings.ai_base_url,
-            enabled=True,
-        )
-    return None
+        if active_collection:
+            return replace(config, collection_name=active_collection)
+    return config
 
 
 def config_scope(principal: Principal) -> tuple[str, int | None]:
     if principal.is_system_admin:
-        return "global", None
-    scope = college_scope(principal)
-    if not principal.is_lab_admin or scope is None:
-        raise ApiError("FORBIDDEN", "只有系统管理员或学院负责人可以管理 AI 配置", 403)
-    return f"college:{scope}", scope
+        return "environment", None
+    raise ApiError("FORBIDDEN", "只有系统管理员可以查看全局 AI 服务状态", 403)

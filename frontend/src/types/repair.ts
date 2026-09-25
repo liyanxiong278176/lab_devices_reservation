@@ -6,6 +6,7 @@ export type RepairPriority = 'NORMAL' | 'IMPORTANT' | 'URGENT'
 export interface RepairReportVO {
   id: number
   deviceId: number
+  reservationId?: number
   deviceName?: string
   reporterId: number
   reporterName?: string

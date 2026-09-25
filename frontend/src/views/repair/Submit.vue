@@ -47,18 +47,24 @@ const rules: FormRules = {
 
 async function loadDevices() {
   try {
-    // The v2 endpoint caps page_size at 100. Load the remaining pages in
-    // parallel so the repair selector still contains every visible idle
-    // device instead of failing on page entry or silently truncating options.
+    // Keep all idle devices available in the selector while paging directly;
+    // fetch bounded batches so large catalogs do not create a request burst.
     const pageSize = 100
-    const pages: DeviceVO[][] = []
-    let cursor: number | null = null
-    do {
-      const result = await searchDevices({ page: 1, size: pageSize, status: 'IDLE', cursor })
-      pages.push(result.records)
-      cursor = result.hasMore ? (result.nextCursor ?? null) : null
-    } while (cursor !== null)
-    devices.value = pages.flat()
+    const first = await searchDevices({ page: 1, size: pageSize, status: 'IDLE' })
+    const records = [...first.records]
+    const lastPage = first.pages || 1
+    const batchSize = 6
+    for (let start = 2; start <= lastPage; start += batchSize) {
+      const pageNumbers = Array.from(
+        { length: Math.min(batchSize, lastPage - start + 1) },
+        (_, index) => start + index,
+      )
+      const results = await Promise.all(pageNumbers.map((page) =>
+        searchDevices({ page, size: pageSize, status: 'IDLE' }),
+      ))
+      for (const result of results) records.push(...result.records)
+    }
+    devices.value = records
   } catch {
     // 拦截器已提示
   }

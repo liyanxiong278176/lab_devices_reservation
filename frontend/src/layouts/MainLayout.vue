@@ -2,9 +2,8 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Bell, Expand, Fold, Moon, Sunny } from '@element-plus/icons-vue'
+import { Bell, Moon, Sunny } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
-import { useAppStore } from '@/stores/app'
 import { useNotificationStore } from '@/stores/notification'
 import { useThemeStore } from '@/stores/theme'
 import { connectWs, disconnectWs } from '@/composables/useWebSocket'
@@ -12,7 +11,6 @@ import { connectWs, disconnectWs } from '@/composables/useWebSocket'
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
-const appStore = useAppStore()
 const notifStore = useNotificationStore()
 const themeStore = useThemeStore()
 
@@ -67,29 +65,22 @@ function toggleTheme() {
 </script>
 
 <template>
-  <el-container
-    class="layout"
-    :class="{ 'layout--rail': appStore.sidebarCollapsed, 'layout--expanded': !appStore.sidebarCollapsed }"
-  >
-    <el-aside
-      :width="appStore.sidebarCollapsed ? '88px' : '248px'"
-      class="layout__aside"
-    >
+  <el-container class="layout">
+    <el-aside width="248px" class="layout__aside">
       <div class="layout__brand">
         <span class="layout__brand-mark" aria-hidden="true">
           <span class="layout__brand-ring"></span>
           <span class="layout__brand-signal"></span>
         </span>
-        <span v-if="!appStore.sidebarCollapsed" class="layout__brand-copy">
+        <span class="layout__brand-copy">
           <strong>LABFLOW</strong>
           <small>实验室预约</small>
         </span>
       </div>
 
-      <div v-if="!appStore.sidebarCollapsed" class="layout__nav-caption">WORKSPACE</div>
+      <div class="layout__nav-caption">WORKSPACE</div>
       <el-menu
         :default-active="activeMenu"
-        :collapse="appStore.sidebarCollapsed"
         router
         class="layout__menu"
       >
@@ -100,27 +91,19 @@ function toggleTheme() {
           :aria-label="item.title"
         >
           <el-icon v-if="item.icon"><component :is="item.icon" /></el-icon>
-          <template v-if="!appStore.sidebarCollapsed" #title>{{ item.title }}</template>
+          <template #title>{{ item.title }}</template>
         </el-menu-item>
       </el-menu>
 
-      <div class="layout__aside-note" :title="appStore.sidebarCollapsed ? '实验室运营空间' : undefined">
+      <div class="layout__aside-note">
         <span class="layout__aside-note-dot"></span>
-        <span v-if="!appStore.sidebarCollapsed">实验室运营空间</span>
+        <span>实验室运营空间</span>
       </div>
     </el-aside>
 
     <el-container class="layout__body">
       <el-header class="layout__header">
         <div class="layout__header-left">
-          <button
-            type="button"
-            class="layout__collapse"
-            :aria-label="appStore.sidebarCollapsed ? '展开导航' : '收起导航'"
-            @click="appStore.toggleSidebar()"
-          >
-            <el-icon><Fold v-if="!appStore.sidebarCollapsed" /><Expand v-else /></el-icon>
-          </button>
           <div class="layout__context">
             <span class="layout__eyebrow">LABFLOW / WORKSPACE</span>
             <span class="layout__title">实验室预约系统</span>
@@ -304,19 +287,6 @@ function toggleTheme() {
   font-size: 18px;
 }
 
-.layout--rail .layout__menu {
-  padding-inline: 12px;
-}
-
-.layout--rail :deep(.layout__menu .el-menu-item) {
-  justify-content: center;
-  padding-inline: 0 !important;
-}
-
-.layout--rail :deep(.layout__menu .el-menu-item .el-icon) {
-  margin-right: 0;
-}
-
 .layout__aside-note {
   display: flex;
   align-items: center;
@@ -327,11 +297,6 @@ function toggleTheme() {
   color: var(--text-tertiary);
   font-size: 11px;
   white-space: nowrap;
-}
-
-.layout--rail .layout__aside-note {
-  justify-content: center;
-  padding: 0;
 }
 
 .layout__aside-note-dot {
@@ -379,28 +344,11 @@ function toggleTheme() {
   min-width: 0;
 }
 
-.layout__collapse,
 .layout__theme-toggle,
 .layout__icon-button {
   justify-content: center;
   border: 0;
   cursor: pointer;
-}
-
-.layout__collapse {
-  width: 38px;
-  height: 38px;
-  flex: none;
-  border-radius: 12px;
-  color: var(--text-secondary);
-  background: transparent;
-  transition: color var(--d-fast) var(--ease-out-expo), background-color var(--d-fast) var(--ease-out-expo), transform var(--d-fast) var(--ease-out-expo);
-}
-
-.layout__collapse:hover {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  transform: translateY(-1px);
 }
 
 .layout__context {
@@ -559,7 +507,6 @@ function toggleTheme() {
 @media (prefers-reduced-motion: reduce) {
   .layout__aside,
   .layout__menu :deep(.el-menu-item),
-  .layout__collapse,
   .layout__theme-toggle,
   .layout__icon-button {
     transition: none;

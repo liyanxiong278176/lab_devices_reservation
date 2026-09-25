@@ -68,7 +68,7 @@ def _document_body(device: Device, *, safety: bool) -> str:
 
 1. 在系统中完成预约；需要审批的设备必须等待负责人批准。
 2. 阅读本设备最新安全须知和操作规程，确认设备处于可用状态。
-3. 检查外观、电源、接地、连接线及必要配件，异常情况先报修。
+3. 预约首日与负责人现场核对设备、配件并完成交接后，方可开始使用；异常情况先报修。
 
 ## 2. 标准操作
 
@@ -80,7 +80,7 @@ def _document_body(device: Device, *, safety: bool) -> str:
 
 1. 保存实验数据，按相反顺序停机并完成清洁。
 2. 关闭电源和辅助设备，整理线缆、样品与配件。
-3. 完成签到/归还流程；若设备异常，填写故障现象和复现步骤。
+3. 归还时在系统提交归还申请，由负责人现场验收后完成本次预约；若设备异常，填写故障现象和复现步骤。
 
 ## 4. 责任边界
 
@@ -90,6 +90,72 @@ def _document_body(device: Device, *, safety: bool) -> str:
 
 async def _write_document(path: Path, content: str) -> None:
     await asyncio.to_thread(path.write_text, content, encoding="utf-8")
+
+
+async def backfill_unfinished_handovers(
+    session: AsyncSession,
+    now: datetime,
+) -> None:
+    """Ensure every unfinished reservation participates in the handover flow.
+
+    Reservations already in use when the rule changed are marked as legacy
+    in-use without inventing a handover operator or timestamp. Their actual
+    return still enters the normal manager acceptance flow.
+    """
+    reservations = list(
+        (
+            await session.scalars(
+                select(Reservation).where(Reservation.status.in_(("PENDING", "APPROVED", "IN_USE")))
+            )
+        ).all()
+    )
+    for reservation in reservations:
+        handover = await session.scalar(
+            select(DeviceHandover).where(DeviceHandover.reservation_id == reservation.id)
+        )
+        if reservation.status in {"PENDING", "APPROVED"}:
+            status = (
+                "EXCEPTION"
+                if reservation.handover_status == "EXCEPTION"
+                or (handover is not None and handover.status == "EXCEPTION")
+                else "PENDING"
+            )
+        elif reservation.handover_status == "RETURN_PENDING" or (
+            handover is not None and handover.status == "RETURN_PENDING"
+        ):
+            status = "RETURN_PENDING"
+        elif (
+            handover is not None
+            and handover.status == "HANDED_OVER"
+            and handover.handover_by is not None
+            and handover.handover_at is not None
+        ):
+            status = "HANDED_OVER"
+        else:
+            status = "LEGACY_IN_USE"
+
+        legacy_note = None
+        if status == "LEGACY_IN_USE":
+            legacy_note = "统一交接规则启用前已进入使用中；原流程未记录交接人和交接时间。"
+
+        if handover is None:
+            handover = DeviceHandover(
+                reservation_id=reservation.id,
+                device_id=reservation.device_id,
+                user_id=reservation.user_id,
+                college_id=reservation.college_id,
+                status=status,
+                handover_note=legacy_note,
+                created_at=reservation.created_at or now,
+                updated_at=now,
+            )
+            session.add(handover)
+        else:
+            handover.status = status
+            handover.updated_at = now
+            if legacy_note and not handover.handover_note:
+                handover.handover_note = legacy_note
+        reservation.handover_status = status
 
 
 async def ensure_operational_metadata(
@@ -104,6 +170,8 @@ async def ensure_operational_metadata(
     """
 
     async with session_factory() as session:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        await backfill_unfinished_handovers(session, now)
         admin = await session.scalar(
             select(User)
             .join(User.roles)
@@ -111,6 +179,7 @@ async def ensure_operational_metadata(
             .order_by(User.id)
         )
         if admin is None:
+            await session.commit()
             return
         devices = list(
             (
@@ -124,12 +193,9 @@ async def ensure_operational_metadata(
         )
         root = Path(settings.upload_dir).resolve()
         root.mkdir(parents=True, exist_ok=True)
-        now = datetime.now(UTC).replace(tzinfo=None)
         for device in devices:
             if not device.asset_code:
                 device.asset_code = f"LAB-{device.id:06d}"
-            if not device.qr_token:
-                device.qr_token = f"lab-{secrets.token_urlsafe(42)}"
             # Keep a representative controlled instrument in the seed data so
             # the qualification gate can be demonstrated without affecting
             # ordinary equipment. The rule is model-based, not ID-based.
@@ -179,44 +245,4 @@ async def ensure_operational_metadata(
                     asset=asset,
                 )
                 session.add(document)
-        loan_reservations = list(
-            (
-                await session.scalars(
-                    select(Reservation)
-                    .join(Device, Device.id == Reservation.device_id)
-                    .where(
-                        Device.allow_external_loan.is_(True),
-                        Reservation.status.in_(
-                            ("APPROVED", "IN_USE", "RETURN_PENDING")
-                        ),
-                    )
-                )
-            ).all()
-        )
-        for reservation in loan_reservations:
-            handover = await session.scalar(
-                select(DeviceHandover).where(
-                    DeviceHandover.reservation_id == reservation.id
-                )
-            )
-            handover_status = {
-                "APPROVED": "PENDING",
-                "IN_USE": "HANDED_OVER",
-                "RETURN_PENDING": "RETURN_PENDING",
-            }[reservation.status]
-            if handover is None:
-                handover = DeviceHandover(
-                    reservation_id=reservation.id,
-                    device_id=reservation.device_id,
-                    user_id=reservation.user_id,
-                    college_id=reservation.college_id,
-                    status=handover_status,
-                    created_at=reservation.created_at or now,
-                    updated_at=now,
-                )
-                session.add(handover)
-            elif handover.status == "NOT_REQUIRED":
-                handover.status = handover_status
-                handover.updated_at = now
-            reservation.handover_status = handover_status
         await session.commit()

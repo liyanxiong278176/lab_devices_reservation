@@ -2,7 +2,7 @@
 // SegmentedControl — 段控件(设备筛选 / tab 切换)
 // 视觉:底槽 pill(--bg-sunken 半透明) + 跟随选中项的青色滑块(Linear 风)。
 // 滑块:CSS Grid 等宽列 + absolute 滑块,transform: translateX(calc(var(--i) * 100%)),
-//   其中 --i = 选中 index;滑块宽 = calc(100% / 列数) 即一格。
+//   --i = 选中 index,--n = 选项数;支持横向与纵向布局。
 //   jsdom 不做真 layout,--i 写在 inline style 上,测试可断言。
 // reduced-motion:_motion.scss 全局守卫覆盖 transition:none,滑块瞬移。
 import { computed, nextTick, ref } from 'vue'
@@ -21,10 +21,11 @@ const props = withDefaults(
     modelValue: OptValue
     options: Option[]
     size?: 'sm' | 'md'
+    orientation?: 'horizontal' | 'vertical'
     /** radiogroup 可访问名(屏幕阅读器朗读用,如"设备状态筛选") */
     label?: string
   }>(),
-  { size: 'md' },
+  { size: 'md', orientation: 'horizontal' },
 )
 
 const emit = defineEmits<{
@@ -97,7 +98,8 @@ function onKeydown(e: KeyboardEvent, i: number) {
 <template>
   <div
     class="segmented"
-    :class="[`segmented--${size}`]"
+    :class="[`segmented--${size}`, `segmented--${orientation}`]"
+    :style="{ '--n': String(options.length) }"
     role="radiogroup"
     :aria-label="label || '选项组'"
   >
@@ -133,7 +135,7 @@ function onKeydown(e: KeyboardEvent, i: number) {
 .segmented {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(var(--n, 1), 1fr);
+  grid-template-columns: repeat(var(--n, 1), minmax(0, 1fr));
   gap: 0;
   padding: 4px;
   background: var(--bg-sunken);
@@ -141,6 +143,13 @@ function onKeydown(e: KeyboardEvent, i: number) {
   border-radius: var(--radius-pill);
   // 滑块在按钮下层(z-index:-1 不可见,用 0 + 按钮透明底 + 滑块 1)
   isolation: isolate;
+
+  &--vertical {
+    width: max-content;
+    max-width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(var(--n, 1), minmax(0, 1fr));
+  }
 
   // 滑块:绝对定位,translateX 跟随 --i,宽 = 一格(100% / N)
   // transform 的 100% 是滑块自身宽(= 一格),所以 i=1 → 平移 1 格
@@ -176,6 +185,7 @@ function onKeydown(e: KeyboardEvent, i: number) {
     font-weight: 500;
     cursor: pointer;
     user-select: none;
+    white-space: nowrap;
     transition: color var(--d-fast) var(--ease-out-expo);
 
     &:hover:not(:disabled) {
@@ -193,6 +203,14 @@ function onKeydown(e: KeyboardEvent, i: number) {
     &[data-active='true'] {
       color: var(--accent);
     }
+  }
+
+  &--vertical &__slider {
+    top: 4px;
+    left: 4px;
+    width: calc(100% - 8px);
+    height: calc((100% - 8px) / var(--n, 1));
+    transform: translateY(calc(var(--i, 0) * 100%));
   }
 
   &__icon {

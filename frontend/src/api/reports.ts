@@ -17,6 +17,16 @@ export interface ReportSummaryVO {
   repairCount: number
   repairStatus: Record<string, number>
   utilizationRate: number
+  occupancyRate: number
+  actualUsageRate: number
+  bookableDeviceDays: number
+  occupiedDeviceDays: number
+  actualUsageDeviceDays: number
+  maintenanceDowntimeDays: number
+  averageApprovalHours: number
+  waitlistRequests: number
+  waitlistConverted: number
+  waitlistConversionRate: number
   noShowRate: number
   violationRate: number
 }

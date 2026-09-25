@@ -3,24 +3,38 @@
 import csv
 import io
 from collections import Counter
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v2.schemas import ExportTaskData
-from app.application.exports import export_rows
+from app.application.exports import (
+    export_rows,
+    managed_device_ids,
+    safe_csv_row,
+    scope_fingerprint,
+)
 from app.application.lifecycle import append_audit
 from app.auth.security import Principal, get_current_principal
 from app.common.response import ApiResponse
 from app.core.errors import ApiError
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
-from app.infrastructure.db.models import ExportTask, OutboxTask
+from app.infrastructure.db.models import (
+    Device,
+    DeviceStatusHistory,
+    ExportTask,
+    OutboxTask,
+    RepairReport,
+    Reservation,
+    ReservationBlackout,
+    ReservationWaitlist,
+)
 from app.infrastructure.db.session import get_db
 
 router = APIRouter(dependencies=[Depends(enforce_authenticated_rate_limit)])
@@ -59,7 +73,7 @@ def _csv_response(rows: list[dict[str, object]], filename: str) -> StreamingResp
     if rows:
         writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()), extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(safe_csv_row(row) for row in rows)
     else:
         output.write("暂无数据\n")
     body = output.getvalue().encode("utf-8-sig")
@@ -81,6 +95,7 @@ async def direct_export(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
+    limit = int(request.app.state.settings.export_sync_row_limit)
     rows = await export_rows(
         session,
         principal,
@@ -91,14 +106,14 @@ async def direct_export(
             "status": status,
             "college_id": college_id,
         },
+        max_rows=limit + 1,
     )
-    limit = int(request.app.state.settings.export_sync_row_limit)
     if len(rows) > limit:
         raise ApiError(
             "EXPORT_ASYNC_REQUIRED",
-            f"本次导出包含 {len(rows)} 条数据，请使用异步导出",
+            f"本次导出超过 {limit} 条，请使用异步导出",
             413,
-            data={"row_count": len(rows)},
+            data={"minimum_row_count": limit + 1},
         )
     append_audit(
         session,
@@ -125,38 +140,330 @@ async def report_summary(
     start = start_date or end.replace(day=1)
     if end < start:
         raise ApiError("DATE_RANGE_INVALID", "结束日期不能早于开始日期", 422)
-    filters = {
-        "start_date": start.isoformat(),
-        "end_date": end.isoformat(),
-        "college_id": college_id,
-    }
-    devices = await export_rows(session, principal, "devices", filters)
-    reservations = await export_rows(session, principal, "reservations", filters)
-    repairs = await export_rows(session, principal, "repairs", filters)
-    reservation_counts = Counter(str(row.get("状态")) for row in reservations)
-    repair_counts = Counter(str(row.get("状态")) for row in repairs)
-    occupied = sum(
-        (date.fromisoformat(str(row["结束日期"])) - date.fromisoformat(str(row["开始日期"]))).days
-        + 1
-        for row in reservations
-        if row.get("状态") in {"APPROVED", "IN_USE", "COMPLETED"}
+    if (end - start).days > 1825:
+        raise ApiError("DATE_RANGE_TOO_LARGE", "运营报表一次最多查询 5 年", 422)
+    device_ids, _ = await managed_device_ids(session, principal, college_id=college_id)
+    device_conditions = []
+    if device_ids is not None:
+        device_conditions.append(Device.id.in_(device_ids) if device_ids else Device.id == -1)
+    device_count = int(
+        await session.scalar(select(func.count(Device.id)).where(*device_conditions)) or 0
     )
-    capacity = max(1, len(devices) * ((end - start).days + 1))
+    reservation_status_rows = (
+        await session.execute(
+            select(Reservation.status, func.count(Reservation.id))
+            .join(Device, Device.id == Reservation.device_id)
+            .where(
+                *device_conditions,
+                Reservation.end_date >= start,
+                Reservation.start_date <= end,
+            )
+            .group_by(Reservation.status)
+        )
+    ).all()
+    repair_status_rows = (
+        await session.execute(
+            select(RepairReport.status, func.count(RepairReport.id))
+            .join(Device, Device.id == RepairReport.device_id)
+            .where(
+                *device_conditions,
+                RepairReport.created_at >= datetime.combine(start, datetime.min.time()),
+                RepairReport.created_at
+                < datetime.combine(end + timedelta(days=1), datetime.min.time()),
+            )
+            .group_by(RepairReport.status)
+        )
+    ).all()
+    reservation_counts = Counter(
+        {str(status): int(count) for status, count in reservation_status_rows}
+    )
+    repair_counts = Counter({str(status): int(count) for status, count in repair_status_rows})
+    reservation_count = sum(reservation_counts.values())
+    repair_count = sum(repair_counts.values())
+    device_rows = list(
+        (
+            await session.execute(
+                select(Device.id, Device.college_id, Device.lab_id, Device.status).where(
+                    *device_conditions
+                )
+            )
+        ).all()
+    )
+    scoped_ids = [int(row.id) for row in device_rows]
+    start_at = datetime.combine(start, datetime.min.time())
+    end_exclusive = datetime.combine(end + timedelta(days=1), datetime.min.time())
+
+    if scoped_ids:
+        prior_history = (
+            select(
+                DeviceStatusHistory.device_id.label("device_id"),
+                DeviceStatusHistory.new_status.label("status"),
+                func.row_number()
+                .over(
+                    partition_by=DeviceStatusHistory.device_id,
+                    order_by=(DeviceStatusHistory.created_at.desc(), DeviceStatusHistory.id.desc()),
+                )
+                .label("row_num"),
+            )
+            .where(
+                DeviceStatusHistory.device_id.in_(scoped_ids),
+                DeviceStatusHistory.created_at < start_at,
+            )
+            .subquery()
+        )
+        prior_states = {
+            int(row.device_id): str(row.status)
+            for row in (
+                await session.execute(
+                    select(prior_history.c.device_id, prior_history.c.status).where(
+                        prior_history.c.row_num == 1
+                    )
+                )
+            ).all()
+        }
+        period_history = list(
+            (
+                await session.execute(
+                    select(
+                        DeviceStatusHistory.device_id,
+                        DeviceStatusHistory.old_status,
+                        DeviceStatusHistory.new_status,
+                        DeviceStatusHistory.created_at,
+                    )
+                    .where(
+                        DeviceStatusHistory.device_id.in_(scoped_ids),
+                        DeviceStatusHistory.created_at >= start_at,
+                        DeviceStatusHistory.created_at < end_exclusive,
+                    )
+                    .order_by(DeviceStatusHistory.created_at, DeviceStatusHistory.id)
+                )
+            ).all()
+        )
+        following_history = (
+            select(
+                DeviceStatusHistory.device_id.label("device_id"),
+                DeviceStatusHistory.old_status.label("status"),
+                func.row_number()
+                .over(
+                    partition_by=DeviceStatusHistory.device_id,
+                    order_by=(DeviceStatusHistory.created_at, DeviceStatusHistory.id),
+                )
+                .label("row_num"),
+            )
+            .where(
+                DeviceStatusHistory.device_id.in_(scoped_ids),
+                DeviceStatusHistory.created_at >= end_exclusive,
+            )
+            .subquery()
+        )
+        following_states = {
+            int(row.device_id): str(row.status)
+            for row in (
+                await session.execute(
+                    select(following_history.c.device_id, following_history.c.status).where(
+                        following_history.c.row_num == 1
+                    )
+                )
+            ).all()
+        }
+        lab_ids = sorted({int(row.lab_id) for row in device_rows if row.lab_id is not None})
+        college_ids = sorted(
+            {int(row.college_id) for row in device_rows if row.college_id is not None}
+        )
+        blackout_scopes = [
+            and_(
+                ReservationBlackout.scope_type == "DEVICE",
+                ReservationBlackout.scope_id.in_(scoped_ids),
+            )
+        ]
+        if lab_ids:
+            blackout_scopes.append(
+                and_(
+                    ReservationBlackout.scope_type == "LAB",
+                    ReservationBlackout.scope_id.in_(lab_ids),
+                )
+            )
+        if college_ids:
+            blackout_scopes.append(
+                and_(
+                    ReservationBlackout.scope_type == "COLLEGE",
+                    ReservationBlackout.scope_id.in_(college_ids),
+                )
+            )
+        blackout_rows = list(
+            (
+                await session.execute(
+                    select(
+                        ReservationBlackout.scope_type,
+                        ReservationBlackout.scope_id,
+                        ReservationBlackout.blocked_date,
+                    ).where(
+                        ReservationBlackout.active.is_(True),
+                        ReservationBlackout.blocked_date >= start,
+                        ReservationBlackout.blocked_date <= end,
+                        or_(*blackout_scopes),
+                    )
+                )
+            ).all()
+        )
+    else:
+        prior_states = {}
+        period_history = []
+        following_states = {}
+        blackout_rows = []
+
+    device_by_id = {int(row.id): row for row in device_rows}
+    history_by_device: dict[int, list[object]] = {}
+    for item in period_history:
+        history_by_device.setdefault(int(item.device_id), []).append(item)
+    blocked_by_scope: dict[tuple[str, int], set[date]] = {}
+    for scope_type, scope_id, blocked_date in blackout_rows:
+        blocked_by_scope.setdefault((str(scope_type), int(scope_id)), set()).add(blocked_date)
+
+    bookable_days: set[tuple[int, date]] = set()
+    maintenance_days = 0
+    reservable_states = {"IDLE", "IN_USE"}
+    day_count = (end - start).days + 1
+    for device_id, row in device_by_id.items():
+        events = history_by_device.get(device_id, [])
+        if device_id in prior_states:
+            state = prior_states[device_id]
+        elif events:
+            state = str(events[0].old_status or row.status)
+        else:
+            state = following_states.get(device_id, str(row.status))
+        event_index = 0
+        for offset in range(day_count):
+            current_day = start + timedelta(days=offset)
+            midnight = datetime.combine(current_day, datetime.min.time())
+            next_midnight = midnight + timedelta(days=1)
+            while event_index < len(events) and events[event_index].created_at < midnight:
+                state = str(events[event_index].new_status)
+                event_index += 1
+            day_state = state
+            end_state = state
+            next_index = event_index
+            while next_index < len(events) and events[next_index].created_at < next_midnight:
+                end_state = str(events[next_index].new_status)
+                next_index += 1
+            if state == "MAINTENANCE" or any(
+                str(events[i].new_status) == "MAINTENANCE" for i in range(event_index, next_index)
+            ):
+                maintenance_days += 1
+            is_blocked = (
+                current_day in blocked_by_scope.get(("DEVICE", device_id), set())
+                or (
+                    row.lab_id is not None
+                    and current_day in blocked_by_scope.get(("LAB", int(row.lab_id)), set())
+                )
+                or (
+                    row.college_id is not None
+                    and current_day in blocked_by_scope.get(("COLLEGE", int(row.college_id)), set())
+                )
+            )
+            if (
+                day_state in reservable_states
+                and end_state in reservable_states
+                and not is_blocked
+                and not any(
+                    str(events[i].new_status) not in reservable_states
+                    for i in range(event_index, next_index)
+                )
+            ):
+                bookable_days.add((device_id, current_day))
+            state = end_state
+            event_index = next_index
+
+    occupying_statuses = {"APPROVED", "IN_USE", "COMPLETED", "NO_SHOW"}
+    actual_statuses = {"IN_USE", "COMPLETED"}
+    reservation_rows = list(
+        (
+            await session.execute(
+                select(
+                    Reservation.device_id,
+                    Reservation.start_date,
+                    Reservation.end_date,
+                    Reservation.status,
+                    Reservation.check_in_at,
+                    Reservation.created_at,
+                    Reservation.approved_at,
+                ).where(
+                    Reservation.device_id.in_(scoped_ids) if scoped_ids else Reservation.id == -1,
+                    Reservation.end_date >= start,
+                    Reservation.start_date <= end,
+                )
+            )
+        ).all()
+    )
+    occupied_days: set[tuple[int, date]] = set()
+    actual_days: set[tuple[int, date]] = set()
+    approval_hours: list[float] = []
+    for row in reservation_rows:
+        if row.status not in occupying_statuses:
+            continue
+        first = max(start, row.start_date)
+        last = min(end, row.end_date)
+        for offset in range((last - first).days + 1):
+            current_day = first + timedelta(days=offset)
+            key = (int(row.device_id), current_day)
+            if key not in bookable_days:
+                continue
+            occupied_days.add(key)
+            if row.status in actual_statuses and row.check_in_at is not None:
+                actual_days.add(key)
+        if row.approved_at is not None and row.created_at is not None:
+            approval_hours.append(
+                max(0.0, (row.approved_at - row.created_at).total_seconds() / 3600)
+            )
+
+    waitlist_rows = list(
+        (
+            await session.scalars(
+                select(ReservationWaitlist).where(
+                    ReservationWaitlist.device_id.in_(scoped_ids)
+                    if scoped_ids
+                    else ReservationWaitlist.id == -1,
+                    ReservationWaitlist.created_at >= start_at,
+                    ReservationWaitlist.created_at < end_exclusive,
+                )
+            )
+        ).all()
+    )
+    converted_waitlist = sum(1 for item in waitlist_rows if item.status == "CONFIRMED")
+    capacity = len(bookable_days)
+    occupied = len(occupied_days)
+    actual_used = len(actual_days)
+    occupancy_rate = round(occupied / capacity, 4) if capacity else 0.0
+    actual_usage_rate = round(actual_used / capacity, 4) if capacity else 0.0
     return ApiResponse.ok(
         {
             "range": {"startDate": start, "endDate": end},
-            "deviceCount": len(devices),
-            "reservationCount": len(reservations),
+            "deviceCount": device_count,
+            "reservationCount": reservation_count,
             "reservationStatus": dict(reservation_counts),
-            "repairCount": len(repairs),
+            "repairCount": repair_count,
             "repairStatus": dict(repair_counts),
-            "utilizationRate": round(occupied / capacity, 4),
+            "utilizationRate": occupancy_rate,
+            "occupancyRate": occupancy_rate,
+            "actualUsageRate": actual_usage_rate,
+            "bookableDeviceDays": capacity,
+            "occupiedDeviceDays": occupied,
+            "actualUsageDeviceDays": actual_used,
+            "maintenanceDowntimeDays": maintenance_days,
+            "averageApprovalHours": round(sum(approval_hours) / len(approval_hours), 2)
+            if approval_hours
+            else 0.0,
+            "waitlistRequests": len(waitlist_rows),
+            "waitlistConverted": converted_waitlist,
+            "waitlistConversionRate": round(converted_waitlist / len(waitlist_rows), 4)
+            if waitlist_rows
+            else 0.0,
             "noShowRate": round(
-                reservation_counts.get("NO_SHOW", 0) / max(1, len(reservations)),
+                reservation_counts.get("NO_SHOW", 0) / max(1, reservation_count),
                 4,
             ),
             "violationRate": round(
-                reservation_counts.get("VIOLATED", 0) / max(1, len(reservations)),
+                reservation_counts.get("VIOLATED", 0) / max(1, reservation_count),
                 4,
             ),
         }
@@ -175,11 +482,17 @@ async def create_export(
     if payload.start_date and payload.end_date and payload.end_date < payload.start_date:
         raise ApiError("DATE_RANGE_INVALID", "结束日期不能早于开始日期", 422)
     now = datetime.now(UTC).replace(tzinfo=None)
+    scope_device_ids, scope_college = await managed_device_ids(
+        session,
+        principal,
+        college_id=payload.college_id,
+    )
     filters = {
         "start_date": payload.start_date.isoformat() if payload.start_date else None,
         "end_date": payload.end_date.isoformat() if payload.end_date else None,
         "status": payload.status,
         "college_id": payload.college_id,
+        "_scope_fingerprint": scope_fingerprint(scope_device_ids, scope_college),
     }
     row = ExportTask(
         requester_id=principal.user_id,
@@ -222,10 +535,25 @@ async def _load_task(
     session: AsyncSession,
 ) -> ExportTask:
     row = await session.scalar(select(ExportTask).where(ExportTask.id == task_id))
-    if row is None or (
-        not principal.is_system_admin and row.requester_id != principal.user_id
+    if row is None:
+        raise ApiError("EXPORT_NOT_FOUND", "导出任务不存在或无权访问", 404)
+    if principal.is_system_admin:
+        return row
+    if (
+        row.requester_id != principal.user_id
+        or not principal.is_lab_admin
+        or row.college_id != principal.college_id
     ):
         raise ApiError("EXPORT_NOT_FOUND", "导出任务不存在或无权访问", 404)
+    saved_fingerprint = (row.filters or {}).get("_scope_fingerprint")
+    if saved_fingerprint:
+        current_ids, current_scope = await managed_device_ids(
+            session,
+            principal,
+            college_id=(row.filters or {}).get("college_id"),
+        )
+        if scope_fingerprint(current_ids, current_scope) != saved_fingerprint:
+            raise ApiError("EXPORT_NOT_FOUND", "导出任务不存在或无权访问", 404)
     return row
 
 

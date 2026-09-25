@@ -47,9 +47,13 @@ const statusLabelText = computed(() => {
 const selectedDate = ref<Date>(new Date())
 const activeTab = ref<'specs' | 'calendar'>('specs')
 
-// 日历区间:选中日所在周的 ±7 天(满足后端 from/to ISO 日期)
-const rangeFrom = computed(() => dayjs(selectedDate.value).startOf('week').format('YYYY-MM-DD'))
-const rangeTo = computed(() => dayjs(selectedDate.value).endOf('week').format('YYYY-MM-DD'))
+// 日历按中国常用周一到周日展示；Day.js 默认周日开周会漏掉周日预约。
+const weekStart = computed(() => {
+  const selected = dayjs(selectedDate.value)
+  return selected.subtract((selected.day() + 6) % 7, 'day')
+})
+const rangeFrom = computed(() => weekStart.value.format('YYYY-MM-DD'))
+const rangeTo = computed(() => weekStart.value.add(6, 'day').format('YYYY-MM-DD'))
 
 const calendar = ref<DeviceCalendarItemVO[]>([])
 const calendarLoading = ref(false)
@@ -96,7 +100,7 @@ const specRows = computed(() => {
     { label: '分类', value: d.categoryName || '—' },
     { label: '规格', value: d.specs || '—' },
     { label: '风险等级', value: d.riskLevel || 'STANDARD' },
-    { label: '使用方式', value: d.allowExternalLoan ? '允许外借，需交接验收' : '实验室内使用' },
+    { label: '使用方式', value: d.allowExternalLoan ? '允许外借 · 预约需负责人交接验收' : '限实验室内使用 · 预约需负责人交接验收' },
     { label: '最长预约', value: d.maxReservationDays != null ? `${d.maxReservationDays} 天` : '—' },
     { label: '审批要求', value: d.needApproval === 1 ? '需审批' : '免审批' },
   ]

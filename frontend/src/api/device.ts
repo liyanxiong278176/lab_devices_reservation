@@ -23,6 +23,7 @@ interface V2Device {
   need_approval: boolean
   max_reservation_days: number
   tags?: string[] | null
+  accessory_checklist?: string[] | null
   description?: string | null
   asset_code?: string | null
   serial_number?: string | null
@@ -33,7 +34,6 @@ interface V2Device {
   requires_safety_ack?: boolean
   requires_qualification?: boolean
   max_advance_days?: number | null
-  qr_token?: string | null
 }
 
 interface V2DevicePage {
@@ -41,8 +41,8 @@ interface V2DevicePage {
   total: number
   page: number
   page_size: number
-  next_cursor?: number | null
-  has_more?: boolean
+  pages: number
+  truncated: boolean
 }
 
 interface V2DeviceAvailability {
@@ -69,6 +69,7 @@ function mapDevice(item: V2Device): DeviceVO {
     maxReservationDays: item.max_reservation_days,
     maxReservationHours: item.max_reservation_days * 24,
     tags: item.tags || undefined,
+    accessoryChecklist: item.accessory_checklist || [],
     description: item.description || undefined,
     assetCode: item.asset_code || undefined,
     serialNumber: item.serial_number || undefined,
@@ -79,7 +80,6 @@ function mapDevice(item: V2Device): DeviceVO {
     requiresSafetyAck: Boolean(item.requires_safety_ack),
     requiresQualification: Boolean(item.requires_qualification),
     maxAdvanceDays: item.max_advance_days ?? undefined,
-    qrToken: item.qr_token || undefined,
   }
 }
 
@@ -103,7 +103,6 @@ export const searchDevices = async (q: DeviceQuery): Promise<Page<DeviceVO>> => 
       search: q.keyword || q.search,
       lab_id: q.labId,
       status: q.status || undefined,
-      cursor: q.cursor || undefined,
     },
   })
   return {
@@ -111,9 +110,8 @@ export const searchDevices = async (q: DeviceQuery): Promise<Page<DeviceVO>> => 
     total: data.total,
     size: data.page_size,
     current: data.page,
-    pages: Math.ceil(data.total / data.page_size),
-    nextCursor: data.next_cursor,
-    hasMore: data.has_more,
+    pages: data.pages,
+    truncated: data.truncated,
   }
 }
 
@@ -166,6 +164,7 @@ export const createDevice = (data: Record<string, unknown>) =>
     need_approval: Boolean(data.needApproval),
     max_reservation_days: data.maxReservationDays || 8,
     tags: data.tags,
+    accessory_checklist: data.accessoryChecklist,
     asset_code: data.assetCode,
     serial_number: data.serialNumber,
     purchase_date: data.purchaseDate,
@@ -190,6 +189,7 @@ export const updateDevice = (id: number, data: Record<string, unknown>) =>
     need_approval: Boolean(data.needApproval),
     max_reservation_days: data.maxReservationDays || 8,
     tags: data.tags,
+    accessory_checklist: data.accessoryChecklist,
     asset_code: data.assetCode,
     serial_number: data.serialNumber,
     purchase_date: data.purchaseDate,

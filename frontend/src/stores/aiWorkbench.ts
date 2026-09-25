@@ -5,8 +5,12 @@ import {
   cancelAiAction,
   confirmAiAction,
   createAiConversation,
+  deleteAiConversation,
+  getActiveAiRun,
   listAiConversations,
   listAiMessages,
+  resumeAiRun,
+  stopAiRun,
   streamAiMessage,
 } from '@/api/aiV2'
 import type {
@@ -21,6 +25,7 @@ import type {
 export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
   const conversations = ref<AiConversation[]>([])
   const activeConversationId = ref<number | null>(null)
+  const activeRunId = ref<number | null>(null)
   const messages = ref<AiMessage[]>([])
   const citations = ref<AiCitation[]>([])
   const steps = ref<AiStep[]>([])
@@ -29,10 +34,18 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
   const loadingHistory = ref(false)
   const error = ref('')
   let abortController: AbortController | null = null
+  let generation = 0
 
   const activeConversation = computed(() =>
     conversations.value.find((item) => item.id === activeConversationId.value) || null,
   )
+
+  function detach() {
+    generation += 1
+    abortController?.abort()
+    abortController = null
+    loading.value = false
+  }
 
   async function loadConversations() {
     loadingHistory.value = true
@@ -51,20 +64,31 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
   }
 
   async function createConversation() {
+    detach()
     const conversation = await createAiConversation()
     conversations.value.unshift(conversation)
     activeConversationId.value = conversation.id
+    activeRunId.value = null
     messages.value = []
     citations.value = []
     steps.value = []
     pendingConfirmation.value = null
+    error.value = ''
   }
 
   async function selectConversation(id: number) {
+    if (activeConversationId.value !== id) detach()
     activeConversationId.value = id
+    activeRunId.value = null
     messages.value = await listAiMessages(id)
     citations.value = []
     steps.value = []
+    error.value = ''
+    const latestAssistant = [...messages.value].reverse().find((message) => message.role === 'assistant')
+    const storedCitations = latestAssistant?.metadata?.citations
+    if (Array.isArray(storedCitations)) citations.value = storedCitations as AiCitation[]
+    const storedSteps = latestAssistant?.metadata?.steps
+    if (Array.isArray(storedSteps)) steps.value = storedSteps as AiStep[]
     const persisted = [...messages.value]
       .reverse()
       .map((message) => message.metadata?.pending_confirmation)
@@ -80,6 +104,39 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
           status: 'PENDING',
         }
       : null
+    const active = await getActiveAiRun(id)
+    if (active) {
+      const assistant: AiMessage = { id: `resume-${active.run_id}`, role: 'assistant', content: '' }
+      messages.value.push(assistant)
+      void attachToRun(active.run_id, assistant)
+    }
+  }
+
+  async function attachToRun(runId: number, assistant: AiMessage) {
+    detach()
+    const currentGeneration = generation
+    activeRunId.value = runId
+    loading.value = true
+    abortController = new AbortController()
+    try {
+      await resumeAiRun(
+        runId,
+        { onEvent: (event) => handleEvent(event, assistant) },
+        abortController.signal,
+      )
+      if (currentGeneration === generation) await reloadActiveMessages()
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError' && currentGeneration === generation) {
+        error.value = (err as Error).message || 'AI 任务恢复失败'
+      }
+    } finally {
+      if (currentGeneration === generation) {
+        loading.value = false
+        activeRunId.value = null
+        abortController = null
+        await refreshConversationList()
+      }
+    }
   }
 
   async function send(content: string) {
@@ -95,29 +152,54 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
     messages.value.push({ id: `local-${Date.now()}`, role: 'user', content: text })
     const assistant: AiMessage = { id: `assistant-${Date.now()}`, role: 'assistant', content: '' }
     messages.value.push(assistant)
+    const conversationId = activeConversationId.value
+    const currentGeneration = ++generation
     abortController = new AbortController()
     try {
       await streamAiMessage(
-        activeConversationId.value,
+        conversationId,
         text,
-        { onEvent: (event) => handleEvent(event, assistant) },
+        {
+          onRunId: (runId) => { activeRunId.value = runId },
+          onEvent: (event) => handleEvent(event, assistant),
+        },
         abortController.signal,
       )
-      await refreshConversationList()
+      if (currentGeneration === generation) {
+        await reloadActiveMessages()
+        await refreshConversationList()
+      }
     } catch (err) {
-      if ((err as Error).name !== 'AbortError') {
+      if ((err as Error).name !== 'AbortError' && currentGeneration === generation) {
         error.value = (err as Error).message || 'AI 服务暂时不可用'
         if (!assistant.content) messages.value.pop()
       }
     } finally {
-      loading.value = false
-      abortController = null
+      if (currentGeneration === generation) {
+        loading.value = false
+        activeRunId.value = null
+        abortController = null
+      }
+    }
+  }
+
+  async function reloadActiveMessages() {
+    if (!activeConversationId.value) return
+    messages.value = await listAiMessages(activeConversationId.value)
+    const latestAssistant = [...messages.value].reverse().find((message) => message.role === 'assistant')
+    if (Array.isArray(latestAssistant?.metadata?.citations)) {
+      citations.value = latestAssistant.metadata.citations as AiCitation[]
+    }
+    if (Array.isArray(latestAssistant?.metadata?.steps)) {
+      steps.value = latestAssistant.metadata.steps as AiStep[]
     }
   }
 
   function handleEvent(event: AiStreamEvent, assistant: AiMessage) {
     if (event.type === 'step' && event.name) {
-      steps.value.push({
+      const existing = steps.value.find((step) => step.name === event.name && step.status === 'running')
+      if (existing) Object.assign(existing, { status: event.status || 'completed', intent: event.intent })
+      else steps.value.push({
         name: event.name,
         status: event.status || 'completed',
         intent: event.intent,
@@ -131,12 +213,15 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
         tool_name: event.tool_name || 'protected_action',
         reason: event.reason || '该操作需要确认',
         risk_summary: event.risk_summary || '会修改业务数据',
-        estimated_impact: event.estimated_impact || '仅影响当前学院范围内的数据',
+        estimated_impact: event.estimated_impact || '仅影响你本人可见的数据',
         preview: event.preview || {},
         status: 'PENDING',
       }
     } else if (event.type === 'sources' || event.type === 'done') {
       citations.value = event.citations || event.sources || citations.value
+      if (event.status === 'FAILED') {
+        error.value = event.message || 'AI 任务执行失败'
+      }
     } else if (event.type === 'error') {
       error.value = event.message || 'AI 任务执行失败'
     }
@@ -149,27 +234,16 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
     try {
       await confirmAiAction(current.id)
       current.status = 'EXECUTED'
-      messages.value.push({
-        id: `confirmation-${Date.now()}`,
-        role: 'assistant',
-        content: '已按你的确认执行完成。',
-      })
+      messages.value.push({ id: `confirmation-${Date.now()}`, role: 'assistant', content: '已按你的确认执行完成。' })
       pendingConfirmation.value = null
+      await reloadActiveMessages()
       await refreshConversationList()
       return true
     } catch (err) {
-      // request.ts already surfaces the server's structured message. Avoid a
-      // second generic Axios toast ("Request failed with status code 409").
-      const typedError = err as {
-        response?: { status?: number; data?: { code?: string } }
-        code?: string
-        status?: number
-      }
-      const response = typedError.response
-      const status = response?.status || typedError.status
-      const code = response?.data?.code || typedError.code
+      const typedError = err as { response?: { status?: number; data?: { code?: string } }; code?: string; status?: number }
+      const status = typedError.response?.status || typedError.status
+      const code = typedError.response?.data?.code || typedError.code
       if (status === 409 || status === 404 || code === 'CONFIRMATION_ALREADY_HANDLED') {
-        // A terminal/stale confirmation must never keep blocking the composer.
         pendingConfirmation.value = null
       }
       return false
@@ -189,9 +263,27 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
     }
   }
 
-  function stop() {
-    abortController?.abort()
-    loading.value = false
+  async function stop() {
+    const runId = activeRunId.value
+    if (runId) {
+      try {
+        await stopAiRun(runId)
+      } catch (err) {
+        ElMessage.error((err as Error).message || '停止任务失败')
+      }
+    }
+    detach()
+    activeRunId.value = null
+  }
+
+  async function removeConversation(id: number) {
+    await deleteAiConversation(id)
+    conversations.value = conversations.value.filter((item) => item.id !== id)
+    if (activeConversationId.value === id) {
+      activeConversationId.value = null
+      if (conversations.value[0]) await selectConversation(conversations.value[0].id)
+      else await createConversation()
+    }
   }
 
   async function refreshConversationList() {
@@ -201,6 +293,7 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
   return {
     conversations,
     activeConversationId,
+    activeRunId,
     activeConversation,
     messages,
     citations,
@@ -216,5 +309,7 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
     confirm,
     cancelConfirmation,
     stop,
+    detach,
+    removeConversation,
   }
 })

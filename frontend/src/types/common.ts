@@ -8,7 +8,6 @@ export interface Page<T> {
   size: number
   current: number
   pages?: number
-  /** Keyset pagination metadata; page-number UI may use it to build a cursor chain. */
-  nextCursor?: number | null
-  hasMore?: boolean
+  /** True when the full result set extends beyond the 100,000-row deep-page cap. */
+  truncated?: boolean
 }

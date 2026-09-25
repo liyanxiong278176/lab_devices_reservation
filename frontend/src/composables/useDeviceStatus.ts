@@ -30,7 +30,6 @@ export function reservationStatusTag(
     PENDING: { type: 'warning', label: '待审批' },
     APPROVED: { type: 'primary', label: '已通过' },
     IN_USE: { type: 'success', label: '使用中' },
-    RETURN_PENDING: { type: 'warning', label: '待验收' },
     COMPLETED: { type: 'info', label: '已完成' },
     CANCELLED: { type: 'info', label: '已取消' },
     REJECTED: { type: 'danger', label: '已拒绝' },

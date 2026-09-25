@@ -35,18 +35,25 @@ uv run uvicorn app.main:app --reload --port 8000
 }
 ```
 
-## 游标分页场景
+## 深页随机跳转场景
 
-列表接口第一页返回 `next_cursor`，下一页携带该值，查询等价于：
+列表接口使用延迟关联支持页码直跳。先只读取主键并应用排序/筛选/分页，再按本页 ID 加载实体，示意 SQL：
 
 ```sql
-WHERE id < :next_cursor
-ORDER BY id DESC
-LIMIT :size
+SELECT r.*
+FROM reservation AS r
+JOIN (
+  SELECT id
+  FROM reservation
+  WHERE user_id = :user_id
+  ORDER BY id DESC
+  LIMIT :page_size OFFSET :offset
+) AS page_ids ON page_ids.id = r.id
+ORDER BY r.id DESC;
 ```
 
-已接入预约、审批、报修、通知、设备和用户列表。页面仍保留页码外观，但不会对深页
-继续使用大 OFFSET；筛选条件或页大小变化时，前端会清空游标链并从第一页重新开始。
+已接入预约、审批、报修、通知、设备、用户和实验室列表。`OFFSET` 仍需扫描跳过的索引项，
+延迟关联主要避免深页先读取大量完整行；后端最多允许跳过 100,000 条匹配记录，超出后由页面提示增加筛选。
 
 ## 运行检查
 

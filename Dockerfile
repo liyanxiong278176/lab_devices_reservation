@@ -9,4 +9,4 @@ COPY backend ./
 ENV LAB_ENVIRONMENT=prod
 ENV LAB_ENABLE_WORKERS=true
 EXPOSE 8000
-CMD ["uv", "run", "--no-dev", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "--no-dev", "uvicorn", "app.main:app", "--loop", "app.core.uvicorn_loop:platform_loop_factory", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "65536", "--ws-max-queue", "4"]
