@@ -1,0 +1,252 @@
+[
+  {
+    "concurrency": 5,
+    "repetition": 1,
+    "requests": 100,
+    "successful": 100,
+    "failed": 0,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 100
+    },
+    "duration_seconds": 1.533,
+    "throughput_rps": 65.25,
+    "p50_ms": 47.45,
+    "p95_ms": 264.5,
+    "max_ms": 438.88
+  },
+  {
+    "concurrency": 5,
+    "repetition": 2,
+    "requests": 100,
+    "successful": 100,
+    "failed": 0,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 100
+    },
+    "duration_seconds": 0.913,
+    "throughput_rps": 109.48,
+    "p50_ms": 43.28,
+    "p95_ms": 69.63,
+    "max_ms": 79.16
+  },
+  {
+    "concurrency": 5,
+    "repetition": 3,
+    "requests": 100,
+    "successful": 100,
+    "failed": 0,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 100
+    },
+    "duration_seconds": 0.992,
+    "throughput_rps": 100.76,
+    "p50_ms": 48.49,
+    "p95_ms": 77.87,
+    "max_ms": 88.45
+  },
+  {
+    "concurrency": 10,
+    "repetition": 1,
+    "requests": 100,
+    "successful": 100,
+    "failed": 0,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 100
+    },
+    "duration_seconds": 0.866,
+    "throughput_rps": 115.44,
+    "p50_ms": 82.62,
+    "p95_ms": 123.46,
+    "max_ms": 139.51
+  },
+  {
+    "concurrency": 10,
+    "repetition": 2,
+    "requests": 100,
+    "successful": 100,
+    "failed": 0,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 100
+    },
+    "duration_seconds": 0.923,
+    "throughput_rps": 108.35,
+    "p50_ms": 85.72,
+    "p95_ms": 129.39,
+    "max_ms": 146.83
+  },
+  {
+    "concurrency": 10,
+    "repetition": 3,
+    "requests": 100,
+    "successful": 67,
+    "failed": 33,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 67,
+      "429": 33
+    },
+    "duration_seconds": 0.713,
+    "throughput_rps": 140.31,
+    "p50_ms": 64.59,
+    "p95_ms": 116.78,
+    "max_ms": 130.85
+  },
+  {
+    "concurrency": 25,
+    "repetition": 1,
+    "requests": 100,
+    "successful": 43,
+    "failed": 57,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 43,
+      "429": 57
+    },
+    "duration_seconds": 0.617,
+    "throughput_rps": 162.0,
+    "p50_ms": 154.05,
+    "p95_ms": 205.95,
+    "max_ms": 225.79
+  },
+  {
+    "concurrency": 25,
+    "repetition": 2,
+    "requests": 100,
+    "successful": 44,
+    "failed": 56,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 44,
+      "429": 56
+    },
+    "duration_seconds": 0.68,
+    "throughput_rps": 147.02,
+    "p50_ms": 161.19,
+    "p95_ms": 240.28,
+    "max_ms": 287.34
+  },
+  {
+    "concurrency": 25,
+    "repetition": 3,
+    "requests": 100,
+    "successful": 43,
+    "failed": 57,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 43,
+      "429": 57
+    },
+    "duration_seconds": 0.696,
+    "throughput_rps": 143.72,
+    "p50_ms": 171.53,
+    "p95_ms": 248.59,
+    "max_ms": 295.21
+  },
+  {
+    "concurrency": 50,
+    "repetition": 1,
+    "requests": 100,
+    "successful": 44,
+    "failed": 56,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 44,
+      "429": 56
+    },
+    "duration_seconds": 0.684,
+    "throughput_rps": 146.24,
+    "p50_ms": 287.5,
+    "p95_ms": 448.73,
+    "max_ms": 593.23
+  },
+  {
+    "concurrency": 50,
+    "repetition": 2,
+    "requests": 100,
+    "successful": 45,
+    "failed": 55,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 45,
+      "429": 55
+    },
+    "duration_seconds": 0.965,
+    "throughput_rps": 103.64,
+    "p50_ms": 333.33,
+    "p95_ms": 846.14,
+    "max_ms": 931.1
+  },
+  {
+    "concurrency": 50,
+    "repetition": 3,
+    "requests": 100,
+    "successful": 44,
+    "failed": 56,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 44,
+      "429": 56
+    },
+    "duration_seconds": 0.921,
+    "throughput_rps": 108.54,
+    "p50_ms": 285.87,
+    "p95_ms": 777.65,
+    "max_ms": 869.68
+  },
+  {
+    "concurrency": 100,
+    "repetition": 1,
+    "requests": 200,
+    "successful": 91,
+    "failed": 109,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 91,
+      "429": 109
+    },
+    "duration_seconds": 2.132,
+    "throughput_rps": 93.79,
+    "p50_ms": 667.43,
+    "p95_ms": 1926.13,
+    "max_ms": 2127.46
+  },
+  {
+    "concurrency": 100,
+    "repetition": 2,
+    "requests": 200,
+    "successful": 89,
+    "failed": 111,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 89,
+      "429": 111
+    },
+    "duration_seconds": 1.772,
+    "throughput_rps": 112.84,
+    "p50_ms": 666.23,
+    "p95_ms": 1479.54,
+    "max_ms": 1688.49
+  },
+  {
+    "concurrency": 100,
+    "repetition": 3,
+    "requests": 200,
+    "successful": 90,
+    "failed": 110,
+    "exceptions": 0,
+    "status_counts": {
+      "200": 90,
+      "429": 110
+    },
+    "duration_seconds": 2.018,
+    "throughput_rps": 99.11,
+    "p50_ms": 729.86,
+    "p95_ms": 1789.2,
+    "max_ms": 1985.16
+  }
+]

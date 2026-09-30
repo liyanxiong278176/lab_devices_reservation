@@ -1,0 +1,12 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+GET,business/reservations,HTTPError('503 Server Error: Service Unavailable for url: business/reservations'),6,2026-09-30T06:45:49Z,2026-09-30T06:45:52Z
+POST,auth/login,HTTPError('503 Server Error: Service Unavailable for url: auth/login'),21,2026-09-30T06:45:45Z,2026-09-30T06:45:52Z
+GET,ai/status,HTTPError('401 Client Error: Unauthorized for url: ai/status'),9,2026-09-30T06:45:45Z,2026-09-30T06:45:52Z
+GET,ai/conversations,HTTPError('401 Client Error: Unauthorized for url: ai/conversations'),3,2026-09-30T06:45:49Z,2026-09-30T06:45:51Z
+GET,business/notifications,HTTPError('401 Client Error: Unauthorized for url: business/notifications'),7,2026-09-30T06:45:45Z,2026-09-30T06:45:52Z
+GET,business/reservations,HTTPError('401 Client Error: Unauthorized for url: business/reservations'),13,2026-09-30T06:45:45Z,2026-09-30T06:45:52Z
+GET,ai/status,HTTPError('503 Server Error: Service Unavailable for url: ai/status'),3,2026-09-30T06:45:48Z,2026-09-30T06:45:50Z
+GET,ai/conversations,HTTPError('503 Server Error: Service Unavailable for url: ai/conversations'),2,2026-09-30T06:45:50Z,2026-09-30T06:45:50Z
+GET,business/devices,HTTPError('503 Server Error: Service Unavailable for url: business/devices'),16,2026-09-30T06:45:48Z,2026-09-30T06:45:52Z
+GET,business/notifications,HTTPError('503 Server Error: Service Unavailable for url: business/notifications'),3,2026-09-30T06:45:48Z,2026-09-30T06:45:50Z
+GET,business/devices,HTTPError('401 Client Error: Unauthorized for url: business/devices'),31,2026-09-30T06:45:45Z,2026-09-30T06:45:52Z

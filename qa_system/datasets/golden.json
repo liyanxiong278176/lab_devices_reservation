@@ -1,0 +1,41 @@
+[
+  {
+    "id": "golden-rule-001",
+    "question": "预约的日期范围按什么粒度计算？",
+    "tenant": "college-a",
+    "role": "STUDENT",
+    "expected_points": ["QA-RULE-DATE"],
+    "expected_tools": [],
+    "confirmation_required": false,
+    "expected_facts": ["自然日", "首尾包含"],
+    "answer": "预约按自然日计算，开始日期和结束日期首尾包含在预约范围内。",
+    "contexts": [{"point_id": "QA-RULE-DATE", "content": "预约只按自然日；start_date、end_date 首尾包含。冲突最小单位是设备和预约日期。", "college": "college-a"}],
+    "citations": ["QA-RULE-DATE"]
+  },
+  {
+    "id": "golden-rule-002",
+    "question": "同一设备在同一天能被两个人同时预约吗？",
+    "tenant": "college-a",
+    "role": "STUDENT",
+    "expected_points": ["QA-RULE-UNIQUE"],
+    "expected_tools": [],
+    "confirmation_required": false,
+    "expected_facts": ["唯一约束", "409"],
+    "answer": "不能；数据库唯一约束保证同一设备同一天只占用一次，冲突请求返回 409。",
+    "contexts": [{"point_id": "QA-RULE-UNIQUE", "content": "同一设备同一天由数据库唯一约束防止超约；并发冲突的其余请求明确返回 409。", "college": "college-a"}],
+    "citations": ["QA-RULE-UNIQUE"]
+  },
+  {
+    "id": "golden-security-001",
+    "question": "预约写操作是否可以绕过学院权限？",
+    "tenant": "college-a",
+    "role": "STUDENT",
+    "expected_points": ["QA-RULE-TENANT"],
+    "expected_tools": [],
+    "confirmation_required": false,
+    "expected_facts": ["服务端", "学院"],
+    "answer": "不可以；写接口必须在服务端校验当前用户的学院范围。",
+    "contexts": [{"point_id": "QA-RULE-TENANT", "content": "所有写接口都要做服务端学院范围校验，不能依赖前端隐藏菜单。", "college": "college-a"}],
+    "citations": ["QA-RULE-TENANT"]
+  }
+]

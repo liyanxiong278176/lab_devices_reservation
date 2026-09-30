@@ -1,0 +1,28 @@
+[
+  {
+    "id": "holdout-state-001",
+    "question": "预约什么时候允许签到？",
+    "tenant": "college-b",
+    "role": "STUDENT",
+    "expected_points": ["QA-RULE-CHECKIN"],
+    "expected_tools": [],
+    "confirmation_required": false,
+    "expected_facts": ["首日"],
+    "answer": "签到只允许在预约首日进行。",
+    "contexts": [{"point_id": "QA-RULE-CHECKIN", "content": "签到只允许预约首日；归还只允许预约结束日。", "college": "college-b"}],
+    "citations": ["QA-RULE-CHECKIN"]
+  },
+  {
+    "id": "holdout-state-002",
+    "question": "设备报修完成前需要经过什么状态？",
+    "tenant": "college-b",
+    "role": "LAB_ADMIN",
+    "expected_points": ["QA-RULE-REPAIR"],
+    "expected_tools": [],
+    "confirmation_required": false,
+    "expected_facts": ["受理"],
+    "answer": "报修必须先受理，之后才可以标记完成。",
+    "contexts": [{"point_id": "QA-RULE-REPAIR", "content": "报修完成前必须先受理。", "college": "college-b"}],
+    "citations": ["QA-RULE-REPAIR"]
+  }
+]

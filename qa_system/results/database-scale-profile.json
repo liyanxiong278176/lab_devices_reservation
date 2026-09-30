@@ -1,0 +1,180 @@
+{
+  "inserts": [
+    {
+      "cohort_rows": 1000,
+      "insert_seconds": 0.42
+    },
+    {
+      "cohort_rows": 10000,
+      "insert_seconds": 0.94
+    },
+    {
+      "cohort_rows": 100000,
+      "insert_seconds": 4.72
+    }
+  ],
+  "measurements": [
+    {
+      "cohort_rows": 1000,
+      "depth": "shallow",
+      "repetition": 1,
+      "page": 1,
+      "rows_returned": 24,
+      "latency_ms": 100.92,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 1000,
+      "depth": "shallow",
+      "repetition": 2,
+      "page": 2,
+      "rows_returned": 24,
+      "latency_ms": 57.43,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 1000,
+      "depth": "shallow",
+      "repetition": 3,
+      "page": 3,
+      "rows_returned": 24,
+      "latency_ms": 34.29,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 1000,
+      "depth": "deep",
+      "repetition": 1,
+      "page": 39,
+      "rows_returned": 24,
+      "latency_ms": 70.24,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 1000,
+      "depth": "deep",
+      "repetition": 2,
+      "page": 40,
+      "rows_returned": 24,
+      "latency_ms": 100.41,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 1000,
+      "depth": "deep",
+      "repetition": 3,
+      "page": 41,
+      "rows_returned": 24,
+      "latency_ms": 83.38,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 10000,
+      "depth": "shallow",
+      "repetition": 1,
+      "page": 1,
+      "rows_returned": 24,
+      "latency_ms": 43.66,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 10000,
+      "depth": "shallow",
+      "repetition": 2,
+      "page": 2,
+      "rows_returned": 24,
+      "latency_ms": 35.54,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 10000,
+      "depth": "shallow",
+      "repetition": 3,
+      "page": 3,
+      "rows_returned": 24,
+      "latency_ms": 46.28,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 10000,
+      "depth": "deep",
+      "repetition": 1,
+      "page": 414,
+      "rows_returned": 24,
+      "latency_ms": 40.34,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 10000,
+      "depth": "deep",
+      "repetition": 2,
+      "page": 415,
+      "rows_returned": 24,
+      "latency_ms": 38.47,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 10000,
+      "depth": "deep",
+      "repetition": 3,
+      "page": 416,
+      "rows_returned": 24,
+      "latency_ms": 44.97,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 100000,
+      "depth": "shallow",
+      "repetition": 1,
+      "page": 1,
+      "rows_returned": 24,
+      "latency_ms": 131.62,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 100000,
+      "depth": "shallow",
+      "repetition": 2,
+      "page": 2,
+      "rows_returned": 24,
+      "latency_ms": 117.47,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 100000,
+      "depth": "shallow",
+      "repetition": 3,
+      "page": 3,
+      "rows_returned": 24,
+      "latency_ms": 131.53,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 100000,
+      "depth": "deep",
+      "repetition": 1,
+      "page": 4164,
+      "rows_returned": 24,
+      "latency_ms": 241.37,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 100000,
+      "depth": "deep",
+      "repetition": 2,
+      "page": 4165,
+      "rows_returned": 24,
+      "latency_ms": 211.0,
+      "http_status": 200
+    },
+    {
+      "cohort_rows": 100000,
+      "depth": "deep",
+      "repetition": 3,
+      "page": 4166,
+      "rows_returned": 24,
+      "latency_ms": 193.77,
+      "http_status": 200
+    }
+  ]
+}

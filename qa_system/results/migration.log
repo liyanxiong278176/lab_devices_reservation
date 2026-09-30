@@ -1,0 +1,44 @@
+INFO  [alembic.runtime.migration] Context impl MySQLImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0000_legacy_bootstrap, Create the compatibility base used by the v2 Alembic migration.
+INFO  [alembic.runtime.migration] Running upgrade 0000_legacy_bootstrap -> 0001_v2_foundation, Add FastAPI v2 tenant, date reservation and durable task foundations.
+INFO  [alembic.runtime.migration] Running upgrade 0001_v2_foundation -> 0002_ai_agent_rag, Persist the Agent Harness, human confirmation and tenant-aware knowledge base.
+INFO  [alembic.runtime.migration] Running upgrade 0002_ai_agent_rag -> 0003_repairs, Add tenant-scoped repair tickets for the practical operations workflow.
+INFO  [alembic.runtime.migration] Running upgrade 0003_repairs -> 0004_reliability_indexes, Make notification delivery at-least-once without duplicate user-visible rows.
+INFO  [alembic.runtime.migration] Running upgrade 0004_reliability_indexes -> 0005_backfill_legacy_tenant_data, Backfill tenant ownership and natural-day occupancy for legacy rows.
+INFO  [alembic.runtime.migration] Running upgrade 0005_backfill_legacy_tenant_data -> 0006_notification_ts, Complete the notification timestamp shape for existing databases.
+INFO  [alembic.runtime.migration] Running upgrade 0006_notification_ts -> 0007_device_days, Add the natural-day reservation limit to legacy device tables.
+INFO  [alembic.runtime.migration] Running upgrade 0007_device_days -> 0008_non_ai_perf, Add non-AI reliability fields and keyset/query indexes.
+INFO  [alembic.runtime.migration] Running upgrade 0008_non_ai_perf -> 0009_seed_college_groups, Seed the real college tenants and repartition legacy catalog data.
+WARNI [asyncmy] 'VALUES function' is deprecated and will be removed in a future release. Please use an alias (INSERT INTO ... VALUES (...) AS alias) and replace VALUES(col) in the ON DUPLICATE KEY UPDATE clause with alias.col instead
+WARNI [asyncmy] 'VALUES function' is deprecated and will be removed in a future release. Please use an alias (INSERT INTO ... VALUES (...) AS alias) and replace VALUES(col) in the ON DUPLICATE KEY UPDATE clause with alias.col instead
+WARNI [asyncmy] 'VALUES function' is deprecated and will be removed in a future release. Please use an alias (INSERT INTO ... VALUES (...) AS alias) and replace VALUES(col) in the ON DUPLICATE KEY UPDATE clause with alias.col instead
+INFO  [alembic.runtime.migration] Running upgrade 0009_seed_college_groups -> 0010_reconcile_legacy_outbox, Reconcile legacy outbox tasks whose old rows had no aggregate key.
+INFO  [alembic.runtime.migration] Running upgrade 0010_reconcile_legacy_outbox -> 0011_non_ai_business_hardening, Complete the non-AI reservation operations and security model.
+INFO  [alembic.runtime.migration] Running upgrade 0011_non_ai_business_hardening -> 0012_private_upload_assets, Store validated private attachments for non-AI business records.
+INFO  [alembic.runtime.migration] Running upgrade 0012_private_upload_assets -> 0013_reservation_feedback, Add the post-use reservation feedback loop.
+INFO  [alembic.runtime.migration] Running upgrade 0013_reservation_feedback -> 0014_device_documents, Add validated device manual and SOP attachments.
+INFO  [alembic.runtime.migration] Running upgrade 0014_device_documents -> 0015_non_ai_operations, Add operational controls for asset custody, safety access and reporting.
+INFO  [alembic.runtime.migration] Running upgrade 0015_non_ai_operations -> 0016_backfill_device_identity, Backfill stable asset and QR identities for existing devices.
+INFO  [alembic.runtime.migration] Running upgrade 0016_backfill_device_identity -> 0017_release_terminal_occupancy, Release live day-index rows left by terminal reservations.
+INFO  [alembic.runtime.migration] Running upgrade 0017_release_terminal_occupancy -> 0018_fulfillment, Add evidence-backed fulfillment, waitlist offers, and purpose metadata.
+INFO  [alembic.runtime.migration] Running upgrade 0018_fulfillment -> 0019_return_pending_state, Keep return acceptance in handover status, not reservation status.
+INFO  [alembic.runtime.migration] Running upgrade 0019_return_pending_state -> 0020_remove_device_qr_token, Remove the retired device QR credential.
+INFO  [alembic.runtime.migration] Running upgrade 0020_remove_device_qr_token -> 0021_ai_durable_runtime, Persist AI run replay, LangGraph checkpoints, quotas and reviewed documents.
+WARNI [asyncmy] InnoDB rebuilding table to add column FTS_DOC_ID
+INFO  [alembic.runtime.migration] Running upgrade 0021_ai_durable_runtime -> 0022_ai_env_config, Move AI provider settings and credentials out of MySQL into backend env configuration.
+INFO  [alembic.runtime.migration] Running upgrade 0022_ai_env_config -> 0023_refresh_session_families, Bind access tokens to revocable refresh-session families.
+INFO  [alembic.runtime.migration] Running upgrade 0023_refresh_session_families -> 0024_upload_quota_buckets, Track upload storage usage per global, college and user scope.
+INFO  [alembic.runtime.migration] Running upgrade 0024_upload_quota_buckets -> 0025_reservation_maintenance, Add scoped reservation rules and preventive maintenance records.
+INFO  [alembic.runtime.migration] Running upgrade 0025_reservation_maintenance -> 0026_resv_dates, Require natural-day reservation dates in the database.
+INFO  [alembic.runtime.migration] Running upgrade 0026_resv_dates -> 0027_maint_asset_idx, Index maintenance evidence references for downloads and cleanup checks.
+INFO  [alembic.runtime.migration] Running upgrade 0027_maint_asset_idx -> 0028_maintenance_retests, Allow repeat attempts for a maintenance cycle after repair.
+INFO  [alembic.runtime.migration] Running upgrade 0028_maintenance_retests -> 0029_cookie_auth_rbac, Add permission-backed authorization and retire legacy refresh rows.
+INFO  [alembic.runtime.migration] Running upgrade 0029_cookie_auth_rbac -> 0030_ai_runtime_memory_dlp, Add AI tool ledger, private memory lifecycle, DLP and citation confirmations.
+WARNI [asyncmy] Duplicate index 'idx_v2_ai_memory_recall_run' defined on the table 'lab_reservation_qa_48c425f9.v2_ai_memory_recall'. This is deprecated and will be disallowed in a future release.
+INFO  [alembic.runtime.migration] Running upgrade 0030_ai_runtime_memory_dlp -> 0031_ai_context_and_domain_terms, Add L0 recall, protected-context snapshots, and reviewed domain terms.
+INFO  [alembic.runtime.migration] Running upgrade 0031_ai_context_and_domain_terms -> 0032_knowledge_parent_sections, Add document heading tree and parent references for child chunks.
+INFO  [alembic.runtime.migration] Running upgrade 0032_knowledge_parent_sections -> 0033_knowledge_acl_metadata, Add role/resource ACL and incremental-index metadata for AI knowledge.
+INFO  [alembic.runtime.migration] Running upgrade 0033_knowledge_acl_metadata -> 0034_notification_sequence, Add a strict per-user delivery cursor for replayable notifications.
+INFO  [alembic.runtime.migration] Running upgrade 0034_notification_sequence -> 0035_ai_knowledge_build_jobs, Add durable Celery build jobs and versioned knowledge staging rows.
+INFO  [alembic.runtime.migration] Running upgrade 0035_ai_knowledge_build_jobs -> 0036_knowledge_build_ordering, Enforce ordered knowledge builds and audit explicit skips.

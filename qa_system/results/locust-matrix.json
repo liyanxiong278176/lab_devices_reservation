@@ -1,0 +1,137 @@
+[
+  {
+    "users": 5,
+    "repetition": 1,
+    "requests": 93,
+    "failures": 0,
+    "median_ms": "23",
+    "p95_ms": "450",
+    "rps": "10.383540187655864"
+  },
+  {
+    "users": 5,
+    "repetition": 2,
+    "requests": 93,
+    "failures": 0,
+    "median_ms": "22",
+    "p95_ms": "400",
+    "rps": "10.312502200926012"
+  },
+  {
+    "users": 5,
+    "repetition": 3,
+    "requests": 93,
+    "failures": 0,
+    "median_ms": "15",
+    "p95_ms": "230",
+    "rps": "10.327709399477227"
+  },
+  {
+    "users": 10,
+    "repetition": 1,
+    "requests": 192,
+    "failures": 0,
+    "median_ms": "16",
+    "p95_ms": "290",
+    "rps": "21.152729484286716"
+  },
+  {
+    "users": 10,
+    "repetition": 2,
+    "requests": 192,
+    "failures": 0,
+    "median_ms": "15",
+    "p95_ms": "440",
+    "rps": "21.432281114147244"
+  },
+  {
+    "users": 10,
+    "repetition": 3,
+    "requests": 185,
+    "failures": 0,
+    "median_ms": "17",
+    "p95_ms": "360",
+    "rps": "20.440829117449525"
+  },
+  {
+    "users": 25,
+    "repetition": 1,
+    "requests": 442,
+    "failures": 0,
+    "median_ms": "16",
+    "p95_ms": "470",
+    "rps": "48.85720691241047"
+  },
+  {
+    "users": 25,
+    "repetition": 2,
+    "requests": 432,
+    "failures": 0,
+    "median_ms": "16",
+    "p95_ms": "610",
+    "rps": "48.04108764104024"
+  },
+  {
+    "users": 25,
+    "repetition": 3,
+    "requests": 361,
+    "failures": 2,
+    "median_ms": "22",
+    "p95_ms": "1600",
+    "rps": "39.88682973141247"
+  },
+  {
+    "users": 50,
+    "repetition": 1,
+    "requests": 536,
+    "failures": 22,
+    "median_ms": "49",
+    "p95_ms": "1800",
+    "rps": "59.33345083122368"
+  },
+  {
+    "users": 50,
+    "repetition": 2,
+    "requests": 526,
+    "failures": 36,
+    "median_ms": "40",
+    "p95_ms": "1900",
+    "rps": "58.255968116915206"
+  },
+  {
+    "users": 50,
+    "repetition": 3,
+    "requests": 634,
+    "failures": 528,
+    "median_ms": "11",
+    "p95_ms": "1600",
+    "rps": "70.01704239724708"
+  },
+  {
+    "users": 100,
+    "repetition": 1,
+    "requests": 277,
+    "failures": 102,
+    "median_ms": "2100",
+    "p95_ms": "3200",
+    "rps": "30.68218352301055"
+  },
+  {
+    "users": 100,
+    "repetition": 2,
+    "requests": 264,
+    "failures": 100,
+    "median_ms": "2100",
+    "p95_ms": "3200",
+    "rps": "29.497651301845"
+  },
+  {
+    "users": 100,
+    "repetition": 3,
+    "requests": 307,
+    "failures": 114,
+    "median_ms": "1900",
+    "p95_ms": "3000",
+    "rps": "34.0253094770001"
+  }
+]

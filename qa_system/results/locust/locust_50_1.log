@@ -1,0 +1,37 @@
+
+--- stderr ---
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      ai/conversations                                                                  35     1(2.86%) |    149      10    1307     48 |    3.56        0.10
+GET      ai/status                                                                         61     2(3.28%) |     91       9    1272     29 |    6.20        0.20
+GET      auth/csrf                                                                         50     0(0.00%) |    616      21    1581    840 |    5.08        0.00
+POST     auth/login                                                                        50     0(0.00%) |   1844     874    3042   1800 |    5.08        0.00
+GET      business/devices                                                                 202     7(3.47%) |    179      11    1508     43 |   20.52        0.71
+GET      business/notifications                                                            71     3(4.23%) |    127      12    1348     35 |    7.21        0.30
+GET      business/reservations                                                            114     9(7.89%) |    210      21    1483     59 |   11.58        0.91
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                       583    22(3.77%) |    348       9    3042     50 |   59.22        2.23
+
+Response time percentiles (approximated)
+Type     Name                                                                                  50%    66%    75%    80%    90%    95%    98%    99%  99.9% 99.99%   100% # reqs
+--------|--------------------------------------------------------------------------------|--------|------|------|------|------|------|------|------|------|------|------|------
+GET      ai/conversations                                                                       48     71     87    100    470   1100   1300   1300   1300   1300   1300     35
+GET      ai/status                                                                              29     40     45     49     68    460   1200   1300   1300   1300   1300     61
+GET      auth/csrf                                                                             840    860    960   1000   1300   1400   1600   1600   1600   1600   1600     50
+POST     auth/login                                                                           1800   2000   2000   2300   2600   2800   3000   3000   3000   3000   3000     50
+GET      business/devices                                                                       43     61    100    130    600   1200   1300   1400   1500   1500   1500    202
+GET      business/notifications                                                                 35     50     65     71    330    920   1300   1300   1300   1300   1300     71
+GET      business/reservations                                                                  59     74     88    130    760   1300   1400   1400   1500   1500   1500    114
+--------|--------------------------------------------------------------------------------|--------|------|------|------|------|------|------|------|------|------|------|------
+         Aggregated                                                                             50     82    330    760   1300   1700   2000   2600   3000   3000   3000    583
+
+Error report
+# occurrences      Error                                                                                               
+------------------|---------------------------------------------------------------------------------------------------------------------------------------------
+9                  GET business/reservations: HTTPError('503 Server Error: Service Unavailable for url: business/reservations')
+3                  GET business/notifications: HTTPError('503 Server Error: Service Unavailable for url: business/notifications')
+7                  GET business/devices: HTTPError('503 Server Error: Service Unavailable for url: business/devices')  
+1                  GET ai/conversations: HTTPError('503 Server Error: Service Unavailable for url: ai/conversations')  
+2                  GET ai/status: HTTPError('503 Server Error: Service Unavailable for url: ai/status')                
+------------------|---------------------------------------------------------------------------------------------------------------------------------------------
+

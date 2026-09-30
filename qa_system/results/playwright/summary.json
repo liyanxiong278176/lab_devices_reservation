@@ -1,0 +1,15 @@
+{
+  "outcome": "passed",
+  "checks": [
+    "student menu permissions hide approvals",
+    "student device page shows own college and hides other college",
+    "student can use live API-backed read-only AI reservation query",
+    "manager menu exposes pending approvals"
+  ],
+  "ai_answer_characters": 70,
+  "screenshots": [
+    "student-device-tenant-scope.png",
+    "student-ai-business-query.png",
+    "manager-approval-scope.png"
+  ]
+}

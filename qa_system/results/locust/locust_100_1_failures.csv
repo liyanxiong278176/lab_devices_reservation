@@ -1,0 +1,8 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+GET,business/reservations,HTTPError('503 Server Error: Service Unavailable for url: business/reservations'),22,2026-09-30T06:45:23Z,2026-09-30T06:45:30Z
+POST,auth/login,HTTPError('503 Server Error: Service Unavailable for url: auth/login'),4,2026-09-30T06:45:26Z,2026-09-30T06:45:30Z
+GET,ai/status,HTTPError('503 Server Error: Service Unavailable for url: ai/status'),16,2026-09-30T06:45:26Z,2026-09-30T06:45:30Z
+GET,ai/conversations,HTTPError('503 Server Error: Service Unavailable for url: ai/conversations'),6,2026-09-30T06:45:26Z,2026-09-30T06:45:30Z
+GET,business/devices,HTTPError('503 Server Error: Service Unavailable for url: business/devices'),35,2026-09-30T06:45:24Z,2026-09-30T06:45:30Z
+GET,business/notifications,HTTPError('503 Server Error: Service Unavailable for url: business/notifications'),17,2026-09-30T06:45:24Z,2026-09-30T06:45:30Z
+GET,business/devices,HTTPError('401 Client Error: Unauthorized for url: business/devices'),2,2026-09-30T06:45:27Z,2026-09-30T06:45:30Z

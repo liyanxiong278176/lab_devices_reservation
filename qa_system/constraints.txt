@@ -1,0 +1,2 @@
+# DeepEval currently requires click<8.4 while the backend lock selects 8.4.2.
+click==8.3.3

@@ -1,0 +1,7 @@
+INFO:     Started server process [33064]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+INFO:     127.0.0.1:61902 - "GET /api/v2/live HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61904 - "GET /api/v2/devices HTTP/1.1" 503 Service Unavailable
+INFO:     127.0.0.1:61904 - "GET /api/v2/ai/status HTTP/1.1" 503 Service Unavailable

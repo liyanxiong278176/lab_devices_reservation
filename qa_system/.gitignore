@@ -1,0 +1,9 @@
+.venv/
+.runtime-secrets.json
+.runtime-secrets.json.*
+results/accounts.local.json
+__pycache__/
+*.py[cod]
+.pytest_cache/
+playwright-report/
+test-results/

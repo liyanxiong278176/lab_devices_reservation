@@ -1,0 +1,23 @@
+{
+  "offline_fixture_only": true,
+  "thresholds": {
+    "contextual_precision_at_k": 0.8,
+    "contextual_recall": 0.8,
+    "contextual_relevancy": 0.8,
+    "faithfulness": 0.9,
+    "answer_relevancy": 0.9,
+    "factual_correctness": 0.9,
+    "citation_validity": 1.0,
+    "tenant_citation_isolation": 1.0
+  },
+  "scores": {
+    "contextual_precision_at_k": 1.0,
+    "contextual_recall": 1.0,
+    "contextual_relevancy": 1.0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 1.0,
+    "factual_correctness": 1.0,
+    "citation_validity": 1.0,
+    "tenant_citation_isolation": 1.0
+  }
+}
