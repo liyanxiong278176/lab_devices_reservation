@@ -229,6 +229,9 @@ async function onSubmit() {
     const result = await createReservation(payload)
     ElMessage.success(`已提交 ${result.created.length} 条预约`)
     await router.push({ name: 'reservation-mine' })
+  } catch {
+    // The request interceptor already shows the server's conflict or network
+    // message; keep the form available so the user can choose another date.
   } finally {
     submitting.value = false
   }

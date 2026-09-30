@@ -1,5 +1,6 @@
 import request from './request'
 import type { Page } from '@/types/common'
+import { fetchAllPages } from '@/utils/fetch-all-pages'
 import type { Lab } from '@/types/lab'
 import type { LabWritePayload } from '@/types/lab'
 
@@ -48,6 +49,9 @@ export const listLabs = (page = 1, size = 100) =>
     pages: data.pages,
     truncated: data.truncated,
   }))
+
+export const listAllLabs = (pageSize = 200): Promise<Lab[]> =>
+  fetchAllPages((page, size) => listLabs(page, size), pageSize)
 
 const payload = (data: LabWritePayload) => ({
   college_id: data.collegeId,

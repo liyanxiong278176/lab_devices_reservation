@@ -1,118 +1,121 @@
 from datetime import datetime, timedelta
 
 import pytest
-from app.ai.retention import purge_expired_conversations
-from app.infrastructure.db.models import AiConfirmation, AiConversation, AiMessage, AiRun
+from app.ai.retention import sweep_ai_retention
+from app.infrastructure.db.models import AiConversation, AiMemory, AiMessage
 from sqlalchemy import select
 
 
 @pytest.mark.asyncio
-async def test_retention_removes_only_expired_inactive_conversations(seeded) -> None:
-    factory, college, _other_college, user, *_ = seeded
-    now = datetime(2026, 9, 24, 12, 0, 0)
-    old_time = now - timedelta(days=181)
-    recent_time = now - timedelta(days=30)
+async def test_retention_archives_expired_data_before_purging(seeded) -> None:
+    factory, college, _, user, *_ = seeded
+    now = datetime(2026, 9, 24, 12)
 
     async with factory() as session:
-        expired = AiConversation(
+        conversation = AiConversation(
             user_id=user.id,
             college_id=college.id,
-            title="已过期的对话",
+            title="历史对话",
             graph_thread_id="retention-expired",
-            created_at=old_time,
-            updated_at=old_time,
         )
-        running = AiConversation(
+        session.add(conversation)
+        await session.flush()
+        message = AiMessage(
+            conversation_id=conversation.id,
             user_id=user.id,
             college_id=college.id,
-            title="正在执行的对话",
+            role="user",
+            content="历史原始消息",
+            created_at=now - timedelta(days=181),
+            expires_at=now - timedelta(days=1),
+        )
+        memory = AiMemory(
+            user_id=user.id,
+            college_id=college.id,
+            level="L1",
+            scenario="general",
+            content="历史事实记忆",
+            source_message_ids=[],
+            source_run_ids=[],
+            status="ACTIVE",
+            expires_at=now - timedelta(days=1),
+        )
+        session.add_all([message, memory])
+        await session.commit()
+        message_id, memory_id, conversation_id = message.id, memory.id, conversation.id
+
+    first = await sweep_ai_retention(factory, now=now)
+    async with factory() as session:
+        archived_message = await session.get(AiMessage, message_id)
+        archived_memory = await session.get(AiMemory, memory_id)
+        conversation_kept = await session.get(AiConversation, conversation_id)
+
+    assert first["archived_messages"] == 1
+    assert first["archived_memories"] == 1
+    assert archived_message is not None and archived_message.archived_at == now
+    assert archived_memory is not None and archived_memory.status == "ARCHIVED"
+    assert conversation_kept is not None
+
+    old_archive = now - timedelta(days=181)
+    async with factory() as session:
+        archived_message = await session.get(AiMessage, message_id)
+        archived_memory = await session.get(AiMemory, memory_id)
+        assert archived_message and archived_memory
+        archived_message.archived_at = old_archive
+        archived_memory.archived_at = old_archive
+        await session.commit()
+
+    second = await sweep_ai_retention(factory, now=now)
+    async with factory() as session:
+        assert await session.get(AiMessage, message_id) is None
+        assert await session.get(AiMemory, memory_id) is None
+        assert await session.get(AiConversation, conversation_id) is not None
+
+    assert second["purged_messages"] == 1
+    assert second["purged_memories"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retention_does_not_archive_messages_with_active_run(seeded) -> None:
+    factory, college, _, user, *_ = seeded
+    now = datetime(2026, 9, 24, 12)
+    async with factory() as session:
+        conversation = AiConversation(
+            user_id=user.id,
+            college_id=college.id,
+            title="运行中对话",
             graph_thread_id="retention-running",
-            created_at=old_time,
-            updated_at=old_time,
         )
-        pending = AiConversation(
+        session.add(conversation)
+        await session.flush()
+        message = AiMessage(
+            conversation_id=conversation.id,
             user_id=user.id,
             college_id=college.id,
-            title="等待确认的对话",
-            graph_thread_id="retention-pending",
-            created_at=old_time,
-            updated_at=old_time,
+            role="user",
+            content="不能归档",
+            created_at=now - timedelta(days=181),
+            expires_at=now - timedelta(days=1),
         )
-        recent = AiConversation(
-            user_id=user.id,
-            college_id=college.id,
-            title="最近的对话",
-            graph_thread_id="retention-recent",
-            created_at=recent_time,
-            updated_at=recent_time,
-        )
-        session.add_all([expired, running, pending, recent])
+        session.add(message)
         await session.flush()
-        expired_id, running_id, pending_id, recent_id = (
-            expired.id,
-            running.id,
-            pending.id,
-            recent.id,
-        )
-        session.add_all(
-            [
-                AiMessage(
-                    conversation_id=expired_id,
-                    user_id=user.id,
-                    college_id=college.id,
-                    role="user",
-                    content="应按保留周期清理的正文",
-                ),
-                AiRun(
-                    run_key="retention-running-run",
-                    conversation_id=running_id,
-                    user_id=user.id,
-                    college_id=college.id,
-                    status="RUNNING",
-                    input_text="仍在执行",
-                ),
-                AiRun(
-                    run_key="retention-pending-run",
-                    conversation_id=pending_id,
-                    user_id=user.id,
-                    college_id=college.id,
-                    status="WAITING_CONFIRMATION",
-                    input_text="等待用户确认",
-                ),
-            ]
-        )
-        await session.flush()
-        pending_run = await session.scalar(
-            select(AiRun).where(AiRun.run_key == "retention-pending-run")
-        )
-        assert pending_run is not None
+        from app.infrastructure.db.models import AiRun
+
         session.add(
-            AiConfirmation(
-                run_id=pending_run.id,
-                conversation_id=pending_id,
+            AiRun(
+                run_key="retention-active-run",
+                conversation_id=conversation.id,
                 user_id=user.id,
                 college_id=college.id,
-                tool_name="create_reservation",
-                arguments_json={},
-                preview_json={},
-                status="PENDING",
-                expires_at=now + timedelta(minutes=5),
+                status="RUNNING",
+                input_text="仍在运行",
             )
         )
         await session.commit()
+        message_id = message.id
 
-    removed = await purge_expired_conversations(factory, 180, now=now, batch_size=10)
-
+    result = await sweep_ai_retention(factory, now=now)
     async with factory() as session:
-        remaining = set((await session.scalars(select(AiConversation.id))).all())
-        remaining_messages = list(
-            (
-                await session.scalars(
-                    select(AiMessage).where(AiMessage.conversation_id == expired_id)
-                )
-            ).all()
-        )
-    assert removed == 1
-    assert expired_id not in remaining
-    assert not remaining_messages
-    assert {running_id, pending_id, recent_id}.issubset(remaining)
+        message = await session.scalar(select(AiMessage).where(AiMessage.id == message_id))
+    assert result["archived_messages"] == 0
+    assert message is not None and message.archived_at is None

@@ -6,6 +6,7 @@ type Fixture = {
   username: string
   alternate_username: string
   password: string
+  admin_username: string
   manager_username: string
   device_name: string
   college_id: number
@@ -56,12 +57,16 @@ test.describe.serial('普通用户与实验室负责人学院隔离页面验收'
 
   test('跨学院设备、预约和审批不可见；本学院负责人及系统管理员范围正确', async ({ browser }, testInfo) => {
     test.setTimeout(150_000)
-    const userContext = await browser.newContext()
-    const userA = await userContext.newPage()
-    const userB = await userContext.newPage()
-    const managerContext = await browser.newContext()
-    const managerA = await managerContext.newPage()
-    const managerB = await managerContext.newPage()
+    // Cookie-based authentication is shared by pages in a BrowserContext.
+    // Each principal therefore needs its own context to exercise real isolation.
+    const userAContext = await browser.newContext()
+    const userA = await userAContext.newPage()
+    const userBContext = await browser.newContext()
+    const userB = await userBContext.newPage()
+    const managerAContext = await browser.newContext()
+    const managerA = await managerAContext.newPage()
+    const managerBContext = await browser.newContext()
+    const managerB = await managerBContext.newPage()
     const systemContext = await browser.newContext()
     const systemAdmin = await systemContext.newPage()
 
@@ -109,14 +114,25 @@ test.describe.serial('普通用户与实验室负责人学院隔离页面验收'
     const ownApproval = managerB.locator('.approval__card').filter({ hasText: purpose })
     await expect(ownApproval).toBeVisible()
     await ownApproval.getByRole('button', { name: '通过' }).click()
+    const handoversResponsePromise = managerB.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/v2/reservations/handovers'
+      && new URL(response.url()).searchParams.get('status') === 'PENDING',
+    )
     await managerB.getByRole('menuitem', { name: '设备交接', exact: true }).click()
+    const handoversResponse = await handoversResponsePromise
+    const handoversBody = await handoversResponse.json()
+    expect(handoversResponse.status(), JSON.stringify(handoversBody)).toBe(200)
+    expect(
+      handoversBody.data.items.map((item: { purpose: string }) => item.purpose),
+      JSON.stringify(handoversBody),
+    ).toContain(purpose)
     await expect(managerB.locator('.handover-card').filter({ hasText: purpose })).toBeVisible()
 
     await userA.getByRole('menuitem', { name: '我的预约', exact: true }).click()
     await expect(userA.locator('.mine__card').filter({ hasText: purpose })).toHaveCount(0)
     await expect(userA.getByRole('heading', { name: '暂无预约记录', exact: true })).toBeVisible()
 
-    await login(systemAdmin, 'admin', 'admin123')
+    await login(systemAdmin, collegeA.admin_username, collegeA.password)
     await systemAdmin.getByRole('menuitem', { name: '设备管理', exact: true }).click()
     const systemSearch = systemAdmin.getByPlaceholder('按名称 / 品牌 / 型号检索')
     await systemSearch.fill(collegeB.device_name)
@@ -124,8 +140,10 @@ test.describe.serial('普通用户与实验室负责人学院隔离页面验收'
     await expect(systemAdmin.locator('.el-table__row').filter({ has: systemAdmin.getByText(collegeB.device_name, { exact: true }) })).toBeVisible()
     await systemAdmin.screenshot({ path: testInfo.outputPath('system-admin-cross-college-device-management.png'), fullPage: true })
 
-    await userContext.close()
-    await managerContext.close()
+    await userAContext.close()
+    await userBContext.close()
+    await managerAContext.close()
+    await managerBContext.close()
     await systemContext.close()
   })
 })

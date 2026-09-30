@@ -72,11 +72,13 @@ class CategoryData(BaseModel):
 
 
 def _can_admin(principal: Principal) -> bool:
-    return principal.is_lab_admin or principal.is_system_admin
+    return principal.is_system_admin or (
+        principal.is_lab_admin and principal.has_permission("organization:read")
+    )
 
 
 def _require_system_admin(principal: Principal) -> None:
-    if not principal.is_system_admin:
+    if not principal.is_system_admin or not principal.has_permission("organization:manage"):
         raise ApiError("FORBIDDEN", "仅系统管理员可以配置学院和实验室", 403)
 
 
@@ -334,9 +336,9 @@ async def create_lab(
     lab = Lab(
         college_id=college.id,
         name=payload.name.strip(),
-        location=payload.location.strip() if payload.location else None,
+        location=(payload.location or "").strip() or None,
         manager_id=manager.id if manager else None,
-        description=payload.description.strip() if payload.description else None,
+        description=(payload.description or "").strip() or None,
         status=1,
     )
     session.add(lab)
@@ -378,9 +380,9 @@ async def update_lab(
     college = await _active_college(session, lab.college_id)
     manager = await _resolve_manager(session, payload.manager_id, college.id)
     lab.name = payload.name.strip()
-    lab.location = payload.location.strip() if payload.location else None
+    lab.location = (payload.location or "").strip() or None
     lab.manager_id = manager.id if manager else None
-    lab.description = payload.description.strip() if payload.description else None
+    lab.description = (payload.description or "").strip() or None
     enqueue_catalog_cache_bump(session, college.id)
     await session.commit()
     await sync_catalog_cache_bump(request.app, college.id)

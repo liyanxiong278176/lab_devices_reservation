@@ -6,6 +6,7 @@ type Fixture = {
   username: string
   alternate_username: string
   password: string
+  admin_username: string
   device_name: string
   second_device_id: number
   second_device_name: string
@@ -98,6 +99,12 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     test.setTimeout(180_000)
     const userContext = await browser.newContext()
     const userPage = await userContext.newPage()
+    const unresolvedComponentWarnings: string[] = []
+    userPage.on('console', (message) => {
+      if (message.type() === 'warning' && /Failed to resolve component:/.test(message.text())) {
+        unresolvedComponentWarnings.push(message.text())
+      }
+    })
     await login(userPage, fixture.username, fixture.password)
     await expect(userPage.getByRole('heading', { name: '我的仪表盘', exact: true })).toBeVisible()
 
@@ -134,10 +141,11 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await expect(
       userPage.locator('.mine__card').filter({ hasText: 'E2E 页面预约审批链路' }).getByText('待审批'),
     ).toBeVisible()
+    expect(unresolvedComponentWarnings, '预约页面不应出现未解析的 Vue 组件').toEqual([])
 
     const adminContext = await browser.newContext()
     const adminPage = await adminContext.newPage()
-    await login(adminPage, 'admin', 'admin123')
+    await login(adminPage, fixture.admin_username, fixture.password)
     for (const menu of ['仪表盘', 'AI 工作台', '设备', '待审批', '我的通知', '报修处理', '设备管理', '设备交接', '运营报表', '用户管理', '组织管理']) {
       await expect(adminPage.getByRole('menuitem', { name: menu, exact: true })).toBeVisible()
     }
@@ -150,7 +158,10 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await expect(approvalCard).toHaveCount(0)
 
     await userPage.reload()
-    await expect(userPage.getByText('已通过')).toBeVisible()
+    const approvedReservationCard = userPage.locator('.mine__card').filter({
+      hasText: 'E2E 页面预约审批链路',
+    })
+    await expect(approvedReservationCard.locator('.mine__card-head')).toContainText('已通过')
 
     // 当前履约由管理员完成现场交接来启动使用；用户不能绕过交接直接签到。
     await expect(userPage.getByText('等待负责人交接')).toBeVisible()
@@ -227,11 +238,14 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await acceptanceDialog.getByRole('button', { name: '确认' }).click()
     await expect(acceptanceCard).toHaveCount(0)
     await userPage.reload()
-    await expect(userPage.getByText('已完成', { exact: true })).toBeVisible()
+    const completedReservationCard = userPage.locator('.mine__card').filter({ hasText: 'E2E 页面预约审批链路' })
+    await expect(completedReservationCard).toBeVisible()
+    await expect(completedReservationCard.locator('.mine__card-head')).toContainText('已完成')
+    await completedReservationCard.scrollIntoViewIfNeeded()
     await userPage.screenshot({ path: testInfo.outputPath('reservation-completed-user.png'), fullPage: true })
     await adminPage.screenshot({ path: testInfo.outputPath('handover-queue-completed-admin.png'), fullPage: true })
 
-    await userPage.getByRole('button', { name: '详情' }).click()
+    await completedReservationCard.getByRole('button', { name: '详情' }).click()
     await expect(userPage).toHaveURL(/reservations\/\d+/)
     await userPage.getByRole('button', { name: '评价设备' }).click()
     await expect(userPage.getByText('评价本次使用')).toBeVisible()
@@ -264,9 +278,8 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
       return stableUnreadSamples
     }, { interval: 500, timeout: 15_000 }).toBeGreaterThanOrEqual(8)
     const unreadBefore = await userPage.evaluate(async () => {
-      const auth = JSON.parse(sessionStorage.getItem('lab-user') || '{}') as { accessToken?: string }
       const response = await fetch('/api/v2/notifications/mine?onlyUnread=true&size=1', {
-        headers: { Authorization: `Bearer ${auth.accessToken || ''}` },
+        credentials: 'include',
       })
       const body = await response.json() as { data?: { total?: number } }
       return Number(body.data?.total ?? -1)
@@ -283,11 +296,16 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     })
     await targetNotification.click()
     await expect(targetNotification).toHaveAttribute('data-read', 'read')
+    const notificationDetail = userPage.getByRole('dialog')
+    await expect(notificationDetail).toBeVisible()
+    await expect(notificationDetail.getByText(targetTitle, { exact: true })).toBeVisible()
     const unreadRefresh = await unreadRefreshPromise
     const unreadRefreshBody = await unreadRefresh.json() as { data?: { total?: number } }
     const unreadAfterRead = Number(unreadRefreshBody.data?.total ?? -1)
     await expect.poll(async () => Number(await unreadCountLabel.innerText())).toBe(unreadAfterRead)
     expect(unreadAfterRead, '单条已读后未读总数应减少').toBeLessThan(unreadBefore)
+    await notificationDetail.getByRole('button', { name: 'Close this dialog' }).click()
+    await expect(notificationDetail).toBeHidden()
 
     await userPage.getByRole('radio', { name: '全部' }).click()
     const readNotification = userPage.locator('.notif-row').filter({ hasText: targetTitle }).first()
@@ -321,7 +339,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
 
     await adminPage.getByRole('menuitem', { name: '设备管理', exact: true }).click()
     await adminPage.getByRole('button', { name: '预约规则' }).click()
-    await expect(adminPage.getByRole('heading', { name: '预约规则', exact: true })).toBeVisible()
+    await expect(adminPage.getByRole('heading', { name: '预约规则中心', exact: true })).toBeVisible()
 
     await userPage.getByRole('menuitem', { name: '提交报修', exact: true }).click()
     await expect(userPage.getByRole('heading', { name: '提交报修', exact: true })).toBeVisible()
@@ -352,6 +370,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await confirmRepairAction.click()
     await userPage.getByRole('dialog').getByRole('button', { name: '确认已修复' }).click()
     await expect(userRepairCard.locator('.rmine__card-head').getByText('已完成', { exact: true })).toBeVisible()
+    expect(unresolvedComponentWarnings, '完整业务链路不应出现未解析的 Vue 组件').toEqual([])
     await userContext.close()
     await adminContext.close()
   })
@@ -360,12 +379,14 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     test.setTimeout(180_000)
     const userContext = await browser.newContext()
     const userPage = await userContext.newPage()
-    const alternatePage = await userContext.newPage()
+    // The alternate user must not share the primary user's auth cookies.
+    const alternateContext = await browser.newContext()
+    const alternatePage = await alternateContext.newPage()
     const adminContext = await browser.newContext()
     const adminPage = await adminContext.newPage()
     await login(userPage, fixture.username, fixture.password)
     await login(alternatePage, fixture.alternate_username, fixture.password)
-    await login(adminPage, 'admin', 'admin123')
+    await login(adminPage, fixture.admin_username, fixture.password)
 
     const cancelDate = dateAfter(2)
     const cancelPurpose = 'E2E 页面取消与候补递补'
@@ -382,6 +403,9 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await deviceCard.click()
     await alternatePage.getByRole('button', { name: '查看完整详情' }).click()
     await alternatePage.getByRole('tab', { name: '预约日历' }).click()
+    const calendarDate = alternatePage.locator('.device-detail__cal-panel input[placeholder="选择日期"]')
+    await calendarDate.fill(cancelDate)
+    await calendarDate.press('Enter')
     const occupiedDay = alternatePage.locator('.device-detail__cal-panel .el-table__row').filter({ hasText: cancelDate })
     await expect(occupiedDay).toBeVisible()
     await occupiedDay.getByRole('button', { name: '排队' }).click()
@@ -428,6 +452,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await userPage.screenshot({ path: testInfo.outputPath('reservation-rejected-and-cancelled-user.png'), fullPage: true })
     await alternatePage.screenshot({ path: testInfo.outputPath('waitlist-notified-user.png'), fullPage: true })
     await userContext.close()
+    await alternateContext.close()
     await adminContext.close()
   })
 
@@ -438,7 +463,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     const adminContext = await browser.newContext()
     const adminPage = await adminContext.newPage()
     await login(userPage, fixture.username, fixture.password)
-    await login(adminPage, 'admin', 'admin123')
+    await login(adminPage, fixture.admin_username, fixture.password)
 
     const reworkTitle = 'E2E 报修退回后重新处理'
     await userPage.getByRole('menuitem', { name: '提交报修', exact: true }).click()
@@ -514,7 +539,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     const adminContext = await browser.newContext()
     const adminPage = await adminContext.newPage()
     await login(userPage, fixture.username, fixture.password)
-    await login(adminPage, 'admin', 'admin123')
+    await login(adminPage, fixture.admin_username, fixture.password)
 
     const rejectedTitle = 'E2E 管理员驳回报修'
     await userPage.getByRole('menuitem', { name: '提交报修', exact: true }).click()
@@ -558,7 +583,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     const adminContext = await browser.newContext()
     const adminPage = await adminContext.newPage()
     await login(userPage, fixture.username, fixture.password)
-    await login(adminPage, 'admin', 'admin123')
+    await login(adminPage, fixture.admin_username, fixture.password)
 
     const purpose = 'E2E 损坏设备交接与验收'
     const reservationCard = await submitReservation(userPage, fixture.second_device_name, dateAfter(0), purpose)
@@ -650,7 +675,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     const adminContext = await browser.newContext()
     const adminPage = await adminContext.newPage()
     await login(userPage, fixture.username, fixture.password)
-    await login(adminPage, 'admin', 'admin123')
+    await login(adminPage, fixture.admin_username, fixture.password)
 
     const purpose = 'E2E 交接配件异常处置'
     const reservationCard = await submitReservation(

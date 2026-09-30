@@ -46,6 +46,32 @@ def test_reservation_plan_rejects_more_than_31_total_window_days() -> None:
 
 
 def principal(user: User, *roles: str) -> Principal:
+    permission_map = {
+        "STUDENT": (
+            "device:read",
+            "reservation:create",
+            "reservation:read:own",
+            "reservation:cancel",
+            "reservation:check-in",
+            "reservation:return",
+            "repair:create",
+            "repair:read:own",
+            "repair:confirm",
+        ),
+        "LAB_ADMIN": (
+            "device:read",
+            "device:manage",
+            "reservation:read:scope",
+            "reservation:approve",
+            "reservation:handover",
+            "reservation:accept-return",
+            "repair:read:scope",
+            "repair:handle",
+            "report:read",
+            "maintenance:manage",
+            "reservation-rule:manage",
+        ),
+    }
     return Principal(
         user_id=user.id,
         username=user.username,
@@ -53,6 +79,7 @@ def principal(user: User, *roles: str) -> Principal:
         roles=roles,
         token_type="access",
         token_id="test-token",
+        permissions=tuple({code for role in roles for code in permission_map.get(role, ())}),
     )
 
 
@@ -132,6 +159,72 @@ async def test_college_isolation_and_idempotent_reservation(seeded) -> None:
             )
         )
         assert reopened.created[0].status == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_adjacent_explicit_dates_create_independent_reservations(seeded) -> None:
+    factory, _, _, student, _, _, device, _ = seeded
+    first_date = date.today() + timedelta(days=4)
+    second_date = first_date + timedelta(days=1)
+    async with factory() as session:
+        result = await ReservationService(
+            session,
+            principal(student, "STUDENT"),
+        ).create(
+            ReservationPlanRequest(
+                device_id=device.id,
+                dates=[first_date, second_date],
+                purpose="相邻日期按独立预约办理交接",
+            )
+        )
+        assert len(result.created) == 2
+        assert [item.dates for item in result.created] == [[first_date], [second_date]]
+        rows = list(
+            (
+                await session.scalars(
+                    select(Reservation)
+                    .where(Reservation.id.in_([item.id for item in result.created]))
+                    .order_by(Reservation.start_date)
+                )
+            ).all()
+        )
+        assert len(rows) == 2
+        assert all(row.start_date == row.end_date for row in rows)
+        assert rows[0].batch_id is not None
+        assert rows[0].batch_id == rows[1].batch_id == result.batch_id
+
+
+@pytest.mark.asyncio
+async def test_available_only_does_not_split_continuous_range_on_conflict(seeded) -> None:
+    factory, _, _, student, _, _, device, _ = seeded
+    first_date = date.today() + timedelta(days=5)
+    conflict_date = first_date + timedelta(days=1)
+    last_date = first_date + timedelta(days=2)
+    async with factory() as session:
+        service = ReservationService(session, principal(student, "STUDENT"))
+        await service.create(
+            ReservationPlanRequest(
+                device_id=device.id,
+                start_date=conflict_date,
+                end_date=conflict_date,
+                purpose="制造连续区间中的冲突日期",
+            )
+        )
+        before_count = await session.scalar(select(func.count(Reservation.id)))
+        with pytest.raises(ApiError) as error:
+            await service.create(
+                ReservationPlanRequest(
+                    device_id=device.id,
+                    start_date=first_date,
+                    end_date=last_date,
+                    commit_mode="available_only",
+                    purpose="连续区间不可跳过冲突日拆单",
+                )
+            )
+        after_count = await session.scalar(select(func.count(Reservation.id)))
+
+    assert error.value.code == "RESERVATION_CONFLICT"
+    assert before_count == after_count
 
 
 @pytest.mark.asyncio
@@ -531,7 +624,10 @@ async def test_system_admin_can_attach_tenant_neutral_upload_to_college_handover
     factory, _, _, student, _, _, device, _ = seeded
     day = date.today()
     async with factory() as session:
-        sys_admin_role = Role(role_code="SYS_ADMIN", role_name="系统管理员")
+        sys_admin_role = await session.scalar(
+            select(Role).where(Role.role_code == "SYS_ADMIN")
+        )
+        assert sys_admin_role is not None
         admin = User(
             username="global-admin",
             password_hash="test",

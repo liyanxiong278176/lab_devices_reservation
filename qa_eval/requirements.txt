@@ -1,0 +1,13 @@
+httpx>=0.28,<1.0
+pytest>=8.4,<9.0
+pytest-asyncio>=1.1,<2.0
+locust>=2.41,<3.0
+SQLAlchemy[asyncio]>=2.0,<3.0
+asyncmy>=0.2.10,<1.0
+pwdlib[argon2]>=0.2.1,<1.0
+redis>=6.4,<7.0
+psutil>=7.0,<8.0
+fastapi>=0.116,<1.0
+pydantic>=2.11,<3.0
+pydantic-settings>=2.10,<3.0
+PyJWT>=2.10,<3.0

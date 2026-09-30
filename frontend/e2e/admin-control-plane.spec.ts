@@ -5,6 +5,7 @@ type Fixture = {
   prefix: string
   username: string
   password: string
+  admin_username: string
   manager_username: string
   device_name: string
   college_id: number
@@ -52,7 +53,25 @@ test.describe('管理员管理页与运营工具真实页面验收', () => {
     test.setTimeout(150_000)
     const context = await browser.newContext()
     const page = await context.newPage()
-    await login(page, 'admin', 'admin123')
+    await page.addInitScript(() => {
+      const key = '__adminControlWindowErrors'
+      window.addEventListener('error', (event) => {
+        const error = event as ErrorEvent
+        const previous = JSON.parse(sessionStorage.getItem(key) || '[]') as string[]
+        previous.push(`${error.message} (${location.pathname})`)
+        sessionStorage.setItem(key, JSON.stringify(previous))
+      })
+    })
+    const invalidNumberProps: string[] = []
+    page.on('console', (message) => {
+      if (
+        message.type() === 'warning'
+        && /Invalid prop: type check failed for prop "modelValue"\. Expected Number \| Null, got String/.test(message.text())
+      ) {
+        invalidNumberProps.push(message.text())
+      }
+    })
+    await login(page, fixture.admin_username, fixture.password)
     await expect(page.getByRole('heading', { name: '仪表盘', exact: true })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('admin-dashboard.png'), fullPage: true })
 
@@ -76,6 +95,8 @@ test.describe('管理员管理页与运营工具真实页面验收', () => {
     const createdDeviceName = `${prefix}-crud-device`
     await page.getByRole('button', { name: '新增设备' }).click()
     const deviceDrawer = page.locator('.dmanage-drawer')
+    await expect(deviceDrawer).toBeVisible()
+    expect(invalidNumberProps, '数字输入框的 v-model 不能使用字符串占位').toEqual([])
     await deviceDrawer.locator('.el-form-item').filter({ hasText: '名称' }).locator('input').fill(createdDeviceName)
     await deviceDrawer.getByRole('combobox', { name: /分类/ }).click()
     const categoryNode = page.locator('.el-tree-node__content:visible').last()
@@ -221,7 +242,13 @@ test.describe('管理员管理页与运营工具真实页面验收', () => {
     await labDrawer.getByRole('button', { name: '保存配置' }).click()
     labRow = page.locator('.el-table__row').filter({ hasText: createdLabName })
     await expect(labRow).toContainText('E2E 新位置')
+    await expect(labDrawer).toBeHidden()
+    await expect(page.locator('.el-message')).toHaveCount(0)
     await page.screenshot({ path: testInfo.outputPath('organization-lab-management.png'), fullPage: true })
+    const windowErrors = await page.evaluate(() =>
+      JSON.parse(sessionStorage.getItem('__adminControlWindowErrors') || '[]') as string[],
+    )
+    expect(windowErrors, '管理员组织管理的保存与刷新过程中不能产生浏览器全局错误').toEqual([])
     await context.close()
   })
 
@@ -231,12 +258,13 @@ test.describe('管理员管理页与运营工具真实页面验收', () => {
     const adminPage = await adminContext.newPage()
     const userContext = await browser.newContext()
     const userPage = await userContext.newPage()
-    await login(adminPage, 'admin', 'admin123')
+    await login(adminPage, fixture.admin_username, fixture.password)
     await login(userPage, fixture.username, fixture.password)
 
     await adminPage.getByRole('menuitem', { name: '设备管理', exact: true }).click()
     await adminPage.getByRole('button', { name: '预约规则' }).click()
-    await expect(adminPage.getByRole('heading', { name: '预约规则', exact: true })).toBeVisible()
+    await expect(adminPage.getByRole('heading', { name: '预约规则中心', exact: true })).toBeVisible()
+    await adminPage.getByRole('tab', { name: '不可预约日', exact: true }).click()
     const ruleForm = adminPage.locator('.schedule-page__form')
     await ruleForm.locator('.el-form-item').filter({ hasText: '作用范围' }).locator('.el-select').click()
     await adminPage.getByRole('option', { name: '设备', exact: true }).click()

@@ -24,23 +24,49 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         if metrics is not None:
             route = request.scope.get("route")
             # Unknown paths are attacker-controlled; keep 404 metrics bounded.
-            metric_path = getattr(route, "path", None) or "__unmatched__"
+            metric_route = getattr(route, "path", None) or "__unmatched__"
             raw_method = request.method
             metric_method = raw_method if raw_method in _METRIC_METHODS else "OTHER"
             status = response.status_code
-            metric_status = status if 100 <= status <= 599 else 0
-            metrics.increment(
-                "http_requests_total",
-                labels={
+            # Mounted APIRouter routes expose a router-local path such as
+            # ``/metrics``; compare the request URL so the prefixed scrape
+            # endpoint is not counted as application traffic.
+            metrics_path = f"{request.app.state.settings.api_prefix}/metrics"
+            if request.url.path != metrics_path:
+                metric_status_class = f"{status // 100}xx" if 100 <= status <= 599 else "other"
+                admission_wait = max(
+                    0.0,
+                    float(getattr(request.state, "admission_wait_seconds", 0.0)),
+                )
+                admission_labels = {
                     "method": metric_method,
-                    "path": metric_path,
-                    "status": metric_status,
-                },
-            )
-            metrics.observe(
-                "http_request_duration_ms",
-                (perf_counter() - started) * 1000,
-                labels={"method": metric_method, "path": metric_path},
-            )
+                    "route": metric_route,
+                    "gate": getattr(request.state, "admission_gate", "unknown"),
+                    "result": getattr(request.state, "admission_result", "unknown"),
+                }
+                metrics.increment(
+                    "http_requests_total",
+                    labels={
+                        "method": metric_method,
+                        "route": metric_route,
+                        "status": str(status),
+                        "status_class": metric_status_class,
+                    },
+                )
+                metrics.observe(
+                    "http_request_duration_seconds",
+                    perf_counter() - started,
+                    labels={"method": metric_method, "route": metric_route},
+                )
+                metrics.observe(
+                    "http_request_admission_wait_seconds",
+                    admission_wait,
+                    labels=admission_labels,
+                )
+                metrics.observe(
+                    "http_request_service_seconds",
+                    max(0.0, perf_counter() - started - admission_wait),
+                    labels={"method": metric_method, "route": metric_route},
+                )
         response.headers["X-Request-ID"] = request_id
         return response

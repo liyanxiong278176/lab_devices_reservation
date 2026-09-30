@@ -1,23 +1,31 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
 import jwt
 from fastapi import Depends, Request, WebSocket
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pwdlib.exceptions import UnknownHashError
-from sqlalchemy import exists, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
+from app.auth.rbac import get_authorization_snapshot
+from app.auth.sessions import SessionStoreUnavailable, get_session
 from app.core.errors import ApiError
-from app.infrastructure.db.models import RefreshSession, User
+from app.infrastructure.db.models import User
 from app.infrastructure.db.session import get_db
 
 password_hash = PasswordHash.recommended()
-bearer = HTTPBearer(auto_error=False)
+
+
+@dataclass(frozen=True)
+class TokenClaims:
+    session_id: str
+    token_type: Literal["access"]
+    token_id: str
 
 
 @dataclass(frozen=True)
@@ -26,9 +34,10 @@ class Principal:
     username: str
     college_id: int | None
     roles: tuple[str, ...]
-    token_type: Literal["access", "refresh"]
+    token_type: Literal["access"]
     token_id: str
-    session_id: str | None = None
+    permissions: tuple[str, ...] = ()
+    session_id: str = ""
 
     @property
     def is_system_admin(self) -> bool:
@@ -37,6 +46,9 @@ class Principal:
     @property
     def is_lab_admin(self) -> bool:
         return "LAB_ADMIN" in self.roles or self.is_system_admin
+
+    def has_permission(self, permission_code: str) -> bool:
+        return self.is_system_admin or permission_code in self.permissions
 
 
 def hash_password(value: str) -> str:
@@ -48,128 +60,140 @@ def verify_password(value: str, hashed: str) -> bool:
         return password_hash.verify(value, hashed)
     except (ValueError, TypeError, UnknownHashError):
         # Existing Spring installations may still contain BCrypt hashes.
-        # Treat an unsupported legacy hash as invalid credentials instead of
-        # leaking a 500 from the login endpoint.
+        # Unsupported legacy hashes are treated as invalid credentials.
         return False
 
 
-def create_token(
-    request: Request | WebSocket,
-    *,
-    user: User,
-    token_type: Literal["access", "refresh"],
-    token_id: str | None = None,
-    session_id: str | None = None,
-) -> str:
+def create_access_token(request: Request | WebSocket, *, session_id: str) -> str:
     settings = request.app.state.settings
     now = datetime.now(UTC)
-    ttl = (
-        timedelta(minutes=settings.access_token_minutes)
-        if token_type == "access"
-        else timedelta(days=settings.refresh_token_days)
-    )
-    role_codes = tuple(role.role_code for role in user.roles)
-    payload: dict[str, Any] = {
-        "sub": str(user.id),
-        "username": user.username,
-        "college_id": user.college_id,
-        "roles": role_codes,
-        "type": token_type,
-        "jti": token_id or uuid4().hex,
+    payload = {
         "sid": session_id,
+        "type": "access",
+        "jti": uuid4().hex,
         "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
         "iat": now,
-        "exp": now + ttl,
+        "exp": now + timedelta(minutes=settings.access_token_minutes),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
-def decode_token(
+def decode_session_id(
     request: Request | WebSocket,
     token: str,
-    expected_type: str = "access",
-) -> Principal:
+    *,
+    allow_expired: bool = False,
+) -> str:
+    return str(_decode_access_payload(request, token, allow_expired=allow_expired)["sid"])
+
+
+def _decode_access_payload(
+    request: Request | WebSocket,
+    token: str,
+    *,
+    allow_expired: bool,
+) -> dict[str, object]:
     settings = request.app.state.settings
+    options = {"require": ["sid", "type", "jti", "iss", "aud", "iat", "exp"]}
+    if allow_expired:
+        options["verify_exp"] = False
     try:
         payload = jwt.decode(
             token,
             settings.jwt_secret,
             algorithms=["HS256"],
             issuer=settings.jwt_issuer,
-            options={"require": ["sub", "type", "jti", "sid", "iss", "exp"]},
+            audience=settings.jwt_audience,
+            options=options,
         )
     except jwt.PyJWTError as exc:
         raise ApiError("TOKEN_INVALID", "令牌无效或已过期", 401) from exc
-
-    if payload.get("type") != expected_type:
+    if payload.get("type") != "access":
         raise ApiError("TOKEN_TYPE_INVALID", "令牌类型不正确", 401)
-    if not isinstance(payload.get("sid"), str) or not payload["sid"]:
+    session_id = payload.get("sid")
+    if not isinstance(session_id, str) or len(session_id) < 32:
         raise ApiError("TOKEN_INVALID", "令牌会话无效", 401)
+    return payload
+
+
+async def resolve_principal(
+    request: Request | WebSocket,
+    token: str,
+    session: AsyncSession,
+) -> Principal:
+    payload = _decode_access_payload(request, token, allow_expired=False)
+    session_id = str(payload["sid"])
     try:
-        user_id = int(payload["sub"])
-    except (TypeError, ValueError) as exc:
-        raise ApiError("TOKEN_INVALID", "令牌主体无效", 401) from exc
+        redis_session = await get_session(request, session_id)
+    except SessionStoreUnavailable as exc:
+        raise ApiError("AUTH_SESSION_UNAVAILABLE", "登录服务暂时不可用，请稍后重试", 503) from exc
+    if redis_session is None:
+        raise ApiError("AUTH_SESSION_INVALID", "登录已失效，请重新登录", 401)
+    try:
+        user_id = int(redis_session["user_id"])
+        session_expires_at = int(redis_session["expires_at"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ApiError("AUTH_SESSION_INVALID", "登录会话无效，请重新登录", 401) from exc
+
+    # Account enablement and the active tenant are deliberately read from the
+    # relational source on every request, never trusted from a stale cache.
+    user = await session.scalar(select(User).where(User.id == user_id, User.status == 1))
+    if user is None:
+        raise ApiError("USER_NOT_FOUND", "用户不存在或已禁用", 401)
+
+    snapshot = await get_authorization_snapshot(
+        request,
+        session,
+        user_id=user.id,
+        session_id=session_id,
+        session_expires_at=session_expires_at,
+    )
     return Principal(
-        user_id=user_id,
-        username=str(payload.get("username", "")),
-        college_id=payload.get("college_id"),
-        roles=tuple(str(value) for value in payload.get("roles", [])),
-        token_type=expected_type,  # type: ignore[arg-type]
+        user_id=user.id,
+        username=user.username,
+        college_id=user.college_id,
+        roles=snapshot.roles,
+        permissions=snapshot.permissions,
+        token_type="access",
         token_id=str(payload["jti"]),
-        session_id=str(payload["sid"]),
+        session_id=session_id,
     )
 
 
 async def get_current_principal(
     request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     session: AsyncSession = Depends(get_db),
 ) -> Principal:
-    if credentials is None or credentials.scheme.lower() != "bearer":
+    token = request.cookies.get(request.app.state.settings.access_cookie_name)
+    if not token:
         raise ApiError("AUTH_REQUIRED", "请先登录", 401)
-    token_principal = decode_token(request, credentials.credentials)
-    now = datetime.now(UTC).replace(tzinfo=None)
-    active_session = exists(
-        select(RefreshSession.id).where(
-            RefreshSession.family_id == token_principal.session_id,
-            RefreshSession.user_id == token_principal.user_id,
-            RefreshSession.revoked_at.is_(None),
-            RefreshSession.expires_at > now,
-        )
-    )
-    user = await session.scalar(
-        select(User)
-        .options(selectinload(User.roles))
-        .where(User.id == token_principal.user_id, User.status == 1, active_session)
-    )
-    if user is None:
-        raise ApiError("USER_NOT_FOUND", "用户不存在或已禁用", 401)
-    return Principal(
-        user_id=user.id,
-        username=user.username,
-        college_id=user.college_id,
-        roles=tuple(role.role_code for role in user.roles),
-        token_type=token_principal.token_type,
-        token_id=token_principal.token_id,
-        session_id=token_principal.session_id,
-    )
+    return await resolve_principal(request, token, session)
 
 
 async def get_current_user(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> User:
-    user = await session.scalar(
-        select(User)
-        .options(selectinload(User.roles))
-        .where(User.id == principal.user_id, User.status == 1)
-    )
+    user = await session.scalar(select(User).where(User.id == principal.user_id, User.status == 1))
     if user is None:
         raise ApiError("USER_NOT_FOUND", "用户不存在或已禁用", 401)
     return user
 
 
+def require_permissions(*permission_codes: str):
+    async def dependency(principal: Principal = Depends(get_current_principal)) -> Principal:
+        missing = [code for code in permission_codes if not principal.has_permission(code)]
+        if missing:
+            raise ApiError("FORBIDDEN", "当前账号没有执行此操作的权限", 403)
+        return principal
+
+    return dependency
+
+
 def require_roles(*required_roles: str):
+    """Compatibility helper for domain identity checks; prefer permission codes."""
+
     async def dependency(principal: Principal = Depends(get_current_principal)) -> Principal:
         if not principal.is_system_admin and not set(required_roles).intersection(principal.roles):
             raise ApiError("FORBIDDEN", "当前角色无权执行此操作", 403)

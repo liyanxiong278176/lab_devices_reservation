@@ -214,16 +214,21 @@ onMounted(loadDevices)
             />
           </el-form-item>
           <el-form-item label="故障图片">
-            <input
-              class="rsubmit__file-input"
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              multiple
-              @change="onFilesChange"
-            />
-            <span v-if="selectedFiles.length" class="rsubmit__file-hint">
-              已选择 {{ selectedFiles.length }} 张图片（单张不超过 5 MB）
-            </span>
+            <label class="rsubmit__file-picker">
+              <span class="rsubmit__file-button">选择图片</span>
+              <span class="rsubmit__file-copy">
+                {{ selectedFiles.length
+                  ? `已选择 ${selectedFiles.length} 张图片`
+                  : 'JPG、PNG、WebP，最多 6 张，每张不超过 5 MB' }}
+              </span>
+              <input
+                class="rsubmit__file-input"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                @change="onFilesChange"
+              />
+            </label>
           </el-form-item>
           <el-form-item label="外部图片 URL（可选）">
             <el-input
@@ -309,20 +314,52 @@ onMounted(loadDevices)
   }
 
   &__file-input {
+    position: absolute;
+    inset: 0;
     width: 100%;
-    padding: 10px;
-    color: var(--text-secondary);
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  &__file-picker {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 54px;
+    padding: 10px 12px;
     background: var(--bg-elevated);
     border: 1px dashed var(--border-strong);
     border-radius: var(--radius-control);
-    font-size: 12px;
+    cursor: pointer;
+    transition: border-color 160ms ease, background-color 160ms ease;
+
+    &:hover {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 4%, var(--bg-elevated));
+    }
   }
 
-  &__file-hint {
-    display: block;
-    margin-top: 6px;
+  &__file-button {
+    flex: 0 0 auto;
+    padding: 7px 11px;
+    color: var(--text-primary);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  &__file-copy {
+    min-width: 0;
+    overflow: hidden;
     color: var(--text-tertiary);
-    font-size: 11px;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   // ---- 底部操作区 ----------------------------------------------------------

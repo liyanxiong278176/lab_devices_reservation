@@ -46,9 +46,15 @@ async def _can_view(
     reservation: Reservation,
     principal: Principal,
 ) -> bool:
-    if principal.is_system_admin or reservation.user_id == principal.user_id:
+    if principal.is_system_admin:
+        return True
+    if reservation.user_id == principal.user_id:
+        if not principal.has_permission("feedback:read:own"):
+            return False
         scope = college_scope(principal)
         return scope is None or reservation.college_id == scope
+    if not principal.has_permission("feedback:read:scope"):
+        return False
     return await ReservationService(session, principal)._can_manage_device(reservation.device)
 
 
@@ -63,6 +69,8 @@ async def create_feedback(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[FeedbackData]:
+    if not principal.has_permission("feedback:create"):
+        raise ApiError("FORBIDDEN", "当前账号没有提交评价的权限", 403)
     reservation = await _load_reservation(session, reservation_id)
     if reservation.user_id != principal.user_id:
         raise ApiError("FORBIDDEN", "只能评价自己的预约", 403)

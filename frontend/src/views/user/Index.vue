@@ -9,6 +9,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import dayjs from 'dayjs'
 import { listColleges } from '@/api/college'
 import { createUser, deleteUser, listUsers, patchUserStatus, updateUser } from '@/api/user'
+import { listRoles } from '@/api/rbac'
 import type { CollegeVO } from '@/types/college'
 import type { UserCreatePayload, UserQuery, UserVO } from '@/types/user'
 import type { Page } from '@/types/common'
@@ -25,13 +26,7 @@ const query = ref<UserQuery>({ page: 1, size: 10, username: '', realName: '' })
 const colleges = ref<CollegeVO[]>([])
 
 // 角色选项(表单下拉用)
-const roleOptions = [
-  { label: '系统管理员', value: 'SYS_ADMIN' },
-  { label: '实验室管理员', value: 'LAB_ADMIN' },
-  { label: '教师', value: 'TEACHER' },
-  { label: '学生', value: 'STUDENT' },
-  { label: '职工', value: 'STAFF' },
-]
+const roleOptions = ref<{ label: string; value: string }[]>([])
 const userTypeOptions = [
   { label: '学生', value: 'STUDENT' },
   { label: '教师', value: 'TEACHER' },
@@ -48,7 +43,7 @@ const roleLabelMap: Record<string, string> = {
   STAFF: '职工',
 }
 function roleLabel(code: string): string {
-  return roleLabelMap[code] || code
+  return roleLabelMap[code] || roleOptions.value.find((role) => role.value === code)?.label || code
 }
 function roleVariant(code: string): 'default' | 'accent' | 'warning' | 'danger' | 'info' {
   switch (code) {
@@ -115,8 +110,14 @@ async function load(targetPage = query.value.page || 1) {
   loading.value = true
   try {
     const users = await listUsers({ ...query.value, page: targetPage })
-    page.value = users
     if (!colleges.value.length) colleges.value = await listColleges()
+    // The table renders the college name from this lookup. Keep the new rows
+    // hidden until the lookup is ready so a scoped user is never briefly
+    // mislabeled as global while both requests are settling.
+    page.value = users
+    if (!roleOptions.value.length) {
+      roleOptions.value = (await listRoles()).map((role) => ({ label: role.name, value: role.code }))
+    }
   } catch {
     // 拦截器已提示
   } finally {

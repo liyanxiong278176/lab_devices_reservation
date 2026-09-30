@@ -4,7 +4,7 @@ import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
 import { ElAlert } from 'element-plus/es/components/alert/index'
 import { ElBadge } from 'element-plus/es/components/badge/index'
 import { ElButton } from 'element-plus/es/components/button/index'
-import { ElCheckbox } from 'element-plus/es/components/checkbox/index'
+import { ElCheckbox, ElCheckboxGroup } from 'element-plus/es/components/checkbox/index'
 import { ElCol } from 'element-plus/es/components/col/index'
 import { ElContainer } from 'element-plus/es/components/container/index'
 import { ElDatePicker } from 'element-plus/es/components/date-picker/index'
@@ -21,6 +21,7 @@ import { ElMessage } from 'element-plus/es/components/message/index'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { ElNotification } from 'element-plus/es/components/notification/index'
 import { ElPagination } from 'element-plus/es/components/pagination/index'
+import { ElProgress } from 'element-plus/es/components/progress/index'
 import { ElRadio } from 'element-plus/es/components/radio/index'
 import { ElRate } from 'element-plus/es/components/rate/index'
 import { ElRow } from 'element-plus/es/components/row/index'
@@ -38,6 +39,7 @@ import {
   Cpu,
   DataAnalysis,
   MagicStick,
+  Lock,
   OfficeBuilding,
   Odometer,
   SetUp,
@@ -78,6 +80,7 @@ const navigationIcons = {
   Cpu,
   DataAnalysis,
   MagicStick,
+  Lock,
   OfficeBuilding,
   Odometer,
   SetUp,
@@ -99,6 +102,7 @@ app
   .use(ElBadge)
   .use(ElButton)
   .use(ElCheckbox)
+  .use(ElCheckboxGroup)
   .use(ElCol)
   .use(ElContainer)
   .use(ElDatePicker)
@@ -111,6 +115,7 @@ app
   .use(ElInputNumber)
   .use(ElMenu)
   .use(ElPagination)
+  .use(ElProgress)
   .use(ElRadio)
   .use(ElRate)
   .use(ElRow)
@@ -142,16 +147,7 @@ themeStore.init()
 ;(async () => {
   try {
     const userStore = useUserStore()
-    if (userStore.accessToken) {
-      try {
-        await userStore.fetchMe()
-      } catch (err: any) {
-        // 401 拦截器已处理(过期→refresh→失败→登出跳 /login),无需手动清档
-        if (err?.response?.status !== 401) {
-          userStore.clearProfile()
-        }
-      }
-    }
+    await userStore.initialize()
   } finally {
     app.mount('#app')
   }

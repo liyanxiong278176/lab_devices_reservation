@@ -40,8 +40,6 @@ def _service(request: Request, session: AsyncSession, principal: Principal) -> R
         session,
         principal,
         max_days=settings.reservation_max_days,
-        user_active_limit=settings.reservation_user_active_limit,
-        user_days_limit=settings.reservation_user_days_limit,
         credit_block_threshold=settings.credit_block_threshold,
         credit_block_days=settings.credit_block_days,
         advance_days=settings.reservation_advance_days,

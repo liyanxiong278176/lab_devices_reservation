@@ -11,6 +11,8 @@ export interface DeviceVO {
   categoryName?: string
   labId: number | null
   labName?: string
+  collegeId?: number | null
+  collegeName?: string | null
   brand?: string
   model?: string
   specs?: string
@@ -33,6 +35,7 @@ export interface DeviceVO {
   requiresSafetyAck?: boolean
   requiresQualification?: boolean
   maxAdvanceDays?: number
+  maintenanceWarning?: string
   createdAt?: string
   updatedAt?: string
 }
@@ -80,10 +83,10 @@ export interface QualificationVO {
 export interface DeviceCalendarItemVO {
   /** ISO date: yyyy-MM-dd */
   date: string
-  slotIndex: number
-  reservationId: number
-  /** PENDING / APPROVED / IN_USE */
+  reservationId: number | null
+  /** Reservation state or a maintenance/blackout/device restriction state. */
   status: string
+  reason?: string
 }
 
 /** 后端设备分类树节点。 */
@@ -115,6 +118,7 @@ export interface DeviceAvailabilityVO {
   available: boolean
   reservationId?: number | null
   status?: string | null
+  reason?: string | null
 }
 
 export type { Page }

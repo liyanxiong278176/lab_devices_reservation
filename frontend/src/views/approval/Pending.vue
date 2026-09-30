@@ -156,7 +156,7 @@ function fmt(t?: string): string {
 
 /** 申请人姓名优先 realName,fallback username。 */
 function applicantName(row: ApprovalItemVO): string {
-  return row.realName?.trim() || row.username || `用户 #${row.userId}`
+  return row.realName?.trim() || row.username?.trim() || `用户 #${row.userId}`
 }
 
 /** 头像首字:取姓名首个字符(中英文都取首字)。 */
@@ -178,7 +178,7 @@ onMounted(load)
     <PageHeader title="待审批" :subtitle="subtitle">
       <template v-if="page.records.length > 0" #actions>
         <GhostButton
-          v-permission="'device:approve'"
+          v-permission="'reservation:approve'"
           :disabled="selectedIds.length === 0"
           @click="onBatchApprove"
         >
@@ -200,10 +200,10 @@ onMounted(load)
           <header class="approval__card-head">
             <div class="approval__card-head-left">
               <el-checkbox
-                v-permission="'device:approve'"
+                v-permission="'reservation:approve'"
                 :model-value="selectedIds.includes(row.id)"
                 @click.stop
-                @change.stop="onRowCheck(row, $event)"
+                @change="onRowCheck(row, $event)"
               />
               <Tag variant="warning" effect="light" size="small" round>待审批</Tag>
             </div>
@@ -247,7 +247,7 @@ onMounted(load)
             <span class="approval__open-hint">查看申请详情 →</span>
             <div class="approval__actions">
               <GhostButton
-                v-permission="'device:approve'"
+                v-permission="'reservation:approve'"
                 size="small"
                 class="approval__reject-btn"
                 :disabled="rejectingId === row.id"
@@ -256,7 +256,7 @@ onMounted(load)
                 驳回
               </GhostButton>
               <GradientButton
-                v-permission="'device:approve'"
+                v-permission="'reservation:approve'"
                 size="small"
                 @click.stop="onApprove(row)"
               >
@@ -351,7 +351,7 @@ onMounted(load)
             <div class="approval-drawer__actions">
               <GhostButton size="small" @click="cancelReject">取消</GhostButton>
               <GradientButton
-                v-permission="'device:approve'"
+                v-permission="'reservation:approve'"
                 size="small"
                 :loading="rejecting"
                 @click="onRejectConfirm(selectedApproval)"
@@ -363,13 +363,13 @@ onMounted(load)
 
           <footer v-else class="approval-drawer__footer">
             <GhostButton
-              v-permission="'device:approve'"
+              v-permission="'reservation:approve'"
               class="approval__reject-btn"
               @click="openReject(selectedApproval)"
             >
               驳回申请
             </GhostButton>
-            <GradientButton v-permission="'device:approve'" @click="onApprove(selectedApproval)">
+            <GradientButton v-permission="'reservation:approve'" @click="onApprove(selectedApproval)">
               通过申请
             </GradientButton>
           </footer>

@@ -1,24 +1,33 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listColleges } from '@/api/college'
-import { listLabs } from '@/api/lab'
-import { searchDevices } from '@/api/device'
+import { listAllLabs } from '@/api/lab'
+import { useRemoteDeviceOptions } from '@/composables/useRemoteDeviceOptions'
 import { createBlackout, deleteBlackout, listBlackouts, type BlackoutVO } from '@/api/scheduling'
 import type { CollegeVO } from '@/types/college'
 import type { Lab } from '@/types/lab'
-import type { DeviceVO } from '@/types/device'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import GradientButton from '@/components/ui/GradientButton.vue'
 import TextButton from '@/components/ui/TextButton.vue'
 import Tag from '@/components/ui/Tag.vue'
+import RulesPanel from './RulesPanel.vue'
 
+const activeTab = ref<'policies' | 'blackouts'>('policies')
 const loading = ref(false)
 const submitting = ref(false)
+const blackoutsLoaded = ref(false)
+const optionsLoaded = ref(false)
 const rows = ref<BlackoutVO[]>([])
 const colleges = ref<CollegeVO[]>([])
 const labs = ref<Lab[]>([])
-const devices = ref<DeviceVO[]>([])
+const {
+  devices,
+  options: deviceOptions,
+  loading: deviceSearchLoading,
+  loadInitial: loadDeviceOptions,
+  search: searchBlackoutDevices,
+} = useRemoteDeviceOptions()
 const form = ref({
   scopeType: 'COLLEGE' as BlackoutVO['scopeType'],
   scopeId: undefined as number | undefined,
@@ -29,10 +38,11 @@ const form = ref({
 const scopeOptions = computed(() => {
   if (form.value.scopeType === 'COLLEGE') return colleges.value.map((row) => ({ id: row.id, name: row.name }))
   if (form.value.scopeType === 'LAB') return labs.value.map((row) => ({ id: row.id, name: row.name }))
-  return devices.value.map((row) => ({ id: row.id, name: row.name }))
+  return deviceOptions.value.map((row) => ({ id: row.id, name: row.name }))
 })
 
 const scopeLabel = (row: BlackoutVO) => {
+  if (row.scopeName) return row.scopeName
   const list = row.scopeType === 'COLLEGE' ? colleges.value : row.scopeType === 'LAB' ? labs.value : devices.value
   const found = list.find((item) => item.id === row.scopeId)
   return found ? ('name' in found ? found.name : '') : `#${row.scopeId}`
@@ -41,14 +51,15 @@ const scopeLabel = (row: BlackoutVO) => {
 const typeLabel = (type: BlackoutVO['scopeType']) => ({ COLLEGE: '学院', LAB: '实验室', DEVICE: '设备' })[type]
 
 async function loadOptions() {
-  const [collegeResult, labResult, deviceResult] = await Promise.all([
+  if (optionsLoaded.value) return
+  const [collegeResult, labRows] = await Promise.all([
     listColleges(),
-    listLabs(1, 100),
-    searchDevices({ page: 1, size: 100 }),
+    listAllLabs(),
+    loadDeviceOptions(),
   ])
   colleges.value = collegeResult
-  labs.value = labResult.records
-  devices.value = deviceResult.records
+  labs.value = labRows
+  optionsLoaded.value = true
   if (!form.value.scopeId) form.value.scopeId = scopeOptions.value[0]?.id
 }
 
@@ -57,6 +68,7 @@ async function load() {
   try {
     await loadOptions()
     rows.value = await listBlackouts()
+    blackoutsLoaded.value = true
   } catch {
     // 拦截器已提示
   } finally {
@@ -81,7 +93,11 @@ async function submit() {
       blockedDate: form.value.blockedDate,
       reason: form.value.reason.trim(),
     })
-    rows.value = [...rows.value, created].sort((a, b) => a.blockedDate.localeCompare(b.blockedDate))
+    const createdWithName = {
+      ...created,
+      scopeName: created.scopeName || scopeOptions.value.find((option) => option.id === created.scopeId)?.name,
+    }
+    rows.value = [...rows.value, createdWithName].sort((a, b) => a.blockedDate.localeCompare(b.blockedDate))
     form.value.blockedDate = ''
     form.value.reason = ''
     ElMessage.success('不可预约日期已生效')
@@ -111,20 +127,27 @@ async function remove(row: BlackoutVO) {
   }
 }
 
-onMounted(load)
+watch(activeTab, (tab) => {
+  if (tab === 'blackouts' && !blackoutsLoaded.value) void load()
+})
 </script>
 
 <template>
   <div class="schedule-page" v-loading="loading">
-    <PageHeader title="预约规则" subtitle="按学院、实验室或设备配置不可预约的自然日">
+    <PageHeader title="预约规则中心" subtitle="统一维护预约策略、假期与教学占用日期">
       <template #actions><Tag variant="info" effect="light" round>仅管理员可见</Tag></template>
     </PageHeader>
 
+    <el-tabs v-model="activeTab" class="schedule-tabs">
+      <el-tab-pane label="预约策略" name="policies">
+        <RulesPanel />
+      </el-tab-pane>
+      <el-tab-pane label="不可预约日" name="blackouts">
     <section class="schedule-page__intro">
       <div>
         <span class="schedule-page__eyebrow">BOOKING POLICY</span>
-        <h2>把节假日、维护日和教学占用日提前写进规则。</h2>
-        <p>规则会同时影响设备可用性预检和最终预约校验，避免只在页面上提示而未落库。</p>
+        <h2>把节假日与教学占用日提前写进规则。</h2>
+        <p>停机日期还可以在“维护与校准”单独配置，这里用于学院、实验室或单台设备的临时不可预约日。</p>
       </div>
     </section>
 
@@ -140,7 +163,14 @@ onMounted(load)
             </el-select>
           </el-form-item>
           <el-form-item label="范围对象">
-            <el-select v-model="form.scopeId" filterable placeholder="选择对象">
+            <el-select
+              v-model="form.scopeId"
+              filterable
+              :remote="form.scopeType === 'DEVICE'"
+              :remote-method="searchBlackoutDevices"
+              :loading="deviceSearchLoading"
+              :placeholder="form.scopeType === 'DEVICE' ? '输入设备编号、名称或型号搜索' : '选择对象'"
+            >
               <el-option v-for="option in scopeOptions" :key="option.id" :label="option.name" :value="option.id" />
             </el-select>
           </el-form-item>
@@ -166,11 +196,15 @@ onMounted(load)
         <template #empty><span class="schedule-page__empty">暂无不可预约日期</span></template>
       </el-table>
     </section>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
 <style scoped lang="scss">
 .schedule-page { display: grid; gap: 20px; }
+.schedule-tabs { min-width: 0; }
+.schedule-tabs :deep(.el-tabs__content) { overflow: visible; }
 .schedule-page__intro { padding: 24px; border: 1px solid var(--border-default); border-radius: var(--radius-card); background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 9%, var(--bg-surface)), var(--bg-surface)); }
 .schedule-page__intro h2 { max-width: 700px; margin: 8px 0; color: var(--text-primary); font-family: var(--font-display); font-size: clamp(22px, 3vw, 34px); letter-spacing: -.04em; }
 .schedule-page__intro p { max-width: 680px; margin: 0; color: var(--text-secondary); line-height: 1.7; }

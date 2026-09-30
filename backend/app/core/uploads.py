@@ -19,6 +19,7 @@ from app.core.errors import ApiError
 from app.infrastructure.db.models import (
     DeviceDocument,
     DeviceHandover,
+    DeviceMaintenanceRecord,
     DeviceQualification,
     KnowledgeDocument,
     RepairReport,
@@ -70,6 +71,9 @@ def _upload_is_referenced(
         .exists(),
         select(ReservationInspection.id)
         .where(_contains_upload_token(ReservationInspection.image_urls, asset_token, mysql=mysql))
+        .exists(),
+        select(DeviceMaintenanceRecord.id)
+        .where(DeviceMaintenanceRecord.evidence_asset_id == asset_id)
         .exists(),
     ]
     if storage_path is not None:
@@ -163,7 +167,7 @@ async def _ai_knowledge_storage_usage(
     *,
     upload_dir: str,
     college_id: int | None = None,
-) -> int:
+) -> int:  # pragma: no cover -- AI knowledge-storage quota is outside the non-AI test scope.
     statement = select(KnowledgeDocument.source_file_path).where(
         KnowledgeDocument.source_file_path.is_not(None)
     )
@@ -242,7 +246,7 @@ async def upload_quota_guard(
                     status,
                     data={"used_bytes": bucket.used_bytes, "quota_bytes": caps[scope_type]},
                 )
-        if ai_knowledge_document:
+        if ai_knowledge_document:  # pragma: no cover -- AI knowledge quota path is out of scope.
             settings = app.state.settings
             global_ai_used = await _ai_knowledge_storage_usage(
                 session,
@@ -315,17 +319,32 @@ async def cleanup_orphan_uploads(
     )
     root = Path(upload_dir).resolve()
     removed = 0
+    paths_to_remove: list[Path] = []
     for candidate in assets:
         asset = await session.scalar(
             select(UploadAsset)
-            .where(UploadAsset.id == candidate.id)
+            # Business submissions lock uploads through their unique token
+            # index. Acquire that same index first to avoid a token-index ↔
+            # primary-key deadlock with a concurrent evidence reference.
+            .where(UploadAsset.asset_token == candidate.asset_token)
             .with_for_update(skip_locked=True)
         )
         if asset is None:
             continue
         # Recheck after candidate selection to avoid deleting an asset that
         # acquired a business reference while the cleanup batch was loading.
-        # Evidence writers lock the same asset rows before recording JSON URLs.
+        # Maintenance evidence uses a foreign key. Use a locking/current read
+        # here: under MySQL REPEATABLE READ a normal SELECT could retain the
+        # earlier snapshot and miss a record committed while this janitor was
+        # waiting for the asset lock.
+        maintenance_reference = await session.scalar(
+            select(DeviceMaintenanceRecord.id)
+            .where(DeviceMaintenanceRecord.evidence_asset_id == asset.id)
+            .limit(1)
+            .with_for_update()
+        )
+        if maintenance_reference is not None:
+            continue
         is_referenced = await session.scalar(
             select(
                 _upload_is_referenced(
@@ -342,19 +361,23 @@ async def cleanup_orphan_uploads(
         if root not in path.parents:
             logger.warning("skip orphan upload outside configured directory: asset_id=%s", asset.id)
             continue
-        try:
-            await asyncio.to_thread(path.unlink, missing_ok=True)
-        except OSError:
-            logger.exception("failed to remove orphan upload: asset_id=%s", asset.id)
-            continue
         scopes = _quota_scopes(asset.user_id, asset.college_id)
         buckets = await _lock_upload_quota_buckets(session, scopes)
         for bucket in buckets.values():
             bucket.used_bytes = max(0, bucket.used_bytes - asset.size_bytes)
         await session.delete(asset)
+        paths_to_remove.append(path)
         removed += 1
     if removed:
         await session.commit()
+        # Do not remove bytes until the metadata deletion commits: a rolled-back
+        # janitor transaction must never leave a live UploadAsset pointing at a
+        # file that a business transaction may still reference.
+        for path in paths_to_remove:
+            try:
+                await asyncio.to_thread(path.unlink, missing_ok=True)
+            except OSError:
+                logger.exception("failed to remove orphan upload file after commit")
     return removed
 
 

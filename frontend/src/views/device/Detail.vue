@@ -44,6 +44,7 @@ const statusLabelText = computed(() => {
   const s = device.value?.status
   return s ? STATUS_LABELS[s] ?? s : ''
 })
+const bookingUnavailable = computed(() => device.value?.status !== 'IDLE' || Boolean(device.value?.maintenanceWarning))
 const selectedDate = ref<Date>(new Date())
 const activeTab = ref<'specs' | 'calendar'>('specs')
 
@@ -110,16 +111,32 @@ const specRows = computed(() => {
 function calStatusVariant(s: string): 'success' | 'accent' | 'warning' | 'info' {
   if (s === 'IN_USE') return 'success'
   if (s === 'APPROVED') return 'accent'
-  if (s === 'PENDING') return 'warning'
+  if (['PENDING', 'MAINTENANCE_RESTRICTION', 'MAINTENANCE', 'OFFLINE'].includes(s)) return 'warning'
   return 'info'
 }
 const CAL_STATUS_LABELS: Record<string, string> = {
   IN_USE: '使用中',
   APPROVED: '已确认',
   PENDING: '待审批',
+  MAINTENANCE_RESTRICTION: '维护停机',
+  BLACKOUT: '不可预约日',
+  MAINTENANCE: '维修中',
+  DISABLED: '已停用',
+  OFFLINE: '离线',
+  RETIRED: '已报废',
+  BLOCKED: '不可预约',
 }
 function calStatusLabel(s: string): string {
   return CAL_STATUS_LABELS[s] ?? s
+}
+function calReasonLabel(row: DeviceCalendarItemVO): string {
+  if (row.reason) return row.reason
+  const reservationReasons: Record<string, string> = {
+    PENDING: '预约待审批',
+    APPROVED: '已预约',
+    IN_USE: '设备使用中',
+  }
+  return reservationReasons[row.status] ?? '—'
 }
 
 async function loadDevice() {
@@ -285,12 +302,13 @@ onMounted(async () => {
         当前状态:<strong>{{ statusLabelText }}</strong>
       </span>
       <div class="device-detail__actionbar-btns">
-        <GradientButton :disabled="device.status !== 'IDLE'" @click="goReserve">
+        <GradientButton :disabled="bookingUnavailable" @click="goReserve">
           立即预约
         </GradientButton>
         <GhostButton @click="goRepair">报修</GhostButton>
       </div>
     </div>
+    <el-alert v-if="device?.maintenanceWarning" :title="device.maintenanceWarning" type="warning" :closable="false" show-icon />
 
     <!-- tabs:规格参数 / 预约日历 -->
     <el-tabs v-model="activeTab" class="device-detail__tabs">
@@ -344,7 +362,7 @@ onMounted(async () => {
           <div class="device-detail__cal-head">
             <div>
               <h3 class="device-detail__cal-title">占用日历</h3>
-              <p class="device-detail__cal-hint">选择日期查看该周设备被占用的时段</p>
+              <p class="device-detail__cal-hint">按自然日查看预约与维护限制</p>
             </div>
             <el-date-picker
               v-model="selectedDate"
@@ -363,7 +381,9 @@ onMounted(async () => {
             class="device-detail__cal-table"
           >
             <el-table-column prop="date" label="日期" width="130" />
-            <el-table-column prop="slotIndex" label="时段序号" width="110" align="center" />
+            <el-table-column label="占用 / 限制原因" min-width="220" show-overflow-tooltip>
+              <template #default="{ row }">{{ calReasonLabel(row) }}</template>
+            </el-table-column>
             <el-table-column label="状态" width="120">
               <template #default="{ row }">
                 <Tag :variant="calStatusVariant(row.status)" size="small">
@@ -371,7 +391,9 @@ onMounted(async () => {
                 </Tag>
               </template>
             </el-table-column>
-            <el-table-column prop="reservationId" label="预约 ID" />
+            <el-table-column label="预约 ID">
+              <template #default="{ row }">{{ row.reservationId ?? '—' }}</template>
+            </el-table-column>
             <el-table-column label="候补" width="100" fixed="right">
               <template #default="{ row }">
                 <TextButton

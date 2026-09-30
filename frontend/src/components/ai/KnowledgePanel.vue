@@ -2,14 +2,22 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Document, Refresh, Upload, View, CircleCheck, Clock } from '@element-plus/icons-vue'
+import { listAllLabs } from '@/api/lab'
+import { searchDevices } from '@/api/device'
+import { fetchAllPages } from '@/utils/fetch-all-pages'
+import type { DeviceVO } from '@/types/device'
+import type { Lab } from '@/types/lab'
 import {
   createKnowledgeDocument,
   deleteKnowledgeDocument,
   getKnowledgeDocument,
   listKnowledgeDocuments,
+  listKnowledgeScopeRoles,
   previewKnowledgeChunks,
   publishKnowledgeDocument,
   requestKnowledgeParse,
+  retryKnowledgeBuild,
+  skipKnowledgeBuild,
   reviewKnowledgeDocument,
   uploadKnowledgeDocument,
 } from '@/api/aiV2'
@@ -29,7 +37,28 @@ const fileRef = ref<HTMLInputElement | null>(null)
 const createVisible = ref(false)
 const createMode = ref<'file' | 'text'>('file')
 const selectedFile = ref<File | null>(null)
-const createForm = reactive({ title: '', source_type: 'SOP', college_id: '', body: '' })
+const createForm = reactive({
+  title: '', source_type: 'SOP', college_id: '', lab_id: null as number | null,
+  device_id: null as number | null, allowed_roles: [] as string[], body: '',
+})
+const labs = ref<Lab[]>([])
+const devices = ref<DeviceVO[]>([])
+const knowledgeRoles = ref<Array<{ code: string; name: string }>>([])
+const roleLoading = ref(false)
+const resourceLoading = ref(false)
+const effectiveCollegeId = computed(() =>
+  createForm.college_id ? Number(createForm.college_id) : userStore.collegeId,
+)
+const scopedLabs = computed(() => labs.value.filter((lab) =>
+  effectiveCollegeId.value === null || effectiveCollegeId.value === undefined
+    ? true : lab.collegeId === effectiveCollegeId.value,
+))
+const scopedDevices = computed(() => devices.value.filter((device) => {
+  const matchesCollege = effectiveCollegeId.value === null || effectiveCollegeId.value === undefined
+    || device.collegeId === effectiveCollegeId.value
+  const matchesLab = !createForm.lab_id || device.labId === createForm.lab_id
+  return matchesCollege && matchesLab
+}))
 const reviewText = ref('')
 const selectedDocument = computed(() => documents.value.find((item) => item.id === editorDocumentId.value))
 let pollTimer: ReturnType<typeof setInterval> | undefined
@@ -37,7 +66,7 @@ let pollTimer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
   void refresh()
   pollTimer = setInterval(() => {
-    if (documents.value.some((item) => ['QUEUED', 'SUBMITTING', 'PROCESSING'].includes(item.parse_status))) {
+    if (documents.value.some((item) => isBuildActive(item))) {
       void refresh()
     }
   }, 5000)
@@ -52,14 +81,55 @@ async function refresh() {
   finally { loading.value = false }
 }
 
-function startCreate(mode: 'file' | 'text') {
+async function startCreate(mode: 'file' | 'text') {
   createMode.value = mode
   createForm.title = ''
   createForm.source_type = mode === 'file' ? 'SOP' : 'FAQ'
   createForm.college_id = ''
+  createForm.lab_id = null
+  createForm.device_id = null
+  createForm.allowed_roles = []
   createForm.body = ''
   selectedFile.value = null
   createVisible.value = true
+  resourceLoading.value = true
+  try {
+    const [labRows, devicePage] = await Promise.all([
+      listAllLabs(100),
+      fetchAllPages((page, size) => searchDevices({ page, size }), 100),
+    ])
+    labs.value = labRows
+    devices.value = devicePage
+  } catch {
+    ElMessage.warning('实验室或设备选项加载失败；仍可保存不绑定具体资源的知识')
+  } finally { resourceLoading.value = false }
+  roleLoading.value = true
+  try { knowledgeRoles.value = await listKnowledgeScopeRoles() }
+  catch {
+    knowledgeRoles.value = []
+    ElMessage.warning('可见角色加载失败；当前不能设置角色范围')
+  } finally { roleLoading.value = false }
+}
+
+function selectKnowledgeLab(labId: number | null) {
+  createForm.lab_id = labId
+  if (createForm.device_id && !scopedDevices.value.some((device) => device.id === createForm.device_id)) {
+    createForm.device_id = null
+  }
+  const lab = labs.value.find((item) => item.id === labId)
+  if (userStore.hasRole('SYS_ADMIN') && lab?.collegeId) {
+    createForm.college_id = String(lab.collegeId)
+  }
+}
+
+function selectKnowledgeDevice(deviceId: number | null) {
+  createForm.device_id = deviceId
+  const device = devices.value.find((item) => item.id === deviceId)
+  if (!device) return
+  if (userStore.hasRole('SYS_ADMIN') && device.collegeId) {
+    createForm.college_id = String(device.collegeId)
+  }
+  if (device.labId) createForm.lab_id = device.labId
 }
 
 function selectFile(event: Event) {
@@ -73,33 +143,76 @@ async function createDocument() {
     const collegeId = createForm.college_id ? Number(createForm.college_id) : undefined
     if (createMode.value === 'file') {
       if (!selectedFile.value) return ElMessage.warning('请选择要上传的文件')
-      await uploadKnowledgeDocument({
+      const accepted = await uploadKnowledgeDocument({
         title: createForm.title.trim(),
         source_type: createForm.source_type,
         college_id: collegeId,
+        lab_id: createForm.lab_id || undefined,
+        device_id: createForm.device_id || undefined,
+        allowed_roles: [...createForm.allowed_roles],
         file: selectedFile.value,
       })
+      createVisible.value = false
+      ElMessage.success(`文件已保存，后台构建已排队（任务 ${accepted.job_id.slice(0, 8)}）`)
+      await refresh()
     } else {
       await createKnowledgeDocument({
         title: createForm.title.trim(),
         source_type: createForm.source_type,
         college_id: collegeId,
+        lab_id: createForm.lab_id || undefined,
+        device_id: createForm.device_id || undefined,
+        allowed_roles: [...createForm.allowed_roles],
         body: createForm.body.trim(),
       })
+      createVisible.value = false
+      ElMessage.success('文本已保存，后台正在构建检索索引')
+      await refresh()
     }
-    createVisible.value = false
-    ElMessage.success('知识文档已保存为草稿')
-    await refresh()
   } catch (cause) { ElMessage.error((cause as Error).message || '保存失败') }
   finally { saving.value = false }
 }
 
 async function parseDocument(document: KnowledgeDocument) {
   try {
-    await requestKnowledgeParse(document.id)
-    ElMessage.success('已提交 MinerU 解析，完成后可审核提取内容')
+    const accepted = await requestKnowledgeParse(document.id)
+    ElMessage.success(`已提交后台构建，任务 ${accepted.job_id.slice(0, 8)}`)
     await refresh()
-  } catch (cause) { ElMessage.error((cause as Error).message || '无法启动解析') }
+  } catch (cause) { ElMessage.error((cause as Error).message || '无法启动构建') }
+}
+
+async function skipBuild(document: KnowledgeDocument) {
+  const job = document.build_job
+  const jobId = job?.blocking_job_id || (job?.status === 'FAILED' ? job.job_id : null)
+  if (!jobId) return
+  try {
+    const result = await ElMessageBox.prompt(
+      '跳过只会解除同文档后续任务的顺序阻塞，不会把文档标记为构建成功，也不会切换当前可检索版本。',
+      '跳过失败构建任务',
+      {
+        inputPlaceholder: '请说明跳过原因',
+        inputPattern: /\S{2,500}/,
+        inputErrorMessage: '请填写至少 2 个非空白字符',
+        confirmButtonText: '跳过并继续',
+        cancelButtonText: '取消',
+      },
+    )
+    await skipKnowledgeBuild(document.id, jobId, result.value.trim())
+    ElMessage.success('失败任务已跳过，后续同文档任务可以继续')
+    await refresh()
+  } catch {
+    // The prompt is cancelable; request errors are reported by the API interceptor.
+  }
+}
+
+async function retryBlockingBuild(document: KnowledgeDocument) {
+  const job = document.build_job
+  if (!job?.blocking_job_id || job.blocking_job_version !== document.version) return
+  try {
+    const accepted = await retryKnowledgeBuild(document.id, job.blocking_job_id)
+    ElMessage.success(`失败任务已按原顺序重试（任务 ${accepted.job_id.slice(0, 8)}）`)
+    await refresh()
+  } catch (cause) { ElMessage.error((cause as Error).message || '无法重试失败任务') }
 }
 
 async function openReview(document: KnowledgeDocument) {
@@ -154,17 +267,43 @@ async function remove(document: KnowledgeDocument) {
 }
 
 function statusLabel(document: KnowledgeDocument) {
+  const job = document.build_job
+  if (job?.status === 'FAILED') {
+    return document.status === 'PUBLISHED' ? '新版构建失败，旧版仍在服务' : '构建失败'
+  }
+  if (job?.status === 'RETRYING') return '服务重试中'
+  if (job?.status === 'PROCESSING') {
+    const stages: Record<string, string> = {
+      PARSING: '文档解析中', CHUNKING: '分块中', EMBEDDING: '向量化中', INDEXING: '写入检索索引中',
+    }
+    return stages[job.stage] || '后台构建中'
+  }
+  if (job?.status === 'QUEUED') return '排队中'
   const labels: Record<string, string> = {
     NOT_REQUESTED: '待处理', UPLOADED: '待解析', QUEUED: '排队中', SUBMITTING: '提交中',
-    PROCESSING: '解析中', PARSED: '待审核', REVIEWED: '待发布', PUBLISHED: '已发布', FAILED: '解析失败',
+    PROCESSING: '后台构建中', PARSED: '待审核', REVIEWED: '待发布', PUBLISHED: '已发布', FAILED: '构建失败',
   }
   return labels[document.parse_status] || document.status
 }
 
+function isBuildActive(document: KnowledgeDocument) {
+  return ['QUEUED', 'PROCESSING', 'RETRYING'].includes(document.build_job?.status || '')
+    || ['QUEUED', 'SUBMITTING', 'PROCESSING'].includes(document.parse_status)
+}
+
+function buildStageLabel(stage?: string) {
+  const labels: Record<string, string> = {
+    QUEUED: '排队中', PARSING: '解析中', CHUNKING: '分块中',
+    WAITING_ORDER: '等待前序文档任务', EMBEDDING: '生成向量并写入索引',
+    INDEXING: '整理索引', RETRYING: '等待重试',
+  }
+  return labels[stage || ''] || '后台构建中'
+}
+
 function statusTone(document: KnowledgeDocument) {
-  if (document.parse_status === 'PUBLISHED') return 'success'
-  if (document.parse_status === 'FAILED') return 'danger'
-  if (['QUEUED', 'SUBMITTING', 'PROCESSING'].includes(document.parse_status)) return 'busy'
+  if (document.build_job?.status === 'FAILED' || document.parse_status === 'FAILED') return 'danger'
+  if (document.status === 'PUBLISHED' && !isBuildActive(document)) return 'success'
+  if (isBuildActive(document)) return 'busy'
   return 'pending'
 }
 </script>
@@ -195,13 +334,60 @@ function statusTone(document: KnowledgeDocument) {
         </div>
         <h3>{{ document.title }}</h3>
         <p class="knowledge-card__file">{{ document.source_file_name || '文本知识' }} · v{{ document.version }}</p>
+        <p class="knowledge-card__scope">
+          {{ document.college_id ? `学院 ${document.college_id}` : '全校' }}
+          <span v-if="document.lab_id"> · 实验室 {{ document.lab_id }}</span>
+          <span v-if="document.device_id"> · 设备 {{ document.device_id }}</span>
+          <span v-if="document.allowed_roles?.length"> · {{ document.allowed_roles.join(' / ') }} 可见</span>
+          <span v-else> · 学院范围内全部角色可见</span>
+        </p>
         <p v-if="document.parse_error" class="knowledge-card__error">{{ document.parse_error }}</p>
+        <p v-else-if="document.build_job?.error_summary" class="knowledge-card__error">{{ document.build_job.error_summary }}</p>
+        <p v-if="document.build_job?.blocking_job_id && document.build_job.blocking_job_error_summary" class="knowledge-card__error">
+          前序构建任务 {{ document.build_job.blocking_job_id.slice(0, 8) }} 失败：{{ document.build_job.blocking_job_error_summary }}
+        </p>
+        <p v-if="document.build_job?.status === 'SKIPPED'" class="knowledge-card__skip-note">
+          当前失败任务已跳过；文档仍未构建成功，现有可检索版本保持不变。原因：{{ document.build_job.skip_reason }}
+        </p>
+        <div v-if="isBuildActive(document)" class="knowledge-build-progress">
+          <el-progress
+            :percentage="document.build_job?.progress_percent ?? 0"
+            :indeterminate="document.build_job?.progress_percent == null"
+            :duration="2"
+            :stroke-width="6"
+          />
+          <span>
+            {{ buildStageLabel(document.build_job?.stage) }}
+            <template v-if="document.build_job?.total_units">
+              · {{ document.build_job.completed_units }}/{{ document.build_job.total_units }} {{ document.build_job.unit || '' }}
+            </template>
+            <template v-if="(document.build_job?.attempts ?? 0) > 1"> · 第 {{ document.build_job?.attempts }} 次尝试</template>
+            <template v-if="document.status === 'PUBLISHED'"> · 当前发布版本继续提供检索</template>
+          </span>
+        </div>
         <div class="knowledge-card__meta">
           <span>{{ document.chunk_count }} 个已索引片段</span>
           <span v-if="document.published_at">发布于 {{ new Date(document.published_at).toLocaleDateString('zh-CN') }}</span>
         </div>
         <div class="knowledge-card__actions">
-          <el-button v-if="['UPLOADED', 'FAILED'].includes(document.parse_status) && document.source_file_name" text type="primary" :icon="Refresh" @click="parseDocument(document)">解析</el-button>
+          <el-button
+            v-if="document.parse_status === 'UPLOADED' || (document.parse_status === 'FAILED' && !document.build_job)"
+            text type="primary" :icon="Refresh" @click="parseDocument(document)"
+          >{{ document.parse_status === 'FAILED' ? '重试构建' : '构建索引' }}</el-button>
+          <template v-if="document.build_job?.blocking_job_id">
+            <el-button
+              v-if="document.build_job.blocking_job_version === document.version"
+              text type="primary" :icon="Refresh" @click="retryBlockingBuild(document)"
+            >重试前序失败任务</el-button>
+            <el-button text type="warning" @click="skipBuild(document)">跳过前序失败任务</el-button>
+          </template>
+          <template v-else-if="document.build_job?.status === 'FAILED'">
+            <el-button
+              v-if="document.build_job.version === document.version"
+              text type="primary" :icon="Refresh" @click="parseDocument(document)"
+            >重试构建</el-button>
+            <el-button text type="warning" @click="skipBuild(document)">跳过失败任务</el-button>
+          </template>
           <el-button v-if="['PARSED', 'REVIEWED', 'PUBLISHED', 'NOT_REQUESTED'].includes(document.parse_status)" text type="primary" :icon="View" @click="openReview(document)">审核 / 预览</el-button>
           <el-button v-if="document.parse_status === 'REVIEWED'" text type="success" :icon="CircleCheck" @click="publish(document)">发布</el-button>
           <el-button text type="danger" :icon="Delete" @click="remove(document)">删除</el-button>
@@ -221,6 +407,23 @@ function statusTone(document: KnowledgeDocument) {
           <el-form-item label="类型"><el-select v-model="createForm.source_type"><el-option label="设备 SOP" value="SOP" /><el-option label="安全须知" value="SAFETY" /><el-option label="常见问题" value="FAQ" /></el-select></el-form-item>
           <el-form-item v-if="userStore.hasRole('SYS_ADMIN')" label="学院 ID（留空为全校）"><el-input v-model="createForm.college_id" inputmode="numeric" placeholder="可选" /></el-form-item>
         </div>
+        <div class="knowledge-form__row" v-loading="resourceLoading">
+          <el-form-item label="实验室范围">
+            <el-select :model-value="createForm.lab_id" clearable filterable placeholder="不限定实验室" @change="selectKnowledgeLab">
+              <el-option v-for="lab in scopedLabs" :key="lab.id" :label="`${lab.name} · #${lab.id}`" :value="lab.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="设备范围">
+            <el-select :model-value="createForm.device_id" clearable filterable placeholder="不限定设备" @change="selectKnowledgeDevice">
+              <el-option v-for="device in scopedDevices" :key="device.id" :label="`${device.assetCode || `#${device.id}`} · ${device.name}`" :value="device.id" />
+            </el-select>
+          </el-form-item>
+        </div>
+        <el-form-item label="可见角色（不选表示学院范围内全部角色）">
+          <el-select v-model="createForm.allowed_roles" multiple clearable placeholder="全部角色可见" :loading="roleLoading" :disabled="roleLoading || knowledgeRoles.length === 0">
+            <el-option v-for="role in knowledgeRoles" :key="role.code" :label="role.name" :value="role.code" />
+          </el-select>
+        </el-form-item>
         <template v-if="createMode === 'file'">
           <input ref="fileRef" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.jp2,.webp,.gif,.bmp" hidden @change="selectFile" />
           <button class="file-picker" type="button" @click="fileRef?.click()"><Upload /><span>{{ selectedFile?.name || '选择 PDF、Office 文档或图片' }}</span></button>
@@ -237,7 +440,7 @@ function statusTone(document: KnowledgeDocument) {
         <el-input v-model="reviewText" type="textarea" :rows="16" maxlength="500000" show-word-limit placeholder="解析结果或文本知识内容" />
         <div v-if="chunks.length" class="chunk-preview">
           <h3>切块预览 <span>{{ chunks.length }} 段</span></h3>
-          <article v-for="chunk in chunks" :key="chunk.index"><small>片段 {{ chunk.index + 1 }} · {{ chunk.characters }} 字</small><p>{{ chunk.content }}</p></article>
+          <article v-for="chunk in chunks" :key="chunk.index"><small>{{ chunk.section_path || `片段 ${chunk.index + 1}` }} · {{ chunk.characters }} 字</small><p>{{ chunk.content }}</p></article>
         </div>
       </div>
       <template #footer><el-button @click="preview">预览切块</el-button><el-button type="primary" :loading="saving" @click="saveReview">保存审核内容</el-button></template>
@@ -258,7 +461,7 @@ function statusTone(document: KnowledgeDocument) {
 .knowledge-status { display:inline-flex; align-items:center; gap:6px; color:var(--text-secondary); font-size:10px; }
 .knowledge-status i { width:6px; height:6px; border-radius:50%; background:var(--text-tertiary); }
 .knowledge-status--success i { background:var(--status-success); }.knowledge-status--danger { color:var(--status-danger); }.knowledge-status--danger i { background:var(--status-danger); }.knowledge-status--busy i { background:var(--accent); animation:pulse 1.4s infinite; }
-.knowledge-card h3 { margin:17px 0 5px; font-size:15px; }.knowledge-card__file,.knowledge-card__meta { color:var(--text-tertiary); font-size:10px; }
+.knowledge-card h3 { margin:17px 0 5px; font-size:15px; }.knowledge-card__file,.knowledge-card__scope,.knowledge-card__meta { color:var(--text-tertiary); font-size:10px; }.knowledge-card__skip-note { color:var(--text-secondary); font-size:11px; line-height:1.5; }
 .knowledge-card__error { color:var(--status-danger); font-size:11px; }.knowledge-card__meta { margin-top:auto; padding:12px 0 8px; border-bottom:1px solid var(--border-subtle); }
 .knowledge-card__actions { display:flex; flex-wrap:wrap; justify-content:flex-end; padding-top:7px; }
 .knowledge-empty { display:grid; place-items:center; gap:8px; grid-column:1/-1; padding:70px 20px; color:var(--text-tertiary); text-align:center; }.knowledge-empty svg { width:28px; height:28px; color:var(--accent); }.knowledge-empty strong { color:var(--text-primary); }

@@ -105,6 +105,8 @@ class RepairService:
         image_urls: list[str] | None,
         priority: str = "NORMAL",
     ) -> RepairData:
+        if not self.principal.has_permission("repair:create"):
+            raise ApiError("FORBIDDEN", "当前账号没有提交报修的权限", 403)
         reservation_service = ReservationService(self.session, self.principal)
         device = await reservation_service._load_device(device_id)
         device = await self.session.scalar(
@@ -199,6 +201,8 @@ class RepairService:
         page: int = 1,
         page_size: int = 20,
     ) -> RepairPage:
+        if not self.principal.has_permission("repair:read:own"):
+            raise ApiError("FORBIDDEN", "当前账号没有查看个人报修的权限", 403)
         conditions = [RepairReport.reporter_id == self.principal.user_id]
         scope = self._scope()
         if scope is not None:
@@ -212,7 +216,10 @@ class RepairService:
         page: int = 1,
         page_size: int = 20,
     ) -> RepairPage:
-        if not self.principal.is_lab_admin and not self.principal.is_system_admin:
+        if not (
+            self.principal.has_permission("repair:handle")
+            or self.principal.has_permission("repair:read:scope")
+        ):
             raise ApiError("FORBIDDEN", "当前角色无报修处理权限", 403)
         conditions = []
         if status:
@@ -300,6 +307,8 @@ class RepairService:
         )
 
     async def take(self, report_id: int) -> RepairData:
+        if not self.principal.has_permission("repair:handle"):
+            raise ApiError("FORBIDDEN", "当前账号没有受理报修的权限", 403)
         report = await self._load(report_id)
         if not await self._can_manage(report.device):
             raise ApiError("FORBIDDEN", "只能受理自己负责实验室或学院的报修", 403)
@@ -363,6 +372,8 @@ class RepairService:
         return await self._finish(report_id, "REJECTED", note)
 
     async def _finish(self, report_id: int, status: str, note: str) -> RepairData:
+        if not self.principal.has_permission("repair:handle"):
+            raise ApiError("FORBIDDEN", "当前账号没有处理报修的权限", 403)
         report = await self._load(report_id)
         if not await self._can_manage(report.device):
             raise ApiError("FORBIDDEN", "只能处理自己负责实验室或学院的报修", 403)
@@ -497,6 +508,8 @@ class RepairService:
         confirmed: bool,
         note: str | None = None,
     ) -> RepairData:
+        if not self.principal.has_permission("repair:confirm"):
+            raise ApiError("FORBIDDEN", "当前账号没有确认报修结果的权限", 403)
         report = await self._load(report_id)
         if report.reporter_id != self.principal.user_id:
             raise ApiError("FORBIDDEN", "只能确认自己提交的报修工单", 403)

@@ -96,6 +96,23 @@ async def process_embedding_rebuild_batch(app: FastAPI, job_id: int) -> None:
                     chunks=[item.content for item in chunks],
                     version=document.version,
                     chunk_indices=[item.chunk_index for item in chunks],
+                    section_paths=[
+                        str((item.metadata_json or {}).get("section_path", ""))
+                        for item in chunks
+                    ],
+                    parent_section_ids=[item.parent_section_id for item in chunks],
+                    allowed_roles=[
+                        list(document.allowed_roles or ()) for _item in chunks
+                    ],
+                    lab_ids=[document.lab_id for _item in chunks],
+                    device_ids=[document.device_id for _item in chunks],
+                    index_metadata={
+                        "source_sha256": document.source_sha256 or document.checksum,
+                        "parser_version": "mineru-reviewed-v1"
+                        if document.source_file_path
+                        else "plain-text-v1",
+                        "chunker_version": "heading-recursive-v1",
+                    },
                 )
             new_cursor = max(chunk.id for chunk, _document in rows)
             async with factory() as session, session.begin():

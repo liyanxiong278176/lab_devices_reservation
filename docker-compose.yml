@@ -11,7 +11,9 @@ services:
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     # Local development dependencies must not listen on LAN/public interfaces.
     ports: ["127.0.0.1:3306:3306"]
-    volumes: ["mysql_data:/var/lib/mysql"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - mysql_socket:/var/run/mysqld
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$${MYSQL_ROOT_PASSWORD}\""]
       interval: 5s
@@ -21,6 +23,7 @@ services:
     image: redis:7-alpine
     container_name: lab-redis
     # Dev Redis has no authentication; loopback binding is its trust boundary.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
     ports: ["127.0.0.1:6379:6379"]
     volumes: ["redis_data:/data"]
     healthcheck:
@@ -29,7 +32,7 @@ services:
       timeout: 3s
       retries: 10
   qdrant:
-    image: qdrant/qdrant:v1.14.1
+    image: qdrant/qdrant:v1.19.0
     container_name: lab-qdrant
     restart: unless-stopped
     volumes:
@@ -47,7 +50,84 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+  mysql-exporter-setup:
+    image: mysql:8.0
+    restart: "no"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: lab_reservation
+      MYSQL_USER: ${DB_APP_USER:-lab_runtime}
+      MYSQL_PASSWORD: ${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}
+      MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?set MYSQL_EXPORTER_PASSWORD in .env}
+    volumes:
+      - mysql_socket:/var/run/mysqld
+      - ./monitoring/mysql/setup-exporter-user.sh:/setup-exporter-user.sh:ro
+    entrypoint: ["/bin/sh", "/setup-exporter-user.sh"]
+  mysqld-exporter:
+    image: quay.io/prometheus/mysqld-exporter:v0.20.0
+    restart: unless-stopped
+    depends_on:
+      mysql-exporter-setup:
+        condition: service_completed_successfully
+    environment:
+      MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?set MYSQL_EXPORTER_PASSWORD in .env}
+    volumes:
+      - ./monitoring/mysql/exporter-entrypoint.sh:/etc/mysqld-exporter/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/etc/mysqld-exporter/entrypoint.sh"]
+    expose: ["9104"]
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.92.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    expose: ["9121"]
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.6
+    restart: unless-stopped
+    command: ["--docker_only=true", "--housekeeping_interval=30s"]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    expose: ["8080"]
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    restart: unless-stopped
+    environment:
+      PROMETHEUS_METRICS_TOKEN: ${PROMETHEUS_METRICS_TOKEN:?set PROMETHEUS_METRICS_TOKEN in .env}
+    volumes:
+      - ./monitoring/prometheus/prometheus.dev.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/entrypoint.sh:/etc/prometheus/entrypoint.sh:ro
+      - prometheus_data:/prometheus
+    entrypoint: ["/bin/sh", "/etc/prometheus/entrypoint.sh"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    expose: ["9090"]
+  grafana:
+    image: grafana/grafana:13.2.2
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?set GRAFANA_ADMIN_USER in .env}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:${GRAFANA_PORT:-3000}/
+    ports: ["127.0.0.1:${GRAFANA_PORT:-3000}:3000"]
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
 volumes:
   mysql_data:
+  mysql_socket:
   redis_data:
   qdrant_data:
+  prometheus_data:
+  grafana_data:

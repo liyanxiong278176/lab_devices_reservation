@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import PlainTextResponse
+from prometheus_client import CONTENT_TYPE_LATEST
 from pydantic import BaseModel
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -58,7 +59,10 @@ async def metrics(
     if not secrets.compare_digest(provided_token, configured_token):
         raise ApiError("AUTH_REQUIRED", "无权访问监控指标", 401)
     registry = getattr(request.app.state, "metrics", None)
-    return PlainTextResponse(registry.render_prometheus() if registry is not None else "")
+    return PlainTextResponse(
+        registry.render_prometheus() if registry is not None else "",
+        media_type=CONTENT_TYPE_LATEST,
+    )
 
 
 def _require_system_admin(principal: Principal) -> None:
@@ -148,6 +152,7 @@ async def ready(
     if engine is None:
         engine = build_engine(settings)
         request.app.state.db_engine = engine
+    request.app.state.metrics.monitor_sqlalchemy_pool(engine)
     try:
         async with engine.connect() as connection:
             await connection.execute(text("SELECT 1"))

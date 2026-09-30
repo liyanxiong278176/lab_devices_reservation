@@ -1,108 +1,141 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict
-from typing import Any
+from dataclasses import dataclass, field
 
-from fastapi import WebSocket
+logger = logging.getLogger(__name__)
+
+
+@dataclass(eq=False)
+class NotificationStream:
+    """One authenticated SSE connection and its coalesced wake-up state."""
+
+    client_ip: str
+    user_id: int | None = None
+    session_id: str | None = None
+    wake: asyncio.Event = field(default_factory=asyncio.Event)
+    closed: asyncio.Event = field(default_factory=asyncio.Event)
+    notification_pending: bool = False
+    read_state_pending: bool = False
 
 
 class NotificationHub:
-    """In-process notification fan-out for the single FastAPI service.
+    """Bounded in-process registry for authenticated notification streams.
 
-    The database notification row remains the source of truth.  A WebSocket
-    is only a low-latency hint; reconnecting clients always reload history and
-    unread counts over HTTP.  This makes delivery safe across reconnects and
-    keeps the runtime compatible with the single-service decision.
+    Redis and Outbox messages only wake a stream. The stream then reads the
+    durable MySQL rows by per-user sequence, so relay arrival order is irrelevant.
     """
 
     def __init__(self) -> None:
-        self._connections: defaultdict[int, set[WebSocket]] = defaultdict(set)
-        self._session_ids: dict[WebSocket, str] = {}
-        self._pending: dict[WebSocket, str] = {}
+        self._connections: defaultdict[int, set[NotificationStream]] = defaultdict(set)
+        self._pending: set[NotificationStream] = set()
         self._lock = asyncio.Lock()
 
     async def reserve_pending(
         self,
-        websocket: WebSocket,
         client_ip: str,
         *,
         max_pending: int,
         max_per_ip: int,
-    ) -> bool:
+    ) -> NotificationStream | None:
         async with self._lock:
             if len(self._pending) >= max_pending:
-                return False
-            if sum(1 for ip in self._pending.values() if ip == client_ip) >= max_per_ip:
-                return False
-            self._pending[websocket] = client_ip
-            return True
+                return None
+            if sum(1 for stream in self._pending if stream.client_ip == client_ip) >= max_per_ip:
+                return None
+            stream = NotificationStream(client_ip=client_ip)
+            self._pending.add(stream)
+            return stream
 
     async def connect(
         self,
         user_id: int,
-        websocket: WebSocket,
+        stream: NotificationStream,
         *,
         max_total: int,
         max_per_user: int,
         session_id: str | None = None,
     ) -> bool:
         async with self._lock:
-            if websocket not in self._pending:
+            if stream not in self._pending:
                 return False
-            if sum(map(len, self._connections.values())) >= max_total:
-                self._pending.pop(websocket, None)
+            total = sum(map(len, self._connections.values()))
+            user_connections = self._connections.get(user_id, set())
+            self._pending.discard(stream)
+            if total >= max_total or len(user_connections) >= max_per_user:
+                stream.closed.set()
                 return False
-            if len(self._connections.get(user_id, ())) >= max_per_user:
-                self._pending.pop(websocket, None)
-                return False
-            self._pending.pop(websocket, None)
-            self._connections[user_id].add(websocket)
-            if session_id:
-                self._session_ids[websocket] = session_id
+            stream.user_id = user_id
+            stream.session_id = session_id
+            self._connections[user_id].add(stream)
             return True
 
-    async def disconnect_pending(self, websocket: WebSocket) -> None:
+    async def disconnect_pending(self, stream: NotificationStream) -> None:
         async with self._lock:
-            self._pending.pop(websocket, None)
+            self._pending.discard(stream)
+            stream.closed.set()
+            stream.wake.set()
 
-    async def disconnect(self, user_id: int, websocket: WebSocket) -> None:
+    async def disconnect(self, user_id: int, stream: NotificationStream) -> None:
         async with self._lock:
-            self._session_ids.pop(websocket, None)
+            stream.closed.set()
+            stream.wake.set()
             connections = self._connections.get(user_id)
             if not connections:
                 return
-            connections.discard(websocket)
+            connections.discard(stream)
             if not connections:
                 self._connections.pop(user_id, None)
 
     async def disconnect_session(self, session_id: str) -> None:
-        """Close live notification sockets authenticated by a revoked session."""
-        targets: list[WebSocket] = []
+        """Close notification streams authenticated by a revoked session."""
         async with self._lock:
-            for user_id, connections in list(self._connections.items()):
-                for websocket in list(connections):
-                    if self._session_ids.get(websocket) != session_id:
-                        continue
-                    connections.discard(websocket)
-                    self._session_ids.pop(websocket, None)
-                    targets.append(websocket)
-                if not connections:
-                    self._connections.pop(user_id, None)
-        if targets:
-            await asyncio.gather(
-                *(websocket.close(code=4401) for websocket in targets),
-                return_exceptions=True,
-            )
+            targets = [
+                stream
+                for connections in self._connections.values()
+                for stream in connections
+                if stream.session_id == session_id
+            ]
+            for stream in targets:
+                connections = self._connections.get(stream.user_id or -1)
+                if connections is not None:
+                    connections.discard(stream)
+                    if not connections:
+                        self._connections.pop(stream.user_id or -1, None)
+                stream.closed.set()
+                stream.wake.set()
 
-    async def publish(self, user_id: int, payload: dict[str, Any]) -> None:
+    async def publish(self, user_id: int, payload: dict[str, object]) -> int:
+        event_type = payload.get("eventType")
         async with self._lock:
-            connections = list(self._connections.get(user_id, set()))
-        stale: list[WebSocket] = []
-        for websocket in connections:
-            try:
-                await websocket.send_json(payload)
-            except Exception:
-                stale.append(websocket)
-        for websocket in stale:
-            await self.disconnect(user_id, websocket)
+            connections = tuple(self._connections.get(user_id, ()))
+            for stream in connections:
+                if event_type == "read_state_changed":
+                    # A single refresh conveys the latest committed state even
+                    # if several read operations arrive before the next tick.
+                    stream.read_state_pending = True
+                else:
+                    stream.notification_pending = True
+                stream.wake.set()
+        return len(connections)
+
+    async def wait(self, stream: NotificationStream, timeout: float) -> bool:
+        """Wait for a relay hint or return False after the heartbeat interval."""
+        if stream.closed.is_set():
+            return True
+        try:
+            await asyncio.wait_for(stream.wake.wait(), timeout=timeout)
+            return True
+        except TimeoutError:
+            return False
+
+    async def take_pending(self, stream: NotificationStream) -> tuple[bool, bool]:
+        async with self._lock:
+            notification_pending = stream.notification_pending
+            read_state_pending = stream.read_state_pending
+            stream.notification_pending = False
+            stream.read_state_pending = False
+            stream.wake.clear()
+            return notification_pending, read_state_pending

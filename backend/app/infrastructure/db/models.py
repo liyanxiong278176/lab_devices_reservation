@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (
@@ -27,8 +27,35 @@ BIGINT = BigInteger().with_variant(Integer, "sqlite")
 user_roles = Table(
     "sys_user_role",
     Base.metadata,
-    Column("user_id", BIGINT, ForeignKey("sys_user.id"), primary_key=True),
-    Column("role_id", BIGINT, ForeignKey("sys_role.id"), primary_key=True),
+    Column(
+        "user_id",
+        BIGINT,
+        ForeignKey("sys_user.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "role_id",
+        BIGINT,
+        ForeignKey("sys_role.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+role_permissions = Table(
+    "sys_role_permission",
+    Base.metadata,
+    Column(
+        "role_id",
+        BIGINT,
+        ForeignKey("sys_role.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "permission_id",
+        BIGINT,
+        ForeignKey("sys_permission.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )
 
 
@@ -55,10 +82,43 @@ class Role(Base):
     id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
     role_code: Mapped[str] = mapped_column(String(50), unique=True)
     role_name: Mapped[str] = mapped_column(String(50))
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     users: Mapped[list["User"]] = relationship(
         secondary=user_roles,
         back_populates="roles",
+    )
+    permissions: Mapped[list["Permission"]] = relationship(
+        secondary=role_permissions,
+        back_populates="roles",
+    )
+
+
+class Permission(Base):
+    __tablename__ = "sys_permission"
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    permission_code: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    permission_name: Mapped[str] = mapped_column(String(100))
+    module: Mapped[str] = mapped_column(String(50), index=True)
+    description: Mapped[str | None] = mapped_column(String(255))
+
+    roles: Mapped[list[Role]] = relationship(
+        secondary=role_permissions,
+        back_populates="permissions",
+    )
+
+
+class AuthorizationVersion(Base):
+    __tablename__ = "v2_authz_version"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 
@@ -410,6 +470,30 @@ class ReservationBlackout(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class ReservationRule(TimestampMixin, Base):
+    """Booking constraints scoped by user category and organization/resource."""
+
+    __tablename__ = "v2_reservation_rule"
+    __table_args__ = (
+        UniqueConstraint(
+            "scope_type",
+            "scope_id",
+            "user_category",
+            name="uk_v2_reservation_rule_scope_category",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    scope_id: Mapped[int] = mapped_column(BIGINT, default=0, nullable=False)
+    user_category: Mapped[str] = mapped_column(String(20), default="ALL", nullable=False)
+    max_booking_days: Mapped[int | None] = mapped_column(Integer)
+    max_advance_days: Mapped[int | None] = mapped_column(Integer)
+    approval_required: Mapped[bool | None] = mapped_column(Boolean)
+    created_by: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    updated_by: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+
+
 class CreditEvent(Base):
     """Immutable user credit change caused by a reservation event."""
 
@@ -440,7 +524,11 @@ class RefreshSession(Base):
     id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
     token_id: Mapped[str] = mapped_column(String(64))
     family_id: Mapped[str] = mapped_column(String(64))
-    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    user_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("sys_user.id", ondelete="CASCADE"),
+        index=True,
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
     replaced_by: Mapped[str | None] = mapped_column(String(64))
@@ -477,7 +565,11 @@ class UploadAsset(Base):
 
     id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
     asset_token: Mapped[str] = mapped_column(String(64))
-    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    user_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("sys_user.id", ondelete="CASCADE"),
+        index=True,
+    )
     college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
     original_name: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(100))
@@ -490,9 +582,7 @@ class UploadQuotaBucket(Base):
     """Cross-process byte counters serialized by row locks during upload."""
 
     __tablename__ = "v2_upload_quota_bucket"
-    __table_args__ = (
-        UniqueConstraint("scope_type", "scope_id", name="uk_v2_upload_quota_scope"),
-    )
+    __table_args__ = (UniqueConstraint("scope_type", "scope_id", name="uk_v2_upload_quota_scope"),)
 
     id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
     scope_type: Mapped[str] = mapped_column(String(16))
@@ -695,10 +785,15 @@ class IdempotencyKey(Base):
 
 class Notification(TimestampMixin, Base):
     __tablename__ = "notification"
-    __table_args__ = (Index("idx_notification_user_read_id_v2", "user_id", "is_read", "id"),)
+    __table_args__ = (
+        Index("idx_notification_user_read_id_v2", "user_id", "is_read", "id"),
+        Index(
+            "uq_notification_user_delivery_sequence", "user_id", "delivery_sequence", unique=True
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BIGINT, index=True)
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
     college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
     type: Mapped[str] = mapped_column(String(50))
     title: Mapped[str] = mapped_column(String(200))
@@ -707,6 +802,7 @@ class Notification(TimestampMixin, Base):
     related_type: Mapped[str | None] = mapped_column(String(50))
     source_task_key: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    delivery_sequence: Mapped[int] = mapped_column(BIGINT, nullable=False)
 
 
 class RepairReport(TimestampMixin, Base):
@@ -753,6 +849,93 @@ class RepairReport(TimestampMixin, Base):
     )
 
 
+class DeviceMaintenancePlan(TimestampMixin, Base):
+    """One recurring maintenance, calibration or safety-check schedule."""
+
+    __tablename__ = "v2_device_maintenance_plan"
+    __table_args__ = (
+        Index("idx_v2_maintenance_device_active", "device_id", "active"),
+        Index("idx_v2_maintenance_due_active", "active", "due_date", "plan_type"),
+        Index("idx_v2_maintenance_scope", "college_id", "active", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    device_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("device.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    college_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("college.id"))
+    plan_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    interval_value: Mapped[int] = mapped_column(Integer, nullable=False)
+    interval_unit: Mapped[str] = mapped_column(String(12), nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    downtime_start: Mapped[date | None] = mapped_column(Date)
+    downtime_end: Mapped[date | None] = mapped_column(Date)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    due_notice_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), nullable=False)
+    updated_by: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), nullable=False)
+
+    device: Mapped[Device] = relationship()
+    records: Mapped[list["DeviceMaintenanceRecord"]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by="DeviceMaintenanceRecord.id.desc()",
+    )
+
+
+class DeviceMaintenanceRecord(Base):
+    """Auditable result for a single completed maintenance cycle."""
+
+    __tablename__ = "v2_device_maintenance_record"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "idempotency_key", name="uk_v2_maintenance_record_request"),
+        Index("idx_v2_maintenance_record_plan_date", "plan_id", "cycle_due_date", "id"),
+        Index("idx_v2_maintenance_record_device_date", "device_id", "completed_date", "id"),
+        Index("ix_v2_device_maintenance_record_evidence_asset_id", "evidence_asset_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("v2_device_maintenance_plan.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    device_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("device.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    college_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("college.id"), index=True)
+    cycle_due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    completed_date: Mapped[date] = mapped_column(Date, nullable=False)
+    downtime_start: Mapped[date | None] = mapped_column(Date)
+    downtime_end: Mapped[date | None] = mapped_column(Date)
+    result: Mapped[str] = mapped_column(String(16), nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(2000))
+    performed_by: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), nullable=False)
+    evidence_asset_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("v2_upload_asset.id"))
+    repair_report_id: Mapped[int | None] = mapped_column(
+        BIGINT,
+        ForeignKey("v2_repair_report.id", ondelete="SET NULL"),
+        index=True,
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    plan: Mapped[DeviceMaintenancePlan] = relationship(back_populates="records")
+    evidence_asset: Mapped[UploadAsset | None] = relationship()
+    repair_report: Mapped[RepairReport | None] = relationship()
+    performer: Mapped[User] = relationship(foreign_keys=[performed_by])
+
+
 class AiKnowledgeIndexState(TimestampMixin, Base):
     """Durable active Qdrant collection pointer; contains no provider settings or secrets."""
 
@@ -795,6 +978,14 @@ class AiMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None) + timedelta(days=180),
+        index=True,
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    recall_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_recalled_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class AiRun(Base):
@@ -959,7 +1150,11 @@ class AiCheckpointWrite(Base):
     __tablename__ = "v2_ai_checkpoint_write"
     __table_args__ = (
         UniqueConstraint(
-            "thread_id", "checkpoint_ns", "checkpoint_id", "task_id", "write_index",
+            "thread_id",
+            "checkpoint_ns",
+            "checkpoint_id",
+            "task_id",
+            "write_index",
             name="uk_v2_ai_checkpoint_write",
         ),
         Index("idx_v2_ai_checkpoint_write_parent", "thread_id", "checkpoint_ns", "checkpoint_id"),
@@ -991,21 +1186,172 @@ class AiConfirmation(Base):
     arguments_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     preview_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(20), default="PENDING", index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)
+    arguments_hash: Mapped[str | None] = mapped_column(String(64))
+    preview_hash: Mapped[str | None] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     executed_at: Mapped[datetime | None] = mapped_column(DateTime)
     result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
+class AiToolExecution(Base):
+    """Durable per-run tool ledger used to resume without repeating side effects."""
+
+    __tablename__ = "v2_ai_tool_execution"
+    __table_args__ = (
+        UniqueConstraint("run_id", "idempotency_key", name="uk_v2_ai_tool_run_idempotency"),
+        Index("idx_v2_ai_tool_run_status", "run_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("v2_ai_run.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
+    tool_name: Mapped[str] = mapped_column(String(80))
+    tool_call_id: Mapped[str] = mapped_column(String(100))
+    idempotency_key: Mapped[str] = mapped_column(String(64))
+    arguments_hash: Mapped[str] = mapped_column(String(64))
+    arguments_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(20), default="STARTED", index=True)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    progress_hash: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AiMemory(Base):
+    """Private L1/L2 memory; source message IDs are provenance, not cascading FKs."""
+
+    __tablename__ = "v2_ai_memory"
+    __table_args__ = (
+        Index("idx_v2_ai_memory_owner_state", "user_id", "status", "expires_at"),
+        Index("idx_v2_ai_memory_owner_level", "user_id", "level", "scenario"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("sys_user.id", ondelete="CASCADE"), index=True
+    )
+    college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
+    level: Mapped[str] = mapped_column(String(2))
+    scenario: Mapped[str] = mapped_column(String(80))
+    content: Mapped[str] = mapped_column(Text)
+    source_message_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    source_run_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING_CONFIRMATION", index=True)
+    recall_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+    last_recalled_at: Mapped[datetime | None] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+
+
+class AiMemoryRecall(Base):
+    """A unique row makes recall-frequency updates idempotent within one run."""
+
+    __tablename__ = "v2_ai_memory_recall"
+    __table_args__ = (
+        UniqueConstraint("memory_id", "run_id", name="uk_v2_ai_memory_recall_run"),
+        Index("idx_v2_ai_memory_recall_run", "run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    memory_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("v2_ai_memory.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("v2_ai_run.id", ondelete="CASCADE"))
+    used_in_response: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    recalled_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AiMessageRecall(Base):
+    """Idempotent recall ledger for raw L0 messages."""
+
+    __tablename__ = "v2_ai_message_recall"
+    __table_args__ = (UniqueConstraint("message_id", "run_id", name="uk_v2_ai_message_recall_run"),)
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    message_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("v2_ai_message.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("v2_ai_run.id", ondelete="CASCADE"), index=True
+    )
+    recalled_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AiContextSnapshot(Base):
+    """Extractive compression of older conversation turns outside the protected window."""
+
+    __tablename__ = "v2_ai_context_snapshot"
+    __table_args__ = (UniqueConstraint("conversation_id", name="uk_v2_ai_context_conversation"),)
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("v2_ai_conversation.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    summary: Mapped[str] = mapped_column(Text)
+    source_message_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    through_message_id: Mapped[int] = mapped_column(BIGINT)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AiDomainTerm(Base):
+    """Admin-reviewed aliases/ignore terms used by deterministic query expansion."""
+
+    __tablename__ = "v2_ai_domain_term"
+    __table_args__ = (
+        Index("idx_v2_ai_domain_term_scope_status", "college_id", "status"),
+        Index("idx_v2_ai_domain_term_lookup", "term", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    college_id: Mapped[int | None] = mapped_column(BIGINT)
+    term: Mapped[str] = mapped_column(String(100))
+    canonical: Mapped[str | None] = mapped_column(String(100))
+    kind: Mapped[str] = mapped_column(String(20), default="SYNONYM")
+    status: Mapped[str] = mapped_column(String(20), default="APPROVED", index=True)
+    created_by: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class KnowledgeDocument(TimestampMixin, Base):
     __tablename__ = "v2_knowledge_document"
-    __table_args__ = (Index("idx_v2_knowledge_scope_status", "college_id", "status"),)
+    __table_args__ = (
+        Index("idx_v2_knowledge_scope_status", "college_id", "status"),
+        Index("idx_v2_knowledge_scope_lab", "college_id", "lab_id"),
+        Index("idx_v2_knowledge_scope_device", "college_id", "device_id"),
+    )
 
     id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
     college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
+    lab_id: Mapped[int | None] = mapped_column(
+        BIGINT, ForeignKey("lab.id", ondelete="RESTRICT"), index=True
+    )
+    device_id: Mapped[int | None] = mapped_column(
+        BIGINT, ForeignKey("device.id", ondelete="RESTRICT"), index=True
+    )
+    allowed_roles: Mapped[list[str] | None] = mapped_column(JSON)
     title: Mapped[str] = mapped_column(String(200))
     source_type: Mapped[str] = mapped_column(String(40), default="FAQ")
     body: Mapped[str] = mapped_column(Text)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    build_sequence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Queries only read the version that has been published. New builds write
+    # versioned staging rows and switch this pointer after every batch succeeds.
+    active_version: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20), default="DRAFT", index=True)
     created_by: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
     published_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -1020,12 +1366,98 @@ class KnowledgeDocument(TimestampMixin, Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
     reviewed_by: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
     parse_error: Mapped[str | None] = mapped_column(String(1000))
+    dlp_categories: Mapped[list[str] | None] = mapped_column(JSON)
+
+
+class KnowledgeBuildJob(TimestampMixin, Base):
+    __tablename__ = "v2_knowledge_build_job"
+    __table_args__ = (
+        Index("idx_v2_knowledge_build_document_created", "document_id", "created_at"),
+        Index("idx_v2_knowledge_build_order", "document_id", "status", "sequence"),
+        Index("idx_v2_knowledge_build_status_heartbeat", "status", "heartbeat_at"),
+        Index("idx_v2_knowledge_build_status_queued", "status", "queued_at"),
+        Index("idx_v2_knowledge_build_status_completed", "status", "completed_at"),
+        Index("idx_v2_knowledge_build_tenant_status", "college_id", "status", "created_at"),
+        UniqueConstraint("celery_task_id", name="uk_v2_knowledge_build_celery_task"),
+        UniqueConstraint("document_id", "sequence", name="uk_v2_knowledge_build_sequence"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("v2_knowledge_document.id", ondelete="CASCADE"), index=True
+    )
+    college_id: Mapped[int | None] = mapped_column(
+        BIGINT, ForeignKey("college.id", ondelete="RESTRICT"), index=True
+    )
+    requested_by: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("sys_user.id", ondelete="RESTRICT")
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    build_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    celery_task_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="QUEUED", nullable=False, index=True)
+    stage: Mapped[str] = mapped_column(String(24), default="QUEUED", nullable=False)
+    progress_percent: Mapped[int | None] = mapped_column(Integer)
+    completed_units: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_units: Mapped[int | None] = mapped_column(Integer)
+    unit: Mapped[str | None] = mapped_column(String(20))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    redeliveries: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    dispatch_recoveries: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    error_summary: Mapped[str | None] = mapped_column(String(1000))
+    skipped_by: Mapped[int | None] = mapped_column(
+        BIGINT,
+        ForeignKey(
+            "sys_user.id",
+            ondelete="RESTRICT",
+            name="fk_v2_knowledge_build_job_skipped_by_user",
+        ),
+    )
+    skipped_at: Mapped[datetime | None] = mapped_column(DateTime)
+    skip_reason: Mapped[str | None] = mapped_column(String(500))
+    last_dispatched_at: Mapped[datetime | None] = mapped_column(DateTime)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
+    queued_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class KnowledgeSection(Base):
+    """Document-aware Markdown heading tree used as parent context for chunks."""
+
+    __tablename__ = "v2_knowledge_section"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id", "version", "section_index", name="uk_v2_knowledge_section_order"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey("v2_knowledge_document.id", ondelete="CASCADE"),
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    parent_section_id: Mapped[int | None] = mapped_column(
+        BIGINT,
+        ForeignKey("v2_knowledge_section.id", ondelete="SET NULL"),
+        index=True,
+    )
+    section_index: Mapped[int] = mapped_column(Integer)
+    heading: Mapped[str] = mapped_column(String(500))
+    section_path: Mapped[str] = mapped_column(String(2000))
+    content: Mapped[str] = mapped_column(Text)
 
 
 class KnowledgeChunk(Base):
     __tablename__ = "v2_knowledge_chunk"
     __table_args__ = (
-        UniqueConstraint("document_id", "chunk_index", name="uk_v2_knowledge_chunk_order"),
+        UniqueConstraint(
+            "document_id", "version", "chunk_index", name="uk_v2_knowledge_chunk_order"
+        ),
         UniqueConstraint("point_id", name="uk_v2_knowledge_chunk_point"),
         Index("ft_v2_knowledge_chunk_content", "content", mysql_prefix="FULLTEXT"),
     )
@@ -1036,8 +1468,14 @@ class KnowledgeChunk(Base):
         ForeignKey("v2_knowledge_document.id", ondelete="CASCADE"),
         index=True,
     )
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     college_id: Mapped[int | None] = mapped_column(BIGINT, index=True)
     point_id: Mapped[str] = mapped_column(String(100))
     chunk_index: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSON)
+    parent_section_id: Mapped[int | None] = mapped_column(
+        BIGINT,
+        ForeignKey("v2_knowledge_section.id", ondelete="SET NULL"),
+        index=True,
+    )

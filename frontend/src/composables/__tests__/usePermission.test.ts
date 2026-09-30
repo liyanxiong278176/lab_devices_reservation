@@ -8,43 +8,44 @@ describe('usePermission', () => {
     setActivePinia(createPinia())
   })
 
-  it('hasPerm 返回 true 当用户拥有该权限码', () => {
-    const u = useUserStore()
-    u.permissions = ['device:manage', 'device:approve']
+  it('uses permission codes returned by the server', () => {
+    const user = useUserStore()
+    user.permissions = ['device:manage', 'reservation:approve']
     const { hasPerm } = usePermission()
     expect(hasPerm('device:manage')).toBe(true)
-    expect(hasPerm('device:approve')).toBe(true)
+    expect(hasPerm('reservation:approve')).toBe(true)
   })
 
-  it('hasPerm 返回 false 当用户缺少该权限码', () => {
-    const u = useUserStore()
-    u.permissions = ['device:approve']
+  it('does not grant a permission that is absent from the profile', () => {
+    const user = useUserStore()
+    user.permissions = ['reservation:approve']
     const { hasPerm } = usePermission()
     expect(hasPerm('device:manage')).toBe(false)
   })
 
-  it('hasRole 按 role 字符串精确匹配', () => {
-    const u = useUserStore()
-    u.roles = ['USER']
+  it('matches role codes exactly for display-only role checks', () => {
+    const user = useUserStore()
+    user.roles = ['USER']
     const { hasRole } = usePermission()
     expect(hasRole('USER')).toBe(true)
     expect(hasRole('ADMIN')).toBe(false)
   })
 
-  it('管理员角色默认拥有业务操作权限', () => {
-    const u = useUserStore()
-    u.roles = ['SYS_ADMIN']
+  it('uses server-provided permissions for a system administrator', () => {
+    const user = useUserStore()
+    user.roles = ['SYS_ADMIN']
+    user.permissions = ['reservation:approve', 'device:manage', 'repair:handle']
     const { hasPerm } = usePermission()
-    expect(hasPerm('device:approve')).toBe(true)
+    expect(hasPerm('reservation:approve')).toBe(true)
     expect(hasPerm('device:manage')).toBe(true)
     expect(hasPerm('repair:handle')).toBe(true)
   })
 
-  it('普通用户不会继承管理员操作权限', () => {
-    const u = useUserStore()
-    u.roles = ['STUDENT']
+  it('does not infer administrator permissions for an ordinary user', () => {
+    const user = useUserStore()
+    user.roles = ['STUDENT']
     const { hasPerm } = usePermission()
-    expect(hasPerm('device:approve')).toBe(false)
+    expect(hasPerm('reservation:approve')).toBe(false)
     expect(hasPerm('device:manage')).toBe(false)
     expect(hasPerm('repair:handle')).toBe(false)
   })

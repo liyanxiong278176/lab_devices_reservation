@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { useStagger } from '@/composables/useStagger'
 import GradientButton from '@/components/ui/GradientButton.vue'
+import { listRegistrationColleges, type PublicCollegeVO } from '@/api/auth'
 
 const router = useRouter()
 const route = useRoute()
@@ -12,14 +13,51 @@ const userStore = useUserStore()
 
 const formRef = ref<FormInstance>()
 const loading = ref(false)
+const isRegister = ref(route.path === '/register')
+const colleges = ref<PublicCollegeVO[]>([])
+const collegesLoading = ref(false)
 const form = reactive({
   username: '',
   password: '',
+  real_name: '',
+  college_id: undefined as number | undefined,
 })
 
-const rules: FormRules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+const rules = computed<FormRules>(() => ({
+  username: [
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    ...(isRegister.value ? [{ min: 3, message: '用户名至少 3 个字符', trigger: 'blur' as const }] : []),
+  ],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: isRegister.value ? 8 : 6, message: '密码长度不足', trigger: 'blur' },
+  ],
+  real_name: isRegister.value
+    ? [{ required: true, message: '请输入真实姓名', trigger: 'blur' }]
+    : [],
+  college_id: isRegister.value
+    ? [{ required: true, message: '请选择所属学院', trigger: 'change' }]
+    : [],
+}))
+
+async function loadColleges() {
+  if (colleges.value.length || collegesLoading.value) return
+  collegesLoading.value = true
+  try {
+    colleges.value = await listRegistrationColleges()
+  } finally {
+    collegesLoading.value = false
+  }
+}
+
+onMounted(() => {
+  if (isRegister.value) void loadColleges()
+})
+
+function switchMode(register: boolean) {
+  isRegister.value = register
+  void router.replace({ path: register ? '/register' : '/login', query: route.query })
+  if (register) void loadColleges()
 }
 
 async function onSubmit() {
@@ -28,9 +66,18 @@ async function onSubmit() {
     if (!valid) return
     loading.value = true
     try {
-      await userStore.login({ username: form.username, password: form.password })
-      await userStore.fetchMe()
-      ElMessage.success('登录成功')
+      if (isRegister.value) {
+        if (!form.college_id) return
+        await userStore.register({
+          username: form.username,
+          password: form.password,
+          real_name: form.real_name,
+          college_id: form.college_id,
+        })
+      } else {
+        await userStore.login({ username: form.username, password: form.password })
+      }
+      ElMessage.success(isRegister.value ? '注册并登录成功' : '登录成功')
       const redirect = (route.query.redirect as string) || '/dashboard'
       router.push(redirect)
     } catch {
@@ -100,8 +147,8 @@ const { reveal: _loginReveal } = useStagger(rootRef, { delay: 80 })
     <section class="login-form-wrap">
       <div class="login-card" data-stagger>
         <header class="login-card__head">
-          <h2 class="login-card__title">欢迎回来</h2>
-          <p class="login-card__subtitle">登录以继续</p>
+          <h2 class="login-card__title">{{ isRegister ? '创建账号' : '欢迎回来' }}</h2>
+          <p class="login-card__subtitle">{{ isRegister ? '加入实验室预约平台' : '登录以继续' }}</p>
         </header>
 
         <el-form
@@ -112,6 +159,24 @@ const { reveal: _loginReveal } = useStagger(rootRef, { delay: 80 })
           size="large"
           @keyup.enter="onSubmit"
         >
+          <el-form-item v-if="isRegister" label="真实姓名" prop="real_name">
+            <el-input v-model="form.real_name" placeholder="请输入真实姓名" maxlength="50" />
+          </el-form-item>
+          <el-form-item v-if="isRegister" label="所属学院" prop="college_id">
+            <el-select
+              v-model="form.college_id"
+              placeholder="请选择所属学院"
+              :loading="collegesLoading"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="college in colleges"
+                :key="college.id"
+                :label="college.name"
+                :value="college.id"
+              />
+            </el-select>
+          </el-form-item>
           <el-form-item label="用户名" prop="username">
             <el-input v-model="form.username" placeholder="请输入用户名" clearable />
           </el-form-item>
@@ -119,7 +184,7 @@ const { reveal: _loginReveal } = useStagger(rootRef, { delay: 80 })
             <el-input
               v-model="form.password"
               type="password"
-              placeholder="请输入密码"
+              :placeholder="isRegister ? '至少 8 位密码' : '请输入密码'"
               show-password
               clearable
             />
@@ -130,8 +195,15 @@ const { reveal: _loginReveal } = useStagger(rootRef, { delay: 80 })
             :loading="loading"
             @click="onSubmit"
           >
-            登录
+            {{ isRegister ? '注册并登录' : '登录' }}
           </GradientButton>
+          <button
+            class="login-card__mode"
+            type="button"
+            @click="switchMode(!isRegister)"
+          >
+            {{ isRegister ? '已有账号？返回登录' : '没有账号？注册普通用户' }}
+          </button>
         </el-form>
       </div>
     </section>
@@ -593,6 +665,20 @@ const { reveal: _loginReveal } = useStagger(rootRef, { delay: 80 })
   margin-top: 10px;
   border-radius: 14px;
   font-size: 15px;
+}
+
+.login-card__mode {
+  display: block;
+  margin: 18px auto 0;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.login-card__mode:hover {
+  color: var(--accent-bright);
 }
 
 @media (max-width: 1024px) {

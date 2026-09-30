@@ -45,6 +45,7 @@ async def test_mysql_delayed_pagination_supports_direct_jumps() -> None:
                 roles=("STUDENT",),
                 token_type="access",
                 token_id="mysql-page-student",
+                permissions=("reservation:create", "reservation:read:own", "device:read"),
             )
             manager_principal = Principal(
                 user_id=manager.id,
@@ -53,6 +54,7 @@ async def test_mysql_delayed_pagination_supports_direct_jumps() -> None:
                 roles=("LAB_ADMIN",),
                 token_type="access",
                 token_id="mysql-page-manager",
+                permissions=("reservation:read:scope", "reservation:approve"),
             )
             first_day = date.today() + timedelta(days=10)
             reservation_service = ReservationService(session, student_principal)

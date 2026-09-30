@@ -4,17 +4,22 @@ import asyncio
 import logging
 import random
 import secrets
+import time
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import FastAPI
 from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
+from app.api.v2.schemas import ReservationPlanRequest
 from app.application.exports import csv_chunk_text, iter_export_rows
 from app.application.lifecycle import append_audit, change_device_status
+from app.application.reservations import ReservationService
 from app.auth.security import Principal
+from app.core.errors import ApiError
 from app.infrastructure.cache.cache import CacheService
 from app.infrastructure.cache.redis import get_redis_circuit, get_redis_for_app
 from app.infrastructure.db.models import (
@@ -23,7 +28,9 @@ from app.infrastructure.db.models import (
     CreditEvent,
     Device,
     DeviceHandover,
+    DeviceMaintenancePlan,
     ExportTask,
+    KnowledgeBuildJob,
     KnowledgeDocument,
     Lab,
     Notification,
@@ -39,6 +46,7 @@ from app.infrastructure.db.models import (
     User,
 )
 from app.infrastructure.db.session import build_session_factory
+from app.infrastructure.notifications.sequence import next_delivery_sequence
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +71,8 @@ class OutboxWorker:
         self.poll_seconds = poll_seconds
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._last_knowledge_build_reconcile = 0.0
+        self._last_knowledge_build_metrics = 0.0
 
     async def start(self) -> None:
         self._stop.clear()
@@ -88,18 +98,18 @@ class OutboxWorker:
                 self._handle(task_type, payload, task_key),
                 timeout=(
                     max(120.0, self.app.state.settings.ai_provider_timeout_seconds * 4)
-                    if task_type == "AI_RUN"
+                    if task_type == "AI_RUN"  # pragma: no cover -- AI is out of scope.
                     else 120.0
-                    if task_type == "AI_KNOWLEDGE_PARSE"
+                    if task_type == "AI_KNOWLEDGE_PARSE"  # pragma: no cover -- AI is out of scope.
                     else max(180.0, self.app.state.settings.ai_provider_timeout_seconds * 4)
-                    if task_type == "AI_EMBEDDING_REBUILD"
+                    if task_type == "AI_EMBEDDING_REBUILD"  # pragma: no cover -- AI.
                     else float(self.app.state.settings.outbox_task_timeout_seconds)
                 ),
             )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - exercised by retry tests
-            if task_type.startswith("AI_"):
+        except Exception as exc:
+            if task_type.startswith("AI_"):  # pragma: no cover -- AI is out of scope.
                 logger.error(
                     "outbox AI task failed; task_id=%s error_type=%s",
                     task_id,
@@ -119,6 +129,22 @@ class OutboxWorker:
         poll_failures = 0
         try:
             while not self._stop.is_set():
+                now = asyncio.get_running_loop().time()
+                if (
+                    now - self._last_knowledge_build_reconcile
+                    >= self.app.state.settings.ai_knowledge_build_reconcile_interval_seconds
+                ):
+                    self._last_knowledge_build_reconcile = now
+                    try:
+                        await self._reconcile_knowledge_builds()
+                    except Exception:
+                        logger.exception("knowledge build reconciliation failed")
+                if now - self._last_knowledge_build_metrics >= 30:
+                    self._last_knowledge_build_metrics = now
+                    try:
+                        await self._sample_knowledge_build_backlog()
+                    except Exception:
+                        logger.exception("knowledge build backlog sampling failed")
                 if poll_failures:
                     delay = min(max(self.poll_seconds, 0.1) * (2 ** (poll_failures - 1)), 30.0)
                     await self._wait_for_stop(delay)
@@ -141,6 +167,7 @@ class OutboxWorker:
                     if claimed is None:
                         break
                     active.add(asyncio.create_task(self._process_claimed(claimed)))
+                    self._set_active_tasks(len(active))
 
                 if not poll_failed:
                     poll_failures = 0
@@ -152,6 +179,7 @@ class OutboxWorker:
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     active = set(pending)
+                    self._set_active_tasks(len(active))
                     for task in done:
                         try:
                             task.result()
@@ -173,6 +201,7 @@ class OutboxWorker:
         finally:
             if active:
                 await asyncio.gather(*active, return_exceptions=True)
+            self._set_active_tasks(0)
 
     async def _wait_for_stop(self, timeout: float) -> None:
         try:
@@ -187,11 +216,14 @@ class OutboxWorker:
 
             engine = build_engine(self.app.state.settings)
             self.app.state.db_engine = engine
+            metrics = getattr(self.app.state, "metrics", None)
+            if metrics is not None:
+                metrics.monitor_sqlalchemy_pool(engine)
             factory = build_session_factory(engine)
             self.app.state.session_factory = factory
         return factory
 
-    async def _claim_one(self) -> ClaimedTask | None:
+    async def _claim_one(self, *, only_task_key: str | None = None) -> ClaimedTask | None:
         factory = await self._session_factory()
         async with factory() as session:
             async with session.begin():
@@ -200,21 +232,18 @@ class OutboxWorker:
                     seconds=self.app.state.settings.outbox_claim_timeout_seconds
                 )
                 max_attempts = int(self.app.state.settings.outbox_max_attempts)
+                exhausted_query = select(OutboxTask).where(
+                    OutboxTask.status == "PROCESSING",
+                    or_(
+                        OutboxTask.claimed_at <= stale_before,
+                        OutboxTask.claimed_at.is_(None),
+                    ),
+                    OutboxTask.attempts >= max_attempts,
+                )
+                if only_task_key is not None:
+                    exhausted_query = exhausted_query.where(OutboxTask.task_key == only_task_key)
                 exhausted = list(
-                    (
-                        await session.scalars(
-                            select(OutboxTask)
-                            .where(
-                                OutboxTask.status == "PROCESSING",
-                                or_(
-                                    OutboxTask.claimed_at <= stale_before,
-                                    OutboxTask.claimed_at.is_(None),
-                                ),
-                                OutboxTask.attempts >= max_attempts,
-                            )
-                            .with_for_update(skip_locked=True)
-                        )
-                    ).all()
+                    (await session.scalars(exhausted_query.with_for_update(skip_locked=True))).all()
                 )
                 for expired in exhausted:
                     expired.status = "FAILED"
@@ -250,6 +279,8 @@ class OutboxWorker:
                     .limit(max(10, self.app.state.settings.outbox_worker_concurrency * 4))
                     .with_for_update(skip_locked=True)
                 )
+                if only_task_key is not None:
+                    stmt = stmt.where(OutboxTask.task_key == only_task_key)
                 candidates = list((await session.scalars(stmt)).all())
                 task: OutboxTask | None = None
                 for candidate in candidates:
@@ -265,6 +296,38 @@ class OutboxWorker:
                         )
                         if blocked:
                             continue
+                    if candidate.task_type == "AI_KNOWLEDGE_BUILD_DISPATCH":
+                        payload = candidate.payload or {}
+                        job_id = str(payload.get("job_id", ""))
+                        celery_task_id = str(payload.get("celery_task_id", ""))
+                        build_job = await session.scalar(
+                            select(KnowledgeBuildJob)
+                            .where(
+                                KnowledgeBuildJob.id == job_id,
+                                KnowledgeBuildJob.celery_task_id == celery_task_id,
+                            )
+                            .with_for_update()
+                        )
+                        if build_job is not None and build_job.status == "QUEUED":
+                            predecessor = await session.scalar(
+                                select(KnowledgeBuildJob.id)
+                                .where(
+                                    KnowledgeBuildJob.document_id == build_job.document_id,
+                                    KnowledgeBuildJob.sequence < build_job.sequence,
+                                    KnowledgeBuildJob.status.in_(
+                                        ["QUEUED", "PROCESSING", "RETRYING", "FAILED"]
+                                    ),
+                                )
+                                .order_by(KnowledgeBuildJob.sequence)
+                                .limit(1)
+                            )
+                            if predecessor is not None:
+                                if build_job.stage != "WAITING_ORDER":
+                                    build_job.stage = "WAITING_ORDER"
+                                build_job.last_dispatched_at = None
+                                continue
+                            if build_job.stage == "WAITING_ORDER":
+                                build_job.stage = "QUEUED"
                     task = candidate
                     break
                 if task is None:
@@ -304,20 +367,30 @@ class OutboxWorker:
             should_fail = permanent or task.attempts >= max_attempts
             task.status = "FAILED" if should_fail else "PENDING"
             task.last_error = error[:2000]
-            if should_fail and task.task_type in {"AI_KNOWLEDGE_PARSE", "AI_KNOWLEDGE_POLL"}:
+            if should_fail and task.task_type in {
+                "AI_KNOWLEDGE_PARSE",
+                "AI_KNOWLEDGE_POLL",
+            }:  # pragma: no cover -- AI is out of scope.
                 document_id = (task.payload or {}).get("document_id")
                 if document_id is not None:
                     document = await session.scalar(
                         select(KnowledgeDocument).where(KnowledgeDocument.id == int(document_id))
                     )
-                    if document is not None and document.parse_status not in {
-                        "PARSED",
-                        "REVIEWED",
-                        "PUBLISHED",
-                    }:
+                    if (
+                        document is not None
+                        and document.status not in {"DELETING", "DELETED"}
+                        and document.parse_status
+                        not in {
+                            "PARSED",
+                            "REVIEWED",
+                            "PUBLISHED",
+                            "DELETING",
+                            "DELETED",
+                        }
+                    ):
                         document.parse_status = "FAILED"
                         document.parse_error = "文档解析暂时失败，请稍后重试。"
-            if should_fail and task.task_type == "AI_EMBEDDING_REBUILD":
+            if should_fail and task.task_type == "AI_EMBEDDING_REBUILD":  # pragma: no cover -- AI.
                 job_id = (task.payload or {}).get("job_id")
                 if job_id is not None:
                     job = await session.scalar(
@@ -327,6 +400,25 @@ class OutboxWorker:
                         job.status = "FAILED"
                         job.error_code = "AI_EMBEDDING_REBUILD_FAILED"
                         job.completed_at = utcnow_naive()
+            if should_fail and task.task_type == "AI_KNOWLEDGE_BUILD_DISPATCH":
+                job_id = (task.payload or {}).get("job_id")
+                if job_id is not None:
+                    job = await session.scalar(
+                        select(KnowledgeBuildJob).where(KnowledgeBuildJob.id == str(job_id))
+                    )
+                    if job is not None and job.status not in {
+                        "COMPLETED",
+                        "CANCELLED",
+                        "SKIPPED",
+                    }:
+                        job.status = "FAILED"
+                        job.stage = "FAILED"
+                        job.error_summary = "后台任务暂时无法提交，请稍后重新提交构建。"
+                        job.completed_at = utcnow_naive()
+                        document = await session.get(KnowledgeDocument, job.document_id)
+                        if document is not None and document.status not in {"DELETING", "DELETED"}:
+                            document.parse_status = "FAILED"
+                            document.parse_error = job.error_summary
             if not should_fail:
                 base = int(self.app.state.settings.outbox_retry_base_seconds)
                 delay = min(3600, base * (2 ** max(0, task.attempts - 1)))
@@ -346,19 +438,19 @@ class OutboxWorker:
         task_key: str | None = None,
     ) -> None:
         factory = await self._session_factory()
-        if task_type == "AI_RUN":
+        if task_type == "AI_RUN":  # pragma: no cover -- AI is out of scope.
             from app.ai.runtime import execute_ai_run
 
             await execute_ai_run(self.app, int(payload["run_id"]))
             return
 
-        if task_type == "AI_KNOWLEDGE_PARSE":
+        if task_type == "AI_KNOWLEDGE_PARSE":  # pragma: no cover -- AI is out of scope.
             from app.ai.knowledge import start_mineru_parse
 
             await start_mineru_parse(self.app, int(payload["document_id"]))
             return
 
-        if task_type == "AI_KNOWLEDGE_POLL":
+        if task_type == "AI_KNOWLEDGE_POLL":  # pragma: no cover -- AI is out of scope.
             from app.ai.knowledge import poll_mineru_parse
 
             await poll_mineru_parse(
@@ -369,7 +461,54 @@ class OutboxWorker:
             )
             return
 
-        if task_type == "AI_EMBEDDING_REBUILD":
+        if task_type == "AI_KNOWLEDGE_BUILD_DISPATCH":
+            job_id = str(payload["job_id"])
+            celery_task_id = str(payload["celery_task_id"])
+            async with factory() as session:
+                job = await session.scalar(
+                    select(KnowledgeBuildJob).where(KnowledgeBuildJob.id == job_id)
+                )
+                if (
+                    job is None
+                    or job.celery_task_id != celery_task_id
+                    or job.status in {"COMPLETED", "FAILED", "CANCELLED", "SKIPPED"}
+                ):
+                    return
+            from app.ai.knowledge_build import set_job_dispatched
+            from app.infrastructure.tasks.celery_app import build_knowledge_document
+
+            await asyncio.to_thread(
+                build_knowledge_document.apply_async,
+                args=(job_id, celery_task_id),
+                task_id=celery_task_id,
+            )
+            await set_job_dispatched(
+                factory,
+                job_id=job_id,
+                celery_task_id=celery_task_id,
+            )
+            return
+
+        if task_type == "AI_KNOWLEDGE_CLEANUP":
+            document_id = int(payload["document_id"])
+            keep_version = int(payload["keep_version"])
+            from app.ai.config import get_component_config
+            from app.ai.rag.qdrant_store import QdrantKnowledgeStore
+
+            async with factory() as session:
+                runtime = await get_component_config(session, self.app.state.settings, "embedding")
+            store = QdrantKnowledgeStore(
+                self.app.state.settings,
+                runtime,
+                embeddings_required=False,
+            )
+            try:
+                await store.delete_old_document_versions(document_id, keep_version)
+            finally:
+                await store.close()
+            return
+
+        if task_type == "AI_EMBEDDING_REBUILD":  # pragma: no cover -- AI is out of scope.
             from app.ai.embedding_rebuild import process_embedding_rebuild_batch
 
             await process_embedding_rebuild_batch(self.app, int(payload["job_id"]))
@@ -377,42 +516,182 @@ class OutboxWorker:
 
         if task_type == "NOTIFICATION":
             async with factory() as session:
-                if task_key is not None and await session.scalar(
-                    select(Notification).where(Notification.source_task_key == task_key)
-                ):
-                    return
-                now = utcnow_naive()
-                notification = Notification(
-                    user_id=int(payload["user_id"]),
-                    college_id=payload.get("college_id"),
-                    type=str(payload.get("type", "SYSTEM")),
-                    title=str(payload.get("title", "系统通知"))[:200],
-                    content=str(payload.get("content", ""))[:1000],
-                    related_id=payload.get("related_id"),
-                    related_type=payload.get("related_type"),
-                    source_task_key=task_key,
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(notification)
-                await session.flush()
-                await session.commit()
-                hub = getattr(self.app.state, "notification_hub", None)
-                if hub is not None:
-                    await hub.publish(
-                        notification.user_id,
-                        {
-                            "id": notification.id,
-                            "userId": notification.user_id,
-                            "type": notification.type,
-                            "title": notification.title,
-                            "content": notification.content,
-                            "relatedId": notification.related_id,
-                            "relatedType": notification.related_type,
-                            "isRead": 0,
-                            "createdAt": notification.created_at,
-                        },
+                notification = None
+                if task_key is not None:
+                    notification = await session.scalar(
+                        select(Notification).where(Notification.source_task_key == task_key)
                     )
+                if notification is None:
+                    now = utcnow_naive()
+                    user_id = int(payload["user_id"])
+                    delivery_sequence = await next_delivery_sequence(session, user_id)
+                    notification = Notification(
+                        user_id=user_id,
+                        college_id=payload.get("college_id"),
+                        type=str(payload.get("type", "SYSTEM")),
+                        title=str(payload.get("title", "系统通知"))[:200],
+                        content=str(payload.get("content", ""))[:1000],
+                        related_id=payload.get("related_id"),
+                        related_type=payload.get("related_type"),
+                        source_task_key=task_key,
+                        delivery_sequence=delivery_sequence,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(notification)
+                    await session.flush()
+                    await session.commit()
+                message = {
+                    "eventType": "notification",
+                    "id": notification.id,
+                    "userId": notification.user_id,
+                    "deliverySequence": notification.delivery_sequence,
+                    "type": notification.type,
+                    "title": notification.title,
+                    "content": notification.content,
+                    "relatedId": notification.related_id,
+                    "relatedType": notification.related_type,
+                    "isRead": 0,
+                    # Redis Pub/Sub carries only a wake-up hint; SSE reads the
+                    # committed row in sequence order from MySQL.
+                    "createdAt": notification.created_at.isoformat(),
+                }
+                relay = getattr(self.app.state, "notification_relay", None)
+                if relay is not None:
+                    await relay.publish(notification.user_id, message)
+                else:
+                    hub = getattr(self.app.state, "notification_hub", None)
+                    if hub is not None:
+                        await hub.publish(notification.user_id, message)
+            return
+
+        if task_type == "MAINTENANCE_DUE":
+            plan_id = int(payload["plan_id"])
+            due_date = date.fromisoformat(str(payload["due_date"]))
+            async with factory() as session:
+                async with session.begin():
+                    plan = await session.scalar(
+                        select(DeviceMaintenancePlan)
+                        .options(
+                            selectinload(DeviceMaintenancePlan.device).selectinload(Device.lab),
+                            selectinload(DeviceMaintenancePlan.device).selectinload(Device.college),
+                        )
+                        .where(DeviceMaintenancePlan.id == plan_id)
+                        .with_for_update()
+                    )
+                    if (
+                        plan is None
+                        or not plan.active
+                        or plan.due_date != due_date
+                        or plan.due_notice_sent_at is not None
+                    ):
+                        return
+
+                    now = utcnow_naive()
+                    plan.due_notice_sent_at = now
+                    candidate_manager_ids = {
+                        int(user_id)
+                        for user_id in (
+                            plan.device.lab.manager_id if plan.device.lab else None,
+                            plan.device.college.manager_id if plan.device.college else None,
+                        )
+                        if user_id is not None
+                    }
+                    manager_ids: set[int] = set()
+                    if candidate_manager_ids:
+                        manager_ids = set(
+                            (
+                                await session.scalars(
+                                    select(User.id).where(
+                                        User.id.in_(candidate_manager_ids),
+                                        User.status == 1,
+                                    )
+                                )
+                            ).all()
+                        )
+                    if not manager_ids:
+                        manager_ids = set(
+                            (
+                                await session.scalars(
+                                    select(User.id)
+                                    .join(User.roles)
+                                    .where(Role.role_code == "SYS_ADMIN", User.status == 1)
+                                )
+                            ).all()
+                        )
+
+                    impacted = []
+                    if plan.plan_type in {"CALIBRATION", "SAFETY_CHECK"}:
+                        impacted = list(
+                            (
+                                await session.execute(
+                                    select(Reservation.id, Reservation.user_id).where(
+                                        Reservation.device_id == plan.device_id,
+                                        Reservation.status.in_(("APPROVED", "IN_USE")),
+                                        Reservation.end_date > due_date,
+                                    )
+                                )
+                            ).all()
+                        )
+                    device_name = plan.device.name
+                    aggregate_key = f"maintenance:{plan.id}:due:{due_date.isoformat()}"
+
+                    async def enqueue_once(
+                        notification_key: str,
+                        user_id: int,
+                        title: str,
+                        content: str,
+                    ) -> None:
+                        existing = await session.scalar(
+                            select(OutboxTask.id).where(OutboxTask.task_key == notification_key)
+                        )
+                        if existing is None:
+                            session.add(
+                                OutboxTask(
+                                    task_key=notification_key,
+                                    task_type="NOTIFICATION",
+                                    aggregate_key=aggregate_key,
+                                    college_id=plan.college_id,
+                                    payload={
+                                        "user_id": user_id,
+                                        "college_id": plan.college_id,
+                                        "type": "MAINTENANCE_DUE",
+                                        "title": title,
+                                        "content": content,
+                                        "related_id": plan.id,
+                                        "related_type": "MAINTENANCE_PLAN",
+                                    },
+                                    execute_at=now,
+                                )
+                            )
+
+                    for user_id in manager_ids:
+                        await enqueue_once(
+                            f"maintenance:manager:{plan.id}:{due_date.isoformat()}:{user_id}",
+                            user_id,
+                            "设备维护/校准已到期",
+                            (
+                                f"设备“{device_name}”的维护计划“{plan.title}”已到期。"
+                                f"有 {len(impacted)} 条预约不会自动取消；"
+                                "维护逾期后交接/使用将被阻止，"
+                                "请联系相关用户处理。"
+                                if impacted
+                                else (
+                                    f"设备“{device_name}”的维护计划“{plan.title}”已到期，"
+                                    "请记录完成情况。"
+                                )
+                            ),
+                        )
+                    for reservation_id, user_id in impacted:
+                        await enqueue_once(
+                            f"maintenance:impact:{plan.id}:{reservation_id}:{due_date.isoformat()}",
+                            int(user_id),
+                            "预约受维护到期影响",
+                            (
+                                f"设备“{device_name}”的{plan.title}已到期。预约 #{reservation_id}"
+                                "不会自动取消；若维护逾期，交接/使用将被阻止，请联系负责人处理。"
+                            ),
+                        )
             return
 
         if task_type == "REPAIR_SLA_REMINDER":
@@ -773,6 +1052,96 @@ class OutboxWorker:
                                 execute_at=now,
                             )
                         )
+                        await session.flush()
+                        continue
+                    candidate_user = await session.scalar(
+                        select(User)
+                        .options(selectinload(User.roles).selectinload(Role.permissions))
+                        .where(User.id == candidate.user_id)
+                    )
+                    ineligible_reason: str | None = None
+                    if candidate_user is None or candidate_user.status != 1:
+                        ineligible_reason = "账号已停用或不存在"
+                    elif candidate_user.college_id != device.college_id:
+                        ineligible_reason = "当前账号不属于设备所在学院"
+                    elif (
+                        candidate_user.booking_blocked_until is not None
+                        and candidate_user.booking_blocked_until > now
+                    ):
+                        ineligible_reason = "当前信用状态暂时不能发起预约"
+                    else:
+                        candidate_principal = Principal(
+                            user_id=candidate_user.id,
+                            username=candidate_user.username,
+                            college_id=candidate_user.college_id,
+                            roles=tuple(role.role_code for role in candidate_user.roles),
+                            token_type="access",
+                            token_id=f"waitlist:{candidate.id}",
+                            permissions=tuple(
+                                sorted(
+                                    {
+                                        permission.permission_code
+                                        for role in candidate_user.roles
+                                        for permission in role.permissions
+                                    }
+                                )
+                            ),
+                        )
+                        service = ReservationService(session, candidate_principal)
+                        try:
+                            preflight = await service.preflight(
+                                ReservationPlanRequest(
+                                    device_id=device_id,
+                                    start_date=reservation_date,
+                                    end_date=reservation_date,
+                                    purpose=candidate.purpose,
+                                    purpose_category=candidate.purpose_category,
+                                    project_reference=candidate.project_reference,
+                                )
+                            )
+                            if (
+                                preflight.conflicts
+                                or reservation_date not in preflight.available_dates
+                            ):
+                                ineligible_reason = (
+                                    preflight.conflicts[0].reason
+                                    if preflight.conflicts
+                                    else "该日期当前不可预约"
+                                )
+                            elif preflight.safety_required and not preflight.safety_acknowledged:
+                                ineligible_reason = "尚未阅读并确认设备安全须知"
+                            elif (
+                                preflight.qualification_required
+                                and not preflight.qualification_approved
+                            ):
+                                ineligible_reason = "尚未通过该设备的使用资质审核"
+                        except ApiError as exc:
+                            ineligible_reason = exc.message
+                    if ineligible_reason is not None:
+                        candidate.status = "SKIPPED"
+                        candidate.notified_at = now
+                        session.add(
+                            OutboxTask(
+                                task_key=f"notification:waitlist:{candidate.id}:ineligible:{reservation_date.isoformat()}",
+                                task_type="NOTIFICATION",
+                                aggregate_key=f"waitlist:{device_id}:{reservation_date.isoformat()}",
+                                college_id=candidate.college_id,
+                                payload={
+                                    "user_id": candidate.user_id,
+                                    "college_id": candidate.college_id,
+                                    "type": "WAITLIST_SKIPPED",
+                                    "title": "候补资格已跳过",
+                                    "content": (
+                                        f"设备 {reservation_date.isoformat()} 的候补无法继续："
+                                        f"{ineligible_reason}。系统已递补下一位。"
+                                    ),
+                                    "related_id": candidate.id,
+                                    "related_type": "WAITLIST",
+                                },
+                                execute_at=now,
+                            )
+                        )
+                        await session.flush()
                         continue
                     expires_at = now + timedelta(hours=24)
                     offer = ReservationWaitlistOffer(
@@ -819,6 +1188,26 @@ class OutboxWorker:
                         )
                     )
                     break
+                else:
+                    # Keep draining large invalid queues in bounded batches;
+                    # otherwise the 101st eligible user can remain stranded
+                    # until an unrelated reservation event enqueues promotion.
+                    session.add(
+                        OutboxTask(
+                            task_key=(
+                                f"waitlist:promote:continue:{device_id}:"
+                                f"{reservation_date.isoformat()}:{uuid4().hex}"
+                            ),
+                            task_type="WAITLIST_PROMOTE",
+                            aggregate_key=f"waitlist:{device_id}:{reservation_date.isoformat()}",
+                            college_id=device.college_id,
+                            payload={
+                                "device_id": device_id,
+                                "reservation_date": reservation_date.isoformat(),
+                            },
+                            execute_at=now,
+                        )
+                    )
                 await session.commit()
             return
 
@@ -1003,7 +1392,7 @@ class OutboxWorker:
                     return
                 user = await session.scalar(
                     select(User)
-                    .options(selectinload(User.roles))
+                    .options(selectinload(User.roles).selectinload(Role.permissions))
                     .where(User.id == task.requester_id)
                 )
                 if user is None:
@@ -1018,6 +1407,15 @@ class OutboxWorker:
                     roles=tuple(role.role_code for role in user.roles),
                     token_type="access",
                     token_id=f"export-{task.id}",
+                    permissions=tuple(
+                        sorted(
+                            {
+                                permission.permission_code
+                                for role in user.roles
+                                for permission in role.permissions
+                            }
+                        )
+                    ),
                 )
                 try:
                     root = Path(self.app.state.settings.upload_dir).resolve() / "exports"
@@ -1121,3 +1519,199 @@ class OutboxWorker:
         metrics = getattr(self.app.state, "metrics", None)
         if metrics is not None:
             metrics.increment(name, labels=labels)
+
+    def _set_active_tasks(self, count: int) -> None:
+        metrics = getattr(self.app.state, "metrics", None)
+        if metrics is not None:
+            metrics.set_gauge("outbox_worker_active_tasks", count)
+
+    async def _reconcile_knowledge_builds(self) -> None:
+        from app.ai.knowledge_build import reconcile_knowledge_build_jobs
+
+        factory = await self._session_factory()
+        recovered = await reconcile_knowledge_build_jobs(factory, self.app.state.settings)
+        if recovered:
+            logger.warning("knowledge build deliveries recovered count=%s", recovered)
+
+    async def _sample_knowledge_build_backlog(self) -> None:
+        factory = await self._session_factory()
+        now = utcnow_naive()
+        recent_window_start = now - timedelta(minutes=5)
+        async with factory() as session:
+            rows = (
+                await session.execute(
+                    select(KnowledgeBuildJob.status, func.count())
+                    .where(
+                        KnowledgeBuildJob.status.in_(
+                            [
+                                "QUEUED",
+                                "PROCESSING",
+                                "RETRYING",
+                                "COMPLETED",
+                                "FAILED",
+                                "CANCELLED",
+                                "SKIPPED",
+                            ]
+                        )
+                    )
+                    .group_by(KnowledgeBuildJob.status)
+                )
+            ).all()
+            pending_outbox = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(OutboxTask)
+                    .where(
+                        OutboxTask.task_type == "AI_KNOWLEDGE_BUILD_DISPATCH",
+                        OutboxTask.status.in_(["PENDING", "PROCESSING"]),
+                    )
+                )
+                or 0
+            )
+            oldest_queued_at = await session.scalar(
+                select(func.min(KnowledgeBuildJob.queued_at)).where(
+                    KnowledgeBuildJob.status == "QUEUED"
+                )
+            )
+            pending_build_job_ids = select(OutboxTask.payload["job_id"].as_string()).where(
+                OutboxTask.task_type == "AI_KNOWLEDGE_BUILD_DISPATCH",
+                OutboxTask.status == "PENDING",
+            )
+            oldest_pending_outbox_at = await session.scalar(
+                select(func.min(KnowledgeBuildJob.queued_at)).where(
+                    KnowledgeBuildJob.id.in_(pending_build_job_ids),
+                    KnowledgeBuildJob.status == "QUEUED",
+                )
+            )
+            oldest_processing_outbox_at = await session.scalar(
+                select(func.min(OutboxTask.claimed_at)).where(
+                    OutboxTask.task_type == "AI_KNOWLEDGE_BUILD_DISPATCH",
+                    OutboxTask.status == "PROCESSING",
+                )
+            )
+            order_waiters = int(
+                await session.scalar(
+                    select(func.count()).select_from(KnowledgeBuildJob).where(
+                        KnowledgeBuildJob.status == "QUEUED",
+                        KnowledgeBuildJob.stage == "WAITING_ORDER",
+                    )
+                )
+                or 0
+            )
+            recent_completed = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(KnowledgeBuildJob)
+                    .where(
+                        KnowledgeBuildJob.status == "COMPLETED",
+                        KnowledgeBuildJob.completed_at >= recent_window_start,
+                    )
+                )
+                or 0
+            )
+            recent_failed = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(KnowledgeBuildJob)
+                    .where(
+                        KnowledgeBuildJob.status == "FAILED",
+                        KnowledgeBuildJob.completed_at >= recent_window_start,
+                    )
+                )
+                or 0
+            )
+        metrics = getattr(self.app.state, "metrics", None)
+        if metrics is None:
+            return
+        counts = {str(status).lower(): int(count) for status, count in rows}
+        for status in (
+            "queued",
+            "processing",
+            "retrying",
+            "completed",
+            "failed",
+            "cancelled",
+            "skipped",
+        ):
+            metrics.set_gauge(
+                "ai_knowledge_build_jobs",
+                counts.get(status, 0),
+                labels={"status": status},
+            )
+        metrics.set_gauge("ai_knowledge_build_outbox_pending", pending_outbox)
+        metrics.set_gauge("ai_knowledge_build_order_waiters", order_waiters)
+        metrics.set_gauge("ai_knowledge_build_completed_last_5m", recent_completed)
+        metrics.set_gauge("ai_knowledge_build_failed_last_5m", recent_failed)
+        metrics.set_gauge(
+            "ai_knowledge_build_completed_per_minute_5m", recent_completed / 5
+        )
+        terminal_recent = recent_completed + recent_failed
+        metrics.set_gauge(
+            "ai_knowledge_build_failure_ratio_5m",
+            recent_failed / terminal_recent if terminal_recent else 0,
+        )
+        metrics.set_gauge(
+            "ai_knowledge_build_oldest_wait_seconds",
+            max(0.0, (now - oldest_queued_at).total_seconds()) if oldest_queued_at else 0,
+        )
+        metrics.set_gauge(
+            "ai_knowledge_build_outbox_oldest_seconds",
+            max(0.0, (now - oldest_pending_outbox_at).total_seconds())
+            if oldest_pending_outbox_at
+            else 0,
+            labels={"status": "pending"},
+        )
+        metrics.set_gauge(
+            "ai_knowledge_build_outbox_oldest_seconds",
+            max(0.0, (now - oldest_processing_outbox_at).total_seconds())
+            if oldest_processing_outbox_at
+            else 0,
+            labels={"status": "processing"},
+        )
+
+        from redis.asyncio import Redis
+
+        broker = None
+        try:
+            broker = Redis.from_url(
+                self.app.state.settings.celery_broker_url,
+                socket_connect_timeout=1,
+                socket_timeout=1,
+            )
+            ready = int(await broker.llen("knowledge-build"))
+            # Kombu's Redis transport stores all reserved/ETA task delivery tags here.
+            unacked = int(await broker.zcard("unacked_index"))
+            oldest_unacked = await broker.zrange("unacked_index", 0, 0, withscores=True)
+            unacked_age = (
+                max(0.0, time.time() - float(oldest_unacked[0][1])) if oldest_unacked else 0
+            )
+            metrics.set_gauge(
+                "ai_celery_queue_messages",
+                ready,
+                labels={"queue": "knowledge-build", "state": "ready"},
+            )
+            metrics.set_gauge(
+                "ai_celery_queue_messages",
+                unacked,
+                labels={"queue": "knowledge-build", "state": "unacked"},
+            )
+            metrics.set_gauge(
+                "ai_celery_queue_depth", ready + unacked, labels={"queue": "knowledge-build"}
+            )
+            metrics.set_gauge(
+                "ai_celery_queue_oldest_unacked_seconds",
+                unacked_age,
+                labels={"queue": "knowledge-build"},
+            )
+            metrics.set_gauge("ai_celery_queue_metrics_available", 1)
+        except Exception as exc:
+            metrics.set_gauge("ai_celery_queue_metrics_available", 0)
+            logger.warning("Celery queue metrics unavailable error_type=%s", type(exc).__name__)
+        finally:
+            if broker is not None:
+                try:
+                    await broker.aclose()
+                except Exception as exc:
+                    logger.debug(
+                        "Celery metrics Redis close failed error_type=%s", type(exc).__name__
+                    )

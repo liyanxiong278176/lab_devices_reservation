@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import uuid4
 
@@ -23,14 +23,16 @@ from app.api.v2.schemas import (
     ReservationDeviceSuggestion,
     ReservationPage,
     ReservationPlanRequest,
+    ReservationPolicySnapshot,
     ReservationPreflightData,
     WaitlistConfirmationData,
     WaitlistData,
 )
 from app.application.lifecycle import append_audit, change_device_status
+from app.application.reservation_policies import resolve_reservation_policy
 from app.auth.security import Principal, college_scope
 from app.core.errors import ApiError
-from app.domain.reservation import ACTIVE_RESERVATION_STATUSES, RESERVATION_TRANSITIONS
+from app.domain.reservation import ACTIVE_RESERVATION_STATUSES
 from app.infrastructure.cache.cache import CacheService
 from app.infrastructure.cache.invalidation import enqueue_catalog_cache_bump
 from app.infrastructure.db.models import (
@@ -40,6 +42,8 @@ from app.infrastructure.db.models import (
     DeviceDocument,
     DeviceDocumentAcknowledgement,
     DeviceHandover,
+    DeviceMaintenancePlan,
+    DeviceMaintenanceRecord,
     DeviceQualification,
     IdempotencyKey,
     Lab,
@@ -60,6 +64,12 @@ from app.infrastructure.db.pagination import delayed_page_ids, page_metadata, pa
 OPEN_REPAIR_STATUSES = ("PENDING", "PROCESSING", "RESOLVED")
 
 
+@dataclass(frozen=True)
+class DateBlock:
+    reason: str
+    is_maintenance: bool = False
+
+
 def utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
@@ -74,20 +84,43 @@ def request_hash(payload: ReservationPlanRequest) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _segments(values: Iterable[date]) -> list[list[date]]:
-    ordered = sorted(set(values))
-    if not ordered:
-        return []
-    result: list[list[date]] = [[ordered[0]]]
-    for current in ordered[1:]:
-        if current == result[-1][-1] + timedelta(days=1):
-            result[-1].append(current)
-        else:
-            result.append([current])
-    return result
+async def _failed_maintenance_plan_ids(
+    session: AsyncSession,
+    plan_ids: list[int],
+) -> set[int]:
+    """Return plans whose latest recorded maintenance result is FAILED."""
+    if not plan_ids:
+        return set()
+    ranked_records = (
+        select(
+            DeviceMaintenanceRecord.plan_id.label("plan_id"),
+            DeviceMaintenanceRecord.result.label("result"),
+            func.row_number()
+            .over(
+                partition_by=DeviceMaintenanceRecord.plan_id,
+                order_by=(
+                    DeviceMaintenanceRecord.created_at.desc(),
+                    DeviceMaintenanceRecord.id.desc(),
+                ),
+            )
+            .label("record_rank"),
+        )
+        .where(DeviceMaintenanceRecord.plan_id.in_(plan_ids))
+        .subquery()
+    )
+    return set(
+        (
+            await session.scalars(
+                select(ranked_records.c.plan_id).where(
+                    ranked_records.c.record_rank == 1,
+                    ranked_records.c.result == "FAILED",
+                )
+            )
+        ).all()
+    )
 
 
-def _device_summary(device: Device) -> DeviceSummary:
+def _device_summary(device: Device, maintenance_warning: str | None = None) -> DeviceSummary:
     return DeviceSummary(
         id=device.id,
         name=device.name,
@@ -115,6 +148,7 @@ def _device_summary(device: Device) -> DeviceSummary:
         requires_safety_ack=device.requires_safety_ack,
         requires_qualification=device.requires_qualification,
         max_advance_days=device.max_advance_days,
+        maintenance_warning=maintenance_warning,
     )
 
 
@@ -187,8 +221,6 @@ class ReservationService:
         session: AsyncSession,
         principal: Principal,
         max_days: int = 31,
-        user_active_limit: int = 10,
-        user_days_limit: int = 31,
         credit_block_threshold: int = 60,
         credit_block_days: int = 7,
         advance_days: int = 30,
@@ -198,8 +230,6 @@ class ReservationService:
         self.session = session
         self.principal = principal
         self.max_days = max_days
-        self.user_active_limit = user_active_limit
-        self.user_days_limit = user_days_limit
         self.credit_block_threshold = credit_block_threshold
         self.credit_block_days = credit_block_days
         self.advance_days = advance_days
@@ -214,15 +244,22 @@ class ReservationService:
         reservation: Reservation,
         *,
         status: str,
+        reservation_is_new: bool = False,
         now: datetime | None = None,
         note: str | None = None,
     ) -> DeviceHandover:
         timestamp = now or utcnow_naive()
-        handover = await self.session.scalar(
-            select(DeviceHandover)
-            .where(DeviceHandover.reservation_id == reservation.id)
-            .with_for_update()
-        )
+        # A newly-created reservation cannot already have a handover row.
+        # Avoid locking a missing key in the unique reservation_id index:
+        # under InnoDB REPEATABLE READ, concurrent missing-row locking reads
+        # can take compatible gap locks and then deadlock when both insert.
+        handover = None
+        if not reservation_is_new:
+            handover = await self.session.scalar(
+                select(DeviceHandover)
+                .where(DeviceHandover.reservation_id == reservation.id)
+                .with_for_update()
+            )
         if handover is None:
             handover = DeviceHandover(
                 reservation_id=reservation.id,
@@ -293,6 +330,8 @@ class ReservationService:
         page_size: int = 20,
         include_meta: bool = False,
     ) -> tuple[list[DeviceSummary], int] | tuple[list[DeviceSummary], int, int, bool]:
+        if not self.principal.has_permission("device:read"):
+            raise ApiError("FORBIDDEN", "当前账号没有查看设备的权限", 403)
         page_offset(page, page_size)
         if self.cache is not None and not self.principal.is_system_admin:
             scope = self._college_id()
@@ -372,7 +411,13 @@ class ReservationService:
             conditions.append(Device.college_id == scope)
         if search:
             like = f"%{search.strip()}%"
-            conditions.append(or_(Device.name.like(like), Device.model.like(like)))
+            conditions.append(
+                or_(
+                    Device.name.like(like),
+                    Device.model.like(like),
+                    Device.asset_code.like(like),
+                )
+            )
         if lab_id is not None:
             conditions.append(Device.lab_id == lab_id)
         if status:
@@ -412,18 +457,22 @@ class ReservationService:
             .order_by(Device.id.desc())
         )
         devices = list((await self.session.scalars(stmt)).all())
+        maintenance_warnings = await self._maintenance_warnings([device.id for device in devices])
         pages, truncated = page_metadata(total, page_size)
         return (
-            [_device_summary(device) for device in devices],
+            [_device_summary(device, maintenance_warnings.get(device.id)) for device in devices],
             total,
             pages,
             truncated,
         )
 
     async def get_device(self, device_id: int) -> DeviceDetail:
+        if not self.principal.has_permission("device:read"):
+            raise ApiError("FORBIDDEN", "当前账号没有查看设备的权限", 403)
         device = await self._load_device(device_id)
+        warnings = await self._maintenance_warnings([device.id])
         return DeviceDetail(
-            **_device_summary(device).model_dump(),
+            **_device_summary(device, warnings.get(device.id)).model_dump(),
             description=device.description,
             location=device.lab.location if device.lab else None,
         )
@@ -434,6 +483,8 @@ class ReservationService:
         start_date: date,
         end_date: date,
     ) -> list[AvailabilityDay]:
+        if not self.principal.has_permission("device:read"):
+            raise ApiError("FORBIDDEN", "当前账号没有查看设备的权限", 403)
         if end_date < start_date:
             raise ApiError("DATE_RANGE_INVALID", "结束日期不能早于开始日期", 422)
         if (end_date - start_date).days + 1 > self.max_days:
@@ -446,7 +497,7 @@ class ReservationService:
                 for value in range(start_date.toordinal(), end_date.toordinal() + 1)
             ],
         )
-        blackout = await self._blocked_dates(
+        blocked_dates = await self._blocked_date_details(
             device,
             [
                 date.fromordinal(value)
@@ -458,21 +509,29 @@ class ReservationService:
         current = start_date
         while current <= end_date:
             row = occupied.get(current)
+            date_block = blocked_dates.get(current)
             result.append(
                 AvailabilityDay(
                     date=current,
-                    available=row is None and current not in blackout and not blocked,
+                    available=row is None and date_block is None and not blocked,
                     reservation_id=row[0] if row else None,
                     status=(
                         row[1]
                         if row
                         else (
-                            "BLACKOUT"
-                            if current in blackout
+                            "MAINTENANCE_RESTRICTION"
+                            if date_block is not None and date_block.is_maintenance
+                            else "BLACKOUT"
+                            if date_block is not None
                             else device.status
                             if blocked
                             else None
                         )
+                    ),
+                    reason=(
+                        date_block.reason
+                        if date_block is not None
+                        else (f"设备状态为 {device.status}" if blocked else None)
                     ),
                 )
             )
@@ -480,9 +539,24 @@ class ReservationService:
         return result
 
     async def preflight(self, plan: ReservationPlanRequest) -> ReservationPreflightData:
+        if not self.principal.has_permission("reservation:create"):
+            raise ApiError("FORBIDDEN", "当前账号没有创建预约的权限", 403)
         device = await self._load_device(plan.device_id)
         dates = plan.requested_dates()
-        self._validate_dates(device, dates)
+        policy = await resolve_reservation_policy(
+            self.session,
+            self.principal,
+            device,
+            default_max_booking_days=self.max_days,
+            default_student_advance_days=self.advance_days,
+            default_manager_advance_days=self.manager_advance_days,
+        )
+        self._validate_dates(
+            dates,
+            policy.max_booking_days,
+            policy.max_advance_days,
+            plan.reservation_segments(),
+        )
         access = await self._access_snapshot(device, coverage_until=max(dates))
         occupied = await self._occupied(device.id, dates)
         blackout = await self._blocked_dates(device, dates)
@@ -517,13 +591,23 @@ class ReservationService:
             ) = await self._reservation_suggestions(
                 device,
                 dates,
+                max_advance_days=policy.max_advance_days,
             )
         return ReservationPreflightData(
-            device=_device_summary(device),
+            device=_device_summary(
+                device,
+                (await self._maintenance_warnings([device.id])).get(device.id),
+            ),
             requested_dates=dates,
             available_dates=[current for current in dates if current not in conflict_dates],
             conflicts=conflicts,
             all_available=not conflicts,
+            effective_policy=ReservationPolicySnapshot(
+                user_category=policy.user_category,  # type: ignore[arg-type]
+                max_booking_days=policy.max_booking_days,
+                max_advance_days=policy.max_advance_days,
+                approval_required=policy.approval_required,
+            ),
             safety_required=access["safety_required"],
             safety_acknowledged=access["safety_acknowledged"],
             qualification_required=access["qualification_required"],
@@ -534,30 +618,32 @@ class ReservationService:
             similar_device_suggestions=similar_device_suggestions,
         )
 
-    def _validate_dates(self, device: Device, dates: list[date]) -> None:
+    def _validate_dates(
+        self,
+        dates: list[date],
+        max_booking_days: int,
+        max_advance_days: int,
+        reservation_segments: list[list[date]],
+    ) -> None:
         if not dates:
             raise ApiError("DATE_RANGE_EMPTY", "至少选择一个预约日期", 422)
-        if len(dates) > min(self.max_days, device.max_reservation_days):
+        longest_contiguous_segment = max(map(len, reservation_segments))
+        if longest_contiguous_segment > max_booking_days:
             raise ApiError(
                 "DATE_RANGE_TOO_LARGE",
-                f"该设备单次最多预约 {min(self.max_days, device.max_reservation_days)} 天",
+                f"该设备单次连续预约最多 {max_booking_days} 天",
                 422,
             )
         if min(dates) < date.today():
             raise ApiError("DATE_IN_PAST", "不能预约过去的日期", 422)
-        if not self.principal.is_system_admin:
-            default_limit = (
-                self.manager_advance_days if self.principal.is_lab_admin else self.advance_days
+        latest_allowed = date.today() + timedelta(days=max_advance_days)
+        if max(dates) > latest_allowed:
+            raise ApiError(
+                "DATE_TOO_FAR",
+                f"该设备最多只能提前 {max_advance_days} 个自然日预约",
+                422,
+                data={"latest_allowed_date": latest_allowed},
             )
-            advance_limit = device.max_advance_days or default_limit
-            latest_allowed = date.today() + timedelta(days=advance_limit)
-            if max(dates) > latest_allowed:
-                raise ApiError(
-                    "DATE_TOO_FAR",
-                    f"该设备最多只能提前 {advance_limit} 个自然日预约",
-                    422,
-                    data={"latest_allowed_date": latest_allowed},
-                )
 
     async def _access_snapshot(
         self,
@@ -674,15 +760,13 @@ class ReservationService:
         self,
         device: Device,
         requested_dates: list[date],
+        *,
+        max_advance_days: int,
     ) -> tuple[list[ReservationDateSuggestion], list[ReservationDeviceSuggestion]]:
         if not requested_dates:
             return [], []
         today = date.today()
-        default_advance = (
-            self.manager_advance_days if self.principal.is_lab_admin else self.advance_days
-        )
-        advance_limit = device.max_advance_days or default_advance
-        horizon = today + timedelta(days=advance_limit)
+        horizon = today + timedelta(days=max_advance_days)
         duration = len(requested_dates)
         earliest = max(today + timedelta(days=1), max(requested_dates) + timedelta(days=1))
         last_start = horizon - timedelta(days=duration - 1)
@@ -748,34 +832,180 @@ class ReservationService:
         device: Device,
         dates: list[date],
     ) -> dict[date, str]:
+        details = await self._blocked_date_details(device, dates)
+        return {blocked_date: block.reason for blocked_date, block in details.items()}
+
+    async def _blocked_date_details(
+        self,
+        device: Device,
+        dates: list[date],
+    ) -> dict[date, DateBlock]:
         if not dates:
             return {}
+        return (
+            await self._blocked_dates_for_devices(
+                {device.id: device},
+                {device.id: set(dates)},
+            )
+        ).get(device.id, {})
+
+    async def _blocked_dates_for_devices(
+        self,
+        devices_by_id: dict[int, Device],
+        dates_by_device: dict[int, set[date]],
+    ) -> dict[int, dict[date, DateBlock]]:
+        """Resolve blackout and maintenance restrictions with bounded query count."""
+        requested_devices = {
+            device_id: devices_by_id[device_id]
+            for device_id, dates in dates_by_device.items()
+            if dates and device_id in devices_by_id
+        }
+        if not requested_devices:
+            return {}
+
+        all_dates = set().union(*(dates_by_device[device_id] for device_id in requested_devices))
+        device_ids = set(requested_devices)
+        lab_ids = {
+            device.lab_id
+            for device in requested_devices.values()
+            if device.lab_id is not None
+        }
+        college_ids = {device.college_id for device in requested_devices.values()}
         scope_filters = [
             and_(
                 ReservationBlackout.scope_type == "DEVICE",
-                ReservationBlackout.scope_id == device.id,
+                ReservationBlackout.scope_id.in_(device_ids),
             ),
             and_(
                 ReservationBlackout.scope_type == "LAB",
-                ReservationBlackout.scope_id == device.lab_id,
+                ReservationBlackout.scope_id.in_(lab_ids),
             ),
             and_(
                 ReservationBlackout.scope_type == "COLLEGE",
-                ReservationBlackout.scope_id == device.college_id,
+                ReservationBlackout.scope_id.in_(college_ids),
             ),
         ]
-        rows = list(
+        blackout_rows = list(
             (
                 await self.session.execute(
-                    select(ReservationBlackout.blocked_date, ReservationBlackout.reason).where(
+                    select(
+                        ReservationBlackout.scope_type,
+                        ReservationBlackout.scope_id,
+                        ReservationBlackout.blocked_date,
+                        ReservationBlackout.reason,
+                    ).where(
                         ReservationBlackout.active.is_(True),
-                        ReservationBlackout.blocked_date.in_(dates),
+                        ReservationBlackout.blocked_date.in_(all_dates),
                         or_(*scope_filters),
                     )
                 )
             ).all()
         )
-        return {row[0]: str(row[1]) for row in rows}
+        blackout_by_scope_date = {
+            (row.scope_type, row.scope_id, row.blocked_date): DateBlock(str(row.reason))
+            for row in blackout_rows
+        }
+
+        plans = list(
+            (
+                await self.session.scalars(
+                    select(DeviceMaintenancePlan).where(
+                        DeviceMaintenancePlan.device_id.in_(device_ids),
+                    )
+                )
+            ).all()
+        )
+        plans_by_device: dict[int, list[DeviceMaintenancePlan]] = {}
+        for plan in plans:
+            plans_by_device.setdefault(plan.device_id, []).append(plan)
+        failed_plan_ids = await _failed_maintenance_plan_ids(
+            self.session, [plan.id for plan in plans]
+        )
+
+        blocked_by_device: dict[int, dict[date, DateBlock]] = {}
+        today = date.today()
+        for device_id, device in requested_devices.items():
+            requested_dates = dates_by_device[device_id]
+            blocked: dict[date, DateBlock] = {}
+            for requested_date in requested_dates:
+                for scope_type, scope_id in (
+                    ("DEVICE", device.id),
+                    ("LAB", device.lab_id),
+                    ("COLLEGE", device.college_id),
+                ):
+                    if scope_id is None:
+                        continue
+                    reason = blackout_by_scope_date.get(
+                        (scope_type, scope_id, requested_date)
+                    )
+                    if reason is not None:
+                        blocked[requested_date] = reason
+                        break
+
+            critical_plans = [
+                plan
+                for plan in plans_by_device.get(device_id, [])
+                if plan.plan_type in {"CALIBRATION", "SAFETY_CHECK"}
+            ]
+            for plan in plans_by_device.get(device_id, []):
+                for requested_date in requested_dates:
+                    if plan.id in failed_plan_ids:
+                        blocked.setdefault(
+                            requested_date,
+                            DateBlock(f"{plan.title}未通过，设备暂不可预约", True),
+                        )
+                    elif plan.active and (
+                        plan.downtime_start is not None
+                        and plan.downtime_end is not None
+                        and plan.downtime_start <= requested_date <= plan.downtime_end
+                    ):
+                        blocked.setdefault(
+                            requested_date,
+                            DateBlock(f"维护停机：{plan.title}", True),
+                        )
+                    elif (
+                        plan.active
+                        and plan in critical_plans
+                        and today > plan.due_date
+                        and requested_date >= today
+                    ):
+                        blocked.setdefault(
+                            requested_date,
+                            DateBlock(f"{plan.title}已逾期，设备暂不可预约", True),
+                        )
+            blocked_by_device[device_id] = blocked
+        return blocked_by_device
+
+    async def _maintenance_warnings(self, device_ids: list[int]) -> dict[int, str]:
+        if not device_ids:
+            return {}
+        today = date.today()
+        plans = list(
+            (
+                await self.session.scalars(
+                    select(DeviceMaintenancePlan).where(
+                        DeviceMaintenancePlan.device_id.in_(device_ids),
+                    )
+                )
+            ).all()
+        )
+        if not plans:
+            return {}
+        failed_plan_ids = await _failed_maintenance_plan_ids(
+            self.session,
+            [plan.id for plan in plans],
+        )
+        warnings: dict[int, str] = {}
+        for plan in plans:
+            if plan.id in failed_plan_ids:
+                warnings.setdefault(plan.device_id, f"{plan.title}未通过，设备暂不可预约")
+            elif (
+                plan.active
+                and plan.plan_type in {"CALIBRATION", "SAFETY_CHECK"}
+                and today > plan.due_date
+            ):
+                warnings.setdefault(plan.device_id, f"{plan.title}已逾期，设备暂不可预约")
+        return warnings
 
     async def _validate_evidence_images(
         self,
@@ -804,7 +1034,8 @@ class ReservationService:
         assets = list(
             (
                 await self.session.scalars(
-                    select(UploadAsset).where(
+                    select(UploadAsset)
+                    .where(
                         UploadAsset.asset_token.in_(tokens),
                         UploadAsset.user_id == self.principal.user_id,
                         asset_scope,
@@ -960,6 +1191,8 @@ class ReservationService:
         purpose_category: str = "OTHER",
         project_reference: str | None = None,
     ) -> WaitlistData:
+        if not self.principal.has_permission("reservation:create"):
+            raise ApiError("FORBIDDEN", "当前账号没有加入候补的权限", 403)
         device = await self._load_device(device_id)
         if reservation_date < date.today():
             raise ApiError("DATE_IN_PAST", "不能排队过去的日期", 422)
@@ -1023,6 +1256,8 @@ class ReservationService:
         )
 
     async def list_waitlist(self) -> list[WaitlistData]:
+        if not self.principal.has_permission("reservation:read:own"):
+            raise ApiError("FORBIDDEN", "当前账号没有查看个人预约的权限", 403)
         conditions = [
             ReservationWaitlist.user_id == self.principal.user_id,
             ReservationWaitlist.status.in_(("WAITING", "OFFERED", "NOTIFIED")),
@@ -1075,6 +1310,8 @@ class ReservationService:
         ]
 
     async def cancel_waitlist(self, entry_id: int) -> None:
+        if not self.principal.has_permission("reservation:cancel"):
+            raise ApiError("FORBIDDEN", "当前账号没有取消候补的权限", 403)
         entry = await self.session.scalar(
             select(ReservationWaitlist)
             .where(
@@ -1110,6 +1347,8 @@ class ReservationService:
         await self.session.commit()
 
     async def confirm_waitlist_offer(self, entry_id: int) -> WaitlistConfirmationData:
+        if not self.principal.has_permission("reservation:create"):
+            raise ApiError("FORBIDDEN", "当前账号没有确认候补预约的权限", 403)
         entry = await self.session.scalar(
             select(ReservationWaitlist)
             .where(
@@ -1163,6 +1402,8 @@ class ReservationService:
         *,
         idempotency_key: str | None = None,
     ) -> ReservationCreateData:
+        if not self.principal.has_permission("reservation:create"):
+            raise ApiError("FORBIDDEN", "当前账号没有创建预约的权限", 403)
         if idempotency_key:
             if len(idempotency_key) > 128:
                 raise ApiError("IDEMPOTENCY_KEY_INVALID", "幂等键长度不能超过 128", 422)
@@ -1192,20 +1433,30 @@ class ReservationService:
                     403,
                     data={"blocked_until": user.booking_blocked_until},
                 )
-            active_count = int(
-                await self.session.scalar(
-                    select(func.count(Reservation.id)).where(
-                        Reservation.user_id == self.principal.user_id,
-                        Reservation.status.in_(ACTIVE_RESERVATION_STATUSES),
-                    )
-                )
-                or 0
+
+        # Serialize policy/blackout checks against a maintenance-plan write for
+        # the same device. The DB unique constraint on reservation day remains
+        # the final conflict guard.
+        device = await self._load_device(plan.device_id)
+        device = await self.session.scalar(
+            select(Device)
+            .options(
+                selectinload(Device.lab),
+                selectinload(Device.college),
+                selectinload(Device.category),
             )
-            if active_count >= self.user_active_limit:
-                raise ApiError("RESERVATION_LIMIT", "当前有效预约已达到上限", 409)
+            .where(Device.id == device.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if device is None:
+            raise ApiError("DEVICE_NOT_FOUND", "设备不存在或不属于当前学院", 404)
 
         preflight = await self.preflight(plan)
-        if preflight.conflicts and plan.commit_mode == "all_or_nothing":
+        continuous_request = plan.start_date is not None or plan.windows is not None
+        if preflight.conflicts and (
+            plan.commit_mode == "all_or_nothing" or continuous_request
+        ):
             raise ApiError(
                 "RESERVATION_CONFLICT",
                 "所选日期存在冲突，请查看冲突日期后重新提交",
@@ -1236,45 +1487,15 @@ class ReservationService:
             )
 
         explicit_batch = plan.dates is not None or plan.windows is not None
-        segments = _segments(selected)
-        active_limit = self.user_active_limit
-        if not self.principal.is_system_admin:
-            active_count = int(
-                await self.session.scalar(
-                    select(func.count(Reservation.id)).where(
-                        Reservation.user_id == self.principal.user_id,
-                        Reservation.status.in_(ACTIVE_RESERVATION_STATUSES),
-                    )
-                )
-                or 0
-            )
-            if active_count + len(segments) > active_limit:
-                raise ApiError(
-                    "RESERVATION_LIMIT",
-                    f"当前有效预约最多保留 {active_limit} 条",
-                    409,
-                )
-            active_days = int(
-                await self.session.scalar(
-                    select(func.count(ReservationItem.id))
-                    .join(Reservation, Reservation.id == ReservationItem.reservation_id)
-                    .where(
-                        Reservation.user_id == self.principal.user_id,
-                        Reservation.status.in_(ACTIVE_RESERVATION_STATUSES),
-                    )
-                )
-                or 0
-            )
-            if active_days + len(selected) > self.user_days_limit:
-                raise ApiError(
-                    "RESERVATION_DAY_LIMIT",
-                    f"当前有效预约累计最多保留 {self.user_days_limit} 天",
-                    409,
-                )
+        selected_set = set(selected)
+        segments = [
+            [current for current in requested if current in selected_set]
+            for requested in plan.reservation_segments()
+        ]
+        segments = [segment for segment in segments if segment]
         batch_id = uuid4().hex if explicit_batch or len(segments) > 1 else None
         created: list[ReservationData] = []
-        device = await self._load_device(plan.device_id)
-        status = "PENDING" if device.need_approval else "APPROVED"
+        status = "PENDING" if preflight.effective_policy.approval_required else "APPROVED"
         try:
             for segment in segments:
                 reservation_now = utcnow_naive()
@@ -1315,9 +1536,12 @@ class ReservationService:
                 ]
                 self.session.add(reservation)
                 await self.session.flush()
+                if status == "APPROVED":
+                    await self._enqueue_maintenance_impact_notifications(reservation)
                 await self._ensure_handover_record(
                     reservation,
                     status="PENDING",
+                    reservation_is_new=True,
                     now=reservation_now,
                 )
                 created.append(_reservation_data(reservation))
@@ -1422,6 +1646,8 @@ class ReservationService:
         status: str | None = None,
         handover_status: str | None = None,
     ) -> ReservationPage:
+        if not self.principal.has_permission("reservation:read:own"):
+            raise ApiError("FORBIDDEN", "当前账号没有查看个人预约的权限", 403)
         page_offset(page, page_size)
         base_conditions = [Reservation.user_id == self.principal.user_id]
         scope = self._college_id()
@@ -1489,9 +1715,15 @@ class ReservationService:
         return reservation
 
     async def _can_view(self, reservation: Reservation) -> bool:
-        if self.principal.is_system_admin or reservation.user_id == self.principal.user_id:
+        if reservation.user_id == self.principal.user_id:
+            return self.principal.has_permission("reservation:read:own") and (
+                self._college_id() is None or reservation.college_id == self._college_id()
+            )
+        if self.principal.is_system_admin:
             return self._college_id() is None or reservation.college_id == self._college_id()
-        return await self._can_manage_device(reservation.device)
+        return self.principal.has_permission(
+            "reservation:read:scope"
+        ) and await self._can_manage_device(reservation.device)
 
     async def _can_manage_device(self, device: Device) -> bool:
         if self.principal.is_system_admin:
@@ -1516,6 +1748,8 @@ class ReservationService:
 
     async def cancel(self, reservation_id: int) -> ReservationData:
         reservation = await self._load_reservation(reservation_id)
+        if not self.principal.has_permission("reservation:cancel"):
+            raise ApiError("FORBIDDEN", "当前账号没有取消预约的权限", 403)
         if reservation.user_id != self.principal.user_id and not self.principal.is_system_admin:
             raise ApiError("FORBIDDEN", "只能取消自己的预约", 403)
         if not await self._can_view(reservation):
@@ -1565,6 +1799,8 @@ class ReservationService:
         reason: str,
     ) -> ReservationData:
         reservation = await self._load_reservation(reservation_id)
+        if not self.principal.has_permission("reservation:handover"):
+            raise ApiError("FORBIDDEN", "当前账号没有处理交接异常的权限", 403)
         if not await self._can_manage_device(reservation.device):
             raise ApiError("FORBIDDEN", "只能处理自己负责范围内的预约", 403)
         if reservation.status != "APPROVED" or reservation.handover_status != "EXCEPTION":
@@ -1636,6 +1872,8 @@ class ReservationService:
         reason: str | None = None,
     ) -> ReservationData:
         reservation = await self._load_reservation(reservation_id)
+        if not self.principal.has_permission("reservation:approve"):
+            raise ApiError("FORBIDDEN", "当前账号没有审批预约的权限", 403)
         if not await self._can_manage_device(reservation.device):
             raise ApiError("FORBIDDEN", "只能审批自己负责实验室或学院的设备", 403)
         if reservation.status != "PENDING":
@@ -1647,6 +1885,19 @@ class ReservationService:
             "RETIRED",
         }:
             raise ApiError("DEVICE_UNAVAILABLE", "设备当前不可用，不能通过预约", 409)
+        if approve:
+            reserved_dates = [
+                reservation.start_date + timedelta(days=offset)
+                for offset in range((reservation.end_date - reservation.start_date).days + 1)
+            ]
+            blocked_dates = await self._blocked_dates(reservation.device, reserved_dates)
+            if blocked_dates:
+                first_date, reason = min(blocked_dates.items())
+                raise ApiError(
+                    "DEVICE_MAINTENANCE_RESTRICTION",
+                    f"预约日期 {first_date} 不可用：{reason}",
+                    409,
+                )
         next_status = "APPROVED" if approve else "REJECTED"
         values: dict[str, object] = {
             "status": next_status,
@@ -1663,6 +1914,7 @@ class ReservationService:
             raise ApiError("RESERVATION_STATE_CHANGED", "预约已被其他操作处理", 409)
         if approve:
             await self._ensure_handover_record(reservation, status="PENDING")
+            await self._enqueue_maintenance_impact_notifications(reservation)
         else:
             await self._set_handover_status(reservation, "CANCELLED")
         self._enqueue_approval_notification(
@@ -1715,7 +1967,7 @@ class ReservationService:
         unique_ids = list(dict.fromkeys(reservation_ids))
         if not unique_ids:
             raise ApiError("APPROVAL_EMPTY", "至少选择一条待审批预约", 422)
-        if not self.principal.is_lab_admin and not self.principal.is_system_admin:
+        if not self.principal.has_permission("reservation:approve"):
             raise ApiError("FORBIDDEN", "当前角色无审批权限", 403)
         reservations = list(
             (
@@ -1732,6 +1984,9 @@ class ReservationService:
         )
         if len(reservations) != len(unique_ids):
             raise ApiError("RESERVATION_NOT_FOUND", "部分预约不存在或已被删除", 404)
+        dates_by_reservation: dict[int, list[date]] = {}
+        dates_by_device: dict[int, set[date]] = {}
+        devices_by_id = {reservation.device.id: reservation.device for reservation in reservations}
         for reservation in reservations:
             if reservation.status != "PENDING":
                 raise ApiError("INVALID_RESERVATION_STATE", "批量审批中存在非待审批预约", 409)
@@ -1739,6 +1994,25 @@ class ReservationService:
                 raise ApiError("FORBIDDEN", "批量审批包含不在管理范围内的设备", 403)
             if reservation.device.status in {"MAINTENANCE", "DISABLED", "OFFLINE", "RETIRED"}:
                 raise ApiError("DEVICE_UNAVAILABLE", "批量审批中包含不可用设备", 409)
+            reserved_dates = [
+                reservation.start_date + timedelta(days=offset)
+                for offset in range((reservation.end_date - reservation.start_date).days + 1)
+            ]
+            dates_by_reservation[reservation.id] = reserved_dates
+            dates_by_device.setdefault(reservation.device.id, set()).update(reserved_dates)
+
+        blocked_by_device = await self._blocked_dates_for_devices(
+            devices_by_id,
+            dates_by_device,
+        )
+        for reservation in reservations:
+            blocked = blocked_by_device.get(reservation.device.id, {})
+            if any(day in blocked for day in dates_by_reservation[reservation.id]):
+                raise ApiError(
+                    "DEVICE_MAINTENANCE_RESTRICTION",
+                    f"预约 #{reservation.id} 的日期与维护/不可预约规则冲突，不能通过",
+                    409,
+                )
         now = utcnow_naive()
         for reservation in reservations:
             reservation.status = "APPROVED"
@@ -1773,11 +2047,14 @@ class ReservationService:
                 target_type="RESERVATION",
                 target_id=reservation.id,
             )
+        await self._enqueue_maintenance_impact_notifications_many(reservations)
         await self.session.commit()
         return len(reservations)
 
     async def violate(self, reservation_id: int, reason: str) -> ReservationData:
         reservation = await self._load_reservation(reservation_id)
+        if not self.principal.has_permission("reservation:approve"):
+            raise ApiError("FORBIDDEN", "当前账号没有处理预约违规的权限", 403)
         if not await self._can_manage_device(reservation.device):
             raise ApiError("FORBIDDEN", "只能处理自己负责范围内的预约", 403)
         if reservation.status not in {"APPROVED", "IN_USE"}:
@@ -1888,6 +2165,102 @@ class ReservationService:
             )
         )
 
+    async def _enqueue_maintenance_impact_notifications(
+        self,
+        reservation: Reservation,
+    ) -> None:
+        await self._enqueue_maintenance_impact_notifications_many([reservation])
+
+    async def _enqueue_maintenance_impact_notifications_many(
+        self,
+        reservations: list[Reservation],
+    ) -> None:
+        """Notify newly approved users if a due-maintenance notice already ran.
+
+        The plan row lock serializes this check with the due-date worker: either
+        that worker sees this reservation, or this transaction observes its
+        sent marker and enqueues the same deterministic impact task. Batch
+        approvals resolve and lock plans in one query, independent of batch size.
+        """
+        if not reservations:
+            return
+        device_ids = {reservation.device_id for reservation in reservations}
+        plans = list(
+            (
+                await self.session.scalars(
+                    select(DeviceMaintenancePlan)
+                    .where(
+                        DeviceMaintenancePlan.device_id.in_(device_ids),
+                        DeviceMaintenancePlan.active.is_(True),
+                        DeviceMaintenancePlan.plan_type.in_(
+                            ("CALIBRATION", "SAFETY_CHECK")
+                        ),
+                        DeviceMaintenancePlan.due_date
+                        < max(reservation.end_date for reservation in reservations),
+                    )
+                    .order_by(DeviceMaintenancePlan.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).all()
+        )
+        plans_by_device: dict[int, list[DeviceMaintenancePlan]] = {}
+        for plan in plans:
+            if plan.due_notice_sent_at is not None:
+                plans_by_device.setdefault(plan.device_id, []).append(plan)
+        task_keys = [
+            f"maintenance:impact:{plan.id}:{reservation.id}:{plan.due_date.isoformat()}"
+            for reservation in reservations
+            for plan in plans_by_device.get(reservation.device_id, [])
+            if reservation.end_date > plan.due_date
+        ]
+        existing_keys = (
+            set(
+                (
+                    await self.session.scalars(
+                        select(OutboxTask.task_key).where(OutboxTask.task_key.in_(task_keys))
+                    )
+                ).all()
+            )
+            if task_keys
+            else set()
+        )
+        for reservation in reservations:
+            for plan in plans_by_device.get(reservation.device_id, []):
+                if reservation.end_date <= plan.due_date:
+                    continue
+                due_date = plan.due_date.isoformat()
+                task_key = f"maintenance:impact:{plan.id}:{reservation.id}:{due_date}"
+                if task_key in existing_keys:
+                    continue
+                device_name = (
+                    reservation.device.name
+                    if reservation.device is not None
+                    else f"设备 #{reservation.device_id}"
+                )
+                self.session.add(
+                    OutboxTask(
+                        task_key=task_key,
+                        task_type="NOTIFICATION",
+                        aggregate_key=f"maintenance:{plan.id}:due:{due_date}",
+                        college_id=reservation.college_id,
+                        payload={
+                            "user_id": reservation.user_id,
+                            "college_id": reservation.college_id,
+                            "type": "MAINTENANCE_DUE",
+                            "title": "预约受维护到期影响",
+                            "content": (
+                                f"设备“{device_name}”的{plan.title}已到期。"
+                                "该预约不会自动取消；若维护逾期，交接/使用将被阻止，"
+                                "请联系负责人处理。"
+                            ),
+                            "related_id": plan.id,
+                            "related_type": "MAINTENANCE_PLAN",
+                        },
+                        execute_at=utcnow_naive(),
+                    )
+                )
+
     def _enqueue_reservation_reminder(self, reservation: Reservation, start_date: date) -> None:
         reminder_at = datetime.combine(start_date - timedelta(days=1), time.min)
         self.session.add(
@@ -1936,11 +2309,12 @@ class ReservationService:
             )
 
     async def check_in(self, reservation_id: int) -> ReservationData:
-        return await self._transition_owned(
-            reservation_id,
-            "IN_USE",
-            "所有预约均由负责人完成交接后开始使用",
-        )
+        if not self.principal.has_permission("reservation:check-in"):
+            raise ApiError("FORBIDDEN", "当前账号没有预约签到的权限", 403)
+        reservation = await self._load_reservation(reservation_id)
+        if reservation.user_id != self.principal.user_id:
+            raise ApiError("FORBIDDEN", "只能操作自己的预约", 403)
+        raise ApiError("HANDOVER_REQUIRED", "所有预约均由负责人完成交接后才能开始使用", 409)
 
     async def return_device(
         self,
@@ -1950,6 +2324,8 @@ class ReservationService:
         note: str | None = None,
         image_urls: list[str] | None = None,
     ) -> ReservationData:
+        if not self.principal.has_permission("reservation:return"):
+            raise ApiError("FORBIDDEN", "当前账号没有提交归还的权限", 403)
         reservation = await self._load_reservation(reservation_id)
         if reservation.user_id != self.principal.user_id:
             raise ApiError("FORBIDDEN", "只能操作自己的预约", 403)
@@ -2038,171 +2414,6 @@ class ReservationService:
         reservation.handover = handover
         return _reservation_data(reservation)
 
-    async def _transition_owned(
-        self,
-        reservation_id: int,
-        target: str,
-        day_error: str,
-        *,
-        condition: str | None = None,
-        note: str | None = None,
-        image_urls: list[str] | None = None,
-    ) -> ReservationData:
-        reservation = await self._load_reservation(reservation_id)
-        if reservation.user_id != self.principal.user_id:
-            raise ApiError("FORBIDDEN", "只能操作自己的预约", 403)
-        if target == "IN_USE":
-            raise ApiError("HANDOVER_REQUIRED", "所有预约均需负责人完成设备交接后才能开始使用", 409)
-        elif target in {"COMPLETED", "RETURN_PENDING"}:
-            if date.today() != reservation.end_date:
-                raise ApiError("RETURN_DAY_INVALID", day_error, 409)
-            if condition not in {"NORMAL", "DAMAGED", "MISSING"}:
-                raise ApiError("INSPECTION_INVALID", "归还验收状态无效", 422)
-            image_urls = await self._validate_evidence_images(image_urls, reservation.device)
-        if reservation.device.status in {"DISABLED", "OFFLINE", "RETIRED"} or (
-            target == "IN_USE" and reservation.device.status == "MAINTENANCE"
-        ):
-            raise ApiError("DEVICE_UNAVAILABLE", "当前设备状态不允许履约操作", 409)
-        allowed = [
-            source for source, targets in RESERVATION_TRANSITIONS.items() if target in targets
-        ]
-        now = utcnow_naive()
-        values: dict[str, object] = {"status": target}
-        if target == "IN_USE":
-            values["check_in_at"] = now
-        elif target == "COMPLETED":
-            values["check_out_at"] = now
-        result = await self.session.execute(
-            update(Reservation)
-            .where(
-                Reservation.id == reservation_id,
-                Reservation.status.in_(allowed),
-                Reservation.user_id == self.principal.user_id,
-            )
-            .values(**values)
-        )
-        if result.rowcount != 1:
-            raise ApiError("INVALID_RESERVATION_STATE", "预约状态不允许此操作", 409)
-        if target == "IN_USE":
-            change_device_status(
-                self.session,
-                reservation.device,
-                "IN_USE",
-                operator_id=self.principal.user_id,
-                reason="负责人完成预约设备交接",
-            )
-            title = "设备已完成交接"
-            content = f"设备“{reservation.device.name}”已完成负责人交接，预约开始使用。"
-        else:
-            inspection = ReservationInspection(
-                reservation_id=reservation.id,
-                device_id=reservation.device_id,
-                user_id=self.principal.user_id,
-                condition=condition or "NORMAL",
-                note=note.strip() if note else None,
-                image_urls=image_urls,
-                created_at=now,
-            )
-            reservation.inspections.append(inspection)
-            self.session.add(inspection)
-            open_repairs = int(
-                await self.session.scalar(
-                    select(func.count(RepairReport.id)).where(
-                        RepairReport.device_id == reservation.device_id,
-                        RepairReport.status.in_(("PENDING", "PROCESSING")),
-                    )
-                )
-                or 0
-            )
-            if target == "COMPLETED":
-                target_status = (
-                    "MAINTENANCE" if condition in {"DAMAGED", "MISSING"} or open_repairs else "IDLE"
-                )
-                change_device_status(
-                    self.session,
-                    reservation.device,
-                    target_status,
-                    operator_id=self.principal.user_id,
-                    reason=note
-                    or ("归还验收发现异常" if target_status == "MAINTENANCE" else "预约归还"),
-                )
-                title = "预约已归还"
-                content = (
-                    f"设备“{reservation.device.name}”已完成归还。"
-                    if target_status == "IDLE"
-                    else (
-                        f"设备“{reservation.device.name}”归还后仍有未完成报修，保持维护状态。"
-                        if open_repairs and condition == "NORMAL"
-                        else f"设备“{reservation.device.name}”归还验收发现异常，已进入维护状态。"
-                    )
-                )
-                # ReservationItem is the live occupancy index.  Terminal
-                # reservations retain their dates on Reservation itself, but
-                # must release the unique (device, date) row for reuse.
-                await self.session.execute(
-                    delete(ReservationItem).where(ReservationItem.reservation_id == reservation.id)
-                )
-            else:
-                handover = await self.session.scalar(
-                    select(DeviceHandover).where(DeviceHandover.reservation_id == reservation.id)
-                )
-                handover = await self._ensure_handover_record(
-                    reservation,
-                    status="RETURN_PENDING",
-                    now=now,
-                )
-                handover.returned_by = self.principal.user_id
-                handover.returned_at = now
-                handover.return_condition = condition
-                handover.return_note = note.strip() if note else None
-                handover.return_image_urls = image_urls
-                handover.updated_at = now
-                reservation.handover_status = "RETURN_PENDING"
-                title = "设备已归还，等待验收"
-                content = f"设备“{reservation.device.name}”已归还，请等待负责人完成验收。"
-        self.session.add(
-            OutboxTask(
-                task_key=f"notification:reservation:{reservation.id}:{target.lower()}",
-                task_type="NOTIFICATION",
-                aggregate_key=f"reservation:{reservation.id}",
-                college_id=reservation.college_id,
-                payload={
-                    "user_id": reservation.user_id,
-                    "college_id": reservation.college_id,
-                    "type": "RESERVATION_UPDATE",
-                    "title": title,
-                    "content": content,
-                    "related_id": reservation.id,
-                    "related_type": "RESERVATION",
-                },
-                execute_at=now,
-            )
-        )
-        append_audit(
-            self.session,
-            user_id=self.principal.user_id,
-            college_id=reservation.college_id,
-            action=(
-                "RESERVATION_CHECK_IN"
-                if target == "IN_USE"
-                else "RESERVATION_RETURN_REQUEST"
-                if target == "RETURN_PENDING"
-                else "RESERVATION_RETURN"
-            ),
-            target_type="RESERVATION",
-            target_id=reservation.id,
-            detail={"condition": condition, "note": note},
-        )
-        await self.session.commit()
-        reservation.status = target
-        if target == "IN_USE":
-            reservation.check_in_at = now
-        elif target == "COMPLETED":
-            reservation.check_out_at = now
-        else:
-            reservation.handover_status = "RETURN_PENDING"
-        return _reservation_data(reservation)
-
     async def handover(
         self,
         reservation_id: int,
@@ -2213,6 +2424,8 @@ class ReservationService:
         checklist: list[object] | None = None,
     ) -> ReservationData:
         reservation = await self._load_reservation(reservation_id)
+        if not self.principal.has_permission("reservation:handover"):
+            raise ApiError("FORBIDDEN", "当前账号没有办理设备交接的权限", 403)
         if not await self._can_manage_device(reservation.device):
             raise ApiError("FORBIDDEN", "只能交接自己负责范围内的设备", 403)
         if reservation.status != "APPROVED":
@@ -2227,6 +2440,18 @@ class ReservationService:
         )
         if locked_device is None or locked_device.status != "IDLE":
             raise ApiError("DEVICE_UNAVAILABLE", "设备当前不可交接，请先确认设备状态", 409)
+        reservation_dates = [
+            reservation.start_date + timedelta(days=offset)
+            for offset in range((reservation.end_date - reservation.start_date).days + 1)
+        ]
+        maintenance_blocks = await self._blocked_dates(locked_device, reservation_dates)
+        if maintenance_blocks:
+            first_date, reason = min(maintenance_blocks.items())
+            raise ApiError(
+                "DEVICE_MAINTENANCE_RESTRICTION",
+                f"设备在预约日期 {first_date} 不可交接或使用：{reason}",
+                409,
+            )
         open_repairs = int(
             await self.session.scalar(
                 select(func.count(RepairReport.id)).where(
@@ -2356,6 +2581,8 @@ class ReservationService:
         checklist: list[object] | None = None,
     ) -> ReservationData:
         reservation = await self._load_reservation(reservation_id)
+        if not self.principal.has_permission("reservation:accept-return"):
+            raise ApiError("FORBIDDEN", "当前账号没有验收设备归还的权限", 403)
         if not await self._can_manage_device(reservation.device):
             raise ApiError("FORBIDDEN", "只能验收自己负责范围内的设备", 403)
         if reservation.status != "IN_USE" or reservation.handover_status != "RETURN_PENDING":
@@ -2478,7 +2705,7 @@ class ReservationService:
         page_size: int = 20,
     ) -> ReservationPage:
         scope = self._college_id()
-        if not self.principal.is_lab_admin and not self.principal.is_system_admin:
+        if not self.principal.has_permission("reservation:approve"):
             raise ApiError("FORBIDDEN", "当前角色无审批权限", 403)
         page_offset(page, page_size)
         conditions = [Reservation.status == "PENDING"]
@@ -2558,7 +2785,10 @@ class ReservationService:
 
         if status not in {"PENDING", "RETURN_PENDING", "EXCEPTION"}:
             raise ApiError("HANDOVER_STATUS_INVALID", "交接状态无效", 422)
-        if not self.principal.is_lab_admin and not self.principal.is_system_admin:
+        if not (
+            self.principal.has_permission("reservation:handover")
+            or self.principal.has_permission("reservation:accept-return")
+        ):
             raise ApiError("FORBIDDEN", "当前角色无设备交接权限", 403)
         page_offset(page, page_size)
         scope = self._college_id()

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 通知中心(R6 重构):PageHeader + SegmentedControl(全部/未读)+ 通知行列表和详情抽屉
 // 点击通知打开详情；未读项同时标记已读，但保留在当前列表和筛选结果中。
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
 import { markAllRead, markRead, myNotifications } from '@/api/notification'
@@ -15,6 +15,7 @@ import Tag from '@/components/ui/Tag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import PageDepthNotice from '@/components/ui/PageDepthNotice.vue'
+import PageSizeControl from '@/components/ui/PageSizeControl.vue'
 
 const notifStore = useNotificationStore()
 
@@ -164,6 +165,10 @@ const totalLabel = computed(() => `共 ${page.value.total} 条`)
 onMounted(() => {
   void Promise.all([load(), notifStore.loadUnread()])
 })
+
+watch(() => notifStore.historyRevision, () => {
+  void load()
+})
 </script>
 
 <template>
@@ -239,12 +244,17 @@ onMounted(() => {
     <!-- 分页(EP pagination 已由 theme.dark.scss 桥接深色)-->
     <div v-if="page.records.length > 0" class="notif-page__pager">
       <PageDepthNotice v-if="page.truncated" :total="page.total" />
+      <PageSizeControl
+        :model-value="query.size"
+        :options="[10, 20, 50]"
+        label="每页显示通知数量"
+        @change="onSizeChange"
+      />
       <el-pagination
         :current-page="page.current"
         :page-size="page.size"
         :total="page.truncated ? Math.min(page.total, (page.pages || 1) * page.size) : page.total"
-        :page-sizes="[10, 20, 50]"
-        :layout="`total, sizes, prev, pager, next`"
+        layout="total, prev, pager, next"
         :total-text="totalLabel"
         background
         @current-change="onPageChange"
@@ -306,6 +316,8 @@ onMounted(() => {
 
   &__pager {
     display: flex;
+    align-items: center;
+    gap: 14px;
     justify-content: flex-end;
     padding-top: 4px;
   }
@@ -416,6 +428,7 @@ onMounted(() => {
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    overflow-wrap: anywhere;
     transition: color var(--d-med) var(--ease-out-expo);
   }
 
@@ -429,6 +442,7 @@ onMounted(() => {
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    overflow-wrap: anywhere;
     transition: color var(--d-med) var(--ease-out-expo);
   }
 
@@ -504,7 +518,13 @@ onMounted(() => {
 
 @media (max-width: 720px) {
   .notif-overview { align-items: flex-start; flex-direction: column; }
-  .notif-overview__count { padding: 10px 0 0; border-top: 1px solid var(--border-default); border-left: 0; }
+  .notif-overview__count { max-width: 100%; min-width: 0; box-sizing: border-box; padding: 10px 0 0; border-top: 1px solid var(--border-default); border-left: 0; }
+  .notif-row { flex-direction: column; gap: 10px; padding: 14px; }
+  .notif-row__main { width: 100%; max-width: 100%; }
+  .notif-row__head { min-width: 0; }
+  .notif-row__title { min-width: 0; }
+  .notif-row__meta { align-items: flex-start; white-space: normal; }
+  .notif-row__time { overflow-wrap: anywhere; }
 }
 
 // reduced-motion 守卫(spec §6.1 铁律 #3):transition 在 reduce 时关闭

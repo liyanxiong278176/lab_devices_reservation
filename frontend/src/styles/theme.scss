@@ -22,7 +22,7 @@
 
   --text-primary: #18211d;
   --text-secondary: #5d6a63;
-  --text-tertiary: #8a958e;
+  --text-tertiary: #69756e;
   --text-on-accent: #ffffff;
 
   --accent: #2167df;
@@ -34,7 +34,7 @@
   --grad-accent: linear-gradient(135deg, var(--accent), var(--accent));
 
   --status-success: #167a5b;
-  --status-warning: #a26500;
+  --status-warning: #8a5700;
   --status-danger: #c54848;
   --status-info: #4b73a8;
 
@@ -244,10 +244,10 @@ a {
   --el-button-hover-text-color: var(--text-on-accent);
   --el-button-active-text-color: var(--text-on-accent);
   --el-button-bg-color: var(--accent);
-  --el-button-hover-bg-color: var(--accent-bright);
+  --el-button-hover-bg-color: var(--accent);
   --el-button-active-bg-color: var(--accent-deep);
   --el-button-border-color: var(--accent);
-  --el-button-hover-border-color: var(--accent-bright);
+  --el-button-hover-border-color: var(--accent);
   --el-button-active-border-color: var(--accent-deep);
   box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 18%, transparent);
 }

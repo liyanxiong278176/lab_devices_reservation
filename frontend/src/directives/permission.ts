@@ -6,7 +6,7 @@ import { useUserStore } from '@/stores/user'
  *
  * 用法：
  *   <el-button v-permission="'device:manage'">新建</el-button>
- *   <el-button v-permission="['device:manage', 'device:approve']">操作</el-button>
+ *   <el-button v-permission="['device:manage', 'reservation:approve']">操作</el-button>
  *
  * 当前用户权限码（userStore.permissions）与传入码无交集时，元素在 mounted 时
  * 从 DOM 移除。注意：这是创建期裁剪，非响应式（权限变更需重渲染路由/组件）。

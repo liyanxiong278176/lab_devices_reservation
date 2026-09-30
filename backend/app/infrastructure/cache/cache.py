@@ -103,7 +103,11 @@ class CacheService:
         key = f"lab:v2:cache:catalog:version:{scope}"
         try:
             await self._call(lambda: self.redis.incr(key))
-            self._metric("cache_invalidations_total", labels={"scope": scope})
+            # The scope includes a college ID; export only its bounded kind.
+            self._metric(
+                "cache_invalidations_total",
+                labels={"scope": scope.split(":", maxsplit=1)[0]},
+            )
             return True
         except (*REDIS_ERRORS, RedisCircuitOpen):
             self._metric("cache_errors_total")

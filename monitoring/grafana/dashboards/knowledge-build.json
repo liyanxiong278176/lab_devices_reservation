@@ -1,0 +1,153 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "textMode": "auto" },
+      "targets": [{ "expr": "max(ai_celery_queue_messages{queue=\"knowledge-build\",state=\"ready\"})", "refId": "A" }],
+      "title": "Celery ready 消息",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "textMode": "auto" },
+      "targets": [{ "expr": "max(ai_celery_queue_messages{queue=\"knowledge-build\",state=\"unacked\"})", "refId": "A" }],
+      "title": "Celery 已投递未确认",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 0 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "textMode": "auto" },
+      "targets": [{ "expr": "max(ai_celery_queue_depth{queue=\"knowledge-build\"})", "refId": "A" }],
+      "title": "Celery 队列深度",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 0 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "textMode": "auto" },
+      "targets": [{ "expr": "max(ai_knowledge_build_oldest_wait_seconds)", "refId": "A" }],
+      "title": "最老构建等待时间",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 0 },
+      "id": 5,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "textMode": "auto" },
+      "targets": [{ "expr": "max(ai_knowledge_build_outbox_pending)", "refId": "A" }],
+      "title": "SQL Outbox 待发布",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 0 },
+      "id": 6,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "values": false }, "textMode": "auto" },
+      "targets": [{ "expr": "max(ai_knowledge_build_order_waiters)", "refId": "A" }],
+      "title": "等待前序任务",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops/min", "decimals": 2, "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 5 },
+      "id": 7,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "max(ai_knowledge_build_completed_per_minute_5m)", "legendFormat": "completed / min", "refId": "A" }],
+      "title": "构建吞吐量（5 分钟）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 5 },
+      "id": 8,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "max(ai_knowledge_build_failure_ratio_5m)", "legendFormat": "failure ratio", "refId": "A" }],
+      "title": "构建失败率（5 分钟）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0, "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 5 },
+      "id": 9,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "max(ai_celery_queue_oldest_unacked_seconds{queue=\"knowledge-build\"})", "legendFormat": "oldest unacked", "refId": "A" }],
+      "title": "Celery 最老未确认消息",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "id": 10,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "max by (status) (ai_knowledge_build_jobs)", "legendFormat": "{{status}}", "refId": "A" }],
+      "title": "任务状态数量",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "id": 11,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "max by (status) (ai_knowledge_build_outbox_oldest_seconds)", "legendFormat": "{{status}}", "refId": "A" }],
+      "title": "Outbox 待发布 / 处理中时长",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "id": 12,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "max(ai_celery_queue_messages{queue=\"knowledge-build\",state=\"ready\"})", "legendFormat": "ready", "refId": "A" },
+        { "expr": "max(ai_celery_queue_messages{queue=\"knowledge-build\",state=\"unacked\"})", "legendFormat": "unacked", "refId": "B" },
+        { "expr": "max(ai_knowledge_build_outbox_pending)", "legendFormat": "SQL Outbox pending", "refId": "C" }
+      ],
+      "title": "队列积压变化",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "id": 13,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "max(ai_knowledge_build_queue_metrics_available)", "legendFormat": "Redis metrics available", "refId": "A" }],
+      "title": "Broker 指标可用性",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": ["labflow", "ai", "knowledge", "queue"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "LabFlow Knowledge Build Queue",
+  "uid": "labflow-knowledge-build",
+  "version": 1
+}

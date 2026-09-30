@@ -28,6 +28,16 @@ from sqlalchemy import func, select
 
 
 def _principal(user: User, role: str) -> Principal:
+    permissions = (
+        ("reservation:create", "reservation:read:own")
+        if role == "STUDENT"
+        else (
+            "reservation:read:scope",
+            "reservation:approve",
+            "reservation:handover",
+            "reservation:accept-return",
+        )
+    )
     return Principal(
         user_id=user.id,
         username=user.username,
@@ -35,6 +45,7 @@ def _principal(user: User, role: str) -> Principal:
         roles=(role,),
         token_type="access",
         token_id="mysql-handover-race-test",
+        permissions=permissions,
     )
 
 

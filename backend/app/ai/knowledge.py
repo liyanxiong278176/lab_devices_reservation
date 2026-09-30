@@ -10,14 +10,38 @@ import httpx
 from sqlalchemy import select
 
 from app.ai.config import get_component_config
+from app.ai.dlp import redact_text
 from app.ai.usage import add_aux_usage
 from app.infrastructure.db.models import KnowledgeDocument, OutboxTask
 from app.infrastructure.db.session import build_session_factory
 
 MINERU_API = "https://mineru.net"
 MINERU_RESULT_HOSTS = {"cdn-mineru.openxlab.org.cn"}
+MINERU_UPLOAD_HOSTS = {"mineru.oss-cn-shanghai.aliyuncs.com"}
 MAX_RESULT_ZIP_BYTES = 50 * 1024 * 1024
 MAX_MARKDOWN_CHARS = 500_000
+
+
+def _is_allowed_mineru_upload_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return False
+    if (
+        parsed.scheme != "https"
+        or host is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+    ):
+        return False
+    return (
+        host in MINERU_UPLOAD_HOSTS
+        or host == "openxlab.org.cn"
+        or host.endswith(".openxlab.org.cn")
+    )
 
 
 async def enqueue_parse_poll(
@@ -40,6 +64,16 @@ async def enqueue_parse_poll(
     )
 
 
+async def _reload_active_parse_document(session, document, batch_id: str) -> bool:
+    """Serialize parser state updates with document deletion."""
+    await session.refresh(document, with_for_update=True)
+    return (
+        document.status not in {"DELETING", "DELETED"}
+        and document.parse_status == "PROCESSING"
+        and document.mineru_task_id == batch_id
+    )
+
+
 async def start_mineru_parse(app, document_id: int) -> None:
     factory = getattr(app.state, "session_factory", None)
     if factory is None:
@@ -53,7 +87,11 @@ async def start_mineru_parse(app, document_id: int) -> None:
         document = await session.scalar(
             select(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
         )
-        if document is None or document.parse_status not in {"QUEUED", "SUBMITTING"}:
+        if (
+            document is None
+            or document.status in {"DELETING", "DELETED"}
+            or document.parse_status not in {"QUEUED", "SUBMITTING"}
+        ):
             return
         root = (Path(app.state.settings.upload_dir).resolve() / "ai-knowledge").resolve()
         path = Path(document.source_file_path or "").resolve()
@@ -90,18 +128,13 @@ async def start_mineru_parse(app, document_id: int) -> None:
             upload_urls = data.get("file_urls") or []
             if result.get("code") != 0 or not batch_id or not upload_urls:
                 raise RuntimeError("MinerU upload request rejected")
-            upload_url = urlparse(str(upload_urls[0]))
-            if (
-                upload_url.scheme != "https"
-                or upload_url.hostname is None
-                or not (
-                    upload_url.hostname == "openxlab.org.cn"
-                    or upload_url.hostname.endswith(".openxlab.org.cn")
-                )
-            ):
+            if not _is_allowed_mineru_upload_url(str(upload_urls[0])):
                 raise RuntimeError("MinerU returned an invalid signed upload URL")
             upload = await client.put(str(upload_urls[0]), content=path.read_bytes())
             upload.raise_for_status()
+        await session.refresh(document, with_for_update=True)
+        if document.status in {"DELETING", "DELETED"} or document.parse_status != "SUBMITTING":
+            return
         document.mineru_task_id = str(batch_id)
         document.parse_status = "PROCESSING"
         await enqueue_parse_poll(session, document=document, batch_id=str(batch_id), attempt=0)
@@ -124,7 +157,11 @@ async def poll_mineru_parse(app, document_id: int, batch_id: str, attempt: int) 
                 KnowledgeDocument.mineru_task_id == batch_id,
             )
         )
-        if document is None or document.parse_status != "PROCESSING":
+        if (
+            document is None
+            or document.status in {"DELETING", "DELETED"}
+            or document.parse_status != "PROCESSING"
+        ):
             return
         runtime = await get_component_config(session, app.state.settings, "mineru")
         if runtime is None or not runtime.enabled or not runtime.api_key:
@@ -158,6 +195,8 @@ async def poll_mineru_parse(app, document_id: int, batch_id: str, attempt: int) 
                 raise RuntimeError("MinerU result does not match the submitted document")
             state = str(item.get("state", ""))
             if state in {"waiting-file", "pending", "running", "converting"}:
+                if not await _reload_active_parse_document(session, document, batch_id):
+                    return
                 if attempt >= 240:
                     document.parse_status = "FAILED"
                     document.parse_error = "文档解析超时，请稍后重新发起。"
@@ -172,6 +211,8 @@ async def poll_mineru_parse(app, document_id: int, batch_id: str, attempt: int) 
                 await session.commit()
                 return
             if state == "failed":
+                if not await _reload_active_parse_document(session, document, batch_id):
+                    return
                 document.parse_status = "FAILED"
                 document.parse_error = "MinerU 无法解析该文件，请检查文件内容后重试。"
                 await session.commit()
@@ -186,7 +227,13 @@ async def poll_mineru_parse(app, document_id: int, batch_id: str, attempt: int) 
             if len(zip_response.content) > MAX_RESULT_ZIP_BYTES:
                 raise RuntimeError("MinerU result archive exceeds the size limit")
         markdown = _extract_markdown(zip_response.content)
-        document.extracted_text = markdown[:MAX_MARKDOWN_CHARS]
+        redaction = redact_text(markdown[:MAX_MARKDOWN_CHARS])
+        if not await _reload_active_parse_document(session, document, batch_id):
+            return
+        document.extracted_text = redaction.text
+        document.dlp_categories = sorted(
+            set(document.dlp_categories or ()) | set(redaction.categories)
+        )
         document.parse_status = "PARSED"
         document.parse_error = None
         source_path = Path(document.source_file_path or "")

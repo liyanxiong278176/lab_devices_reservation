@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -37,6 +37,17 @@ def _error_body(request: Request, code: str, message: str) -> dict[str, object]:
     }
 
 
+def _error_headers(
+    request: Request,
+    extra: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    headers = dict(extra or {})
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        headers["X-Request-ID"] = request_id
+    return headers
+
+
 async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
     body = _error_body(request, exc.code, exc.message)
     body["data"] = exc.data
@@ -48,16 +59,28 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
 
 
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled request error", exc_info=exc)
     if isinstance(exc, SQLAlchemyTimeoutError):
+        logger.warning(
+            "Request rejected because the database pool is full; request_id=%s",
+            getattr(request.state, "request_id", None),
+        )
         return JSONResponse(
             status_code=503,
             content=_error_body(request, "SERVICE_BUSY", "当前请求较多，请稍后重试"),
-            headers={"Retry-After": "1"},
+            headers=_error_headers(request, {"Retry-After": "1"}),
         )
-    if isinstance(exc, (TimeoutError, ConnectionError, OSError)) or (
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError, OperationalError)) or (
         isinstance(exc, DBAPIError) and exc.connection_invalidated
     ):
+        # Connection establishment failures can have connection_invalidated=False
+        # (for example asyncmy error 2013 while MySQL is restarting). Keep these
+        # retryable without exposing driver/DSN details or emitting a traceback
+        # every time a dependency is temporarily unavailable.
+        logger.warning(
+            "Request failed because a dependency is unavailable; request_id=%s error_type=%s",
+            getattr(request.state, "request_id", None),
+            type(exc).__name__,
+        )
         return JSONResponse(
             status_code=503,
             content=_error_body(
@@ -65,10 +88,13 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
                 "DEPENDENCY_UNAVAILABLE",
                 "数据库或基础依赖暂时不可用，请稍后重试",
             ),
+            headers=_error_headers(request),
         )
+    logger.exception("Unhandled request error", exc_info=exc)
     return JSONResponse(
         status_code=500,
         content=_error_body(request, "INTERNAL_ERROR", "服务暂时不可用，请稍后重试"),
+        headers=_error_headers(request),
     )
 
 
@@ -87,10 +113,18 @@ async def validation_error_handler(
     request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
+    safe_errors = [
+        {
+            "loc": list(error.get("loc", ())),
+            "msg": str(error.get("msg", "请求值无效")),
+            "type": str(error.get("type", "value_error")),
+        }
+        for error in exc.errors()
+    ]
     return JSONResponse(
         status_code=422,
         content={
             **_error_body(request, "VALIDATION_ERROR", "请求参数校验失败"),
-            "data": {"errors": exc.errors()},
+            "data": {"errors": safe_errors},
         },
     )

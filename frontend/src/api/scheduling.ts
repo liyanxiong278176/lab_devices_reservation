@@ -4,6 +4,7 @@ export interface BlackoutVO {
   id: number
   scopeType: 'COLLEGE' | 'LAB' | 'DEVICE'
   scopeId: number
+  scopeName?: string | null
   blockedDate: string
   reason: string
   active: boolean
@@ -14,6 +15,7 @@ interface V2Blackout {
   id: number
   scope_type: BlackoutVO['scopeType']
   scope_id: number
+  scope_name?: string | null
   blocked_date: string
   reason: string
   active: boolean
@@ -25,6 +27,7 @@ function mapBlackout(row: V2Blackout): BlackoutVO {
     id: row.id,
     scopeType: row.scope_type,
     scopeId: row.scope_id,
+    scopeName: row.scope_name,
     blockedDate: row.blocked_date,
     reason: row.reason,
     active: row.active,

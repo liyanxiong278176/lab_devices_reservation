@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import or_, select
+from sqlalchemy import and_, case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v2.schemas import BlackoutCreateRequest, BlackoutData
 from app.application.lifecycle import append_audit
+from app.application.scope_access import can_manage_scope
 from app.auth.security import Principal, college_scope, get_current_principal
 from app.common.response import ApiResponse
 from app.core.errors import ApiError
@@ -19,70 +20,16 @@ router = APIRouter(dependencies=[Depends(enforce_authenticated_rate_limit)])
 
 
 def _require_manager(principal: Principal) -> None:
-    if not principal.is_lab_admin:
+    if not principal.has_permission("reservation-rule:manage"):
         raise ApiError("FORBIDDEN", "只有负责人可以配置不可预约日期", 403)
 
 
-async def _can_manage_scope(
-    session: AsyncSession,
-    principal: Principal,
-    scope_type: str,
-    scope_id: int,
-) -> bool:
-    if principal.is_system_admin:
-        return True
-    college_id = college_scope(principal)
-    if college_id is None:
-        return False
-    if scope_type == "COLLEGE":
-        return bool(
-            await session.scalar(
-                select(College.id).where(
-                    College.id == scope_id,
-                    College.id == college_id,
-                    College.manager_id == principal.user_id,
-                )
-            )
-        )
-    if scope_type == "LAB":
-        return bool(
-            await session.scalar(
-                select(Lab.id)
-                .where(
-                    Lab.id == scope_id,
-                    Lab.college_id == college_id,
-                    or_(
-                        Lab.manager_id == principal.user_id,
-                        College.manager_id == principal.user_id,
-                    ),
-                )
-                .join(College, College.id == Lab.college_id)
-            )
-        )
-    if scope_type == "DEVICE":
-        return bool(
-            await session.scalar(
-                select(Device.id)
-                .outerjoin(Lab, Lab.id == Device.lab_id)
-                .join(College, College.id == Device.college_id)
-                .where(
-                    Device.id == scope_id,
-                    Device.college_id == college_id,
-                    or_(
-                        Lab.manager_id == principal.user_id,
-                        College.manager_id == principal.user_id,
-                    ),
-                )
-            )
-        )
-    return False
-
-
-def _data(row: ReservationBlackout) -> BlackoutData:
+def _data(row: ReservationBlackout, scope_name: str | None = None) -> BlackoutData:
     return BlackoutData(
         id=row.id,
         scope_type=row.scope_type,
         scope_id=row.scope_id,
+        scope_name=scope_name,
         blocked_date=row.blocked_date,
         reason=row.reason,
         active=row.active,
@@ -116,16 +63,43 @@ async def list_blackouts(
                 ),
             )
         )
+    scope_name = case(
+        (ReservationBlackout.scope_type == "COLLEGE", College.name),
+        (ReservationBlackout.scope_type == "LAB", Lab.name),
+        (ReservationBlackout.scope_type == "DEVICE", Device.name),
+        else_=None,
+    )
     rows = list(
         (
-            await session.scalars(
-                select(ReservationBlackout)
+            await session.execute(
+                select(ReservationBlackout, scope_name.label("scope_name"))
+                .outerjoin(
+                    College,
+                    and_(
+                        ReservationBlackout.scope_type == "COLLEGE",
+                        College.id == ReservationBlackout.scope_id,
+                    ),
+                )
+                .outerjoin(
+                    Lab,
+                    and_(
+                        ReservationBlackout.scope_type == "LAB",
+                        Lab.id == ReservationBlackout.scope_id,
+                    ),
+                )
+                .outerjoin(
+                    Device,
+                    and_(
+                        ReservationBlackout.scope_type == "DEVICE",
+                        Device.id == ReservationBlackout.scope_id,
+                    ),
+                )
                 .where(*conditions)
                 .order_by(ReservationBlackout.blocked_date, ReservationBlackout.id)
             )
         ).all()
     )
-    return ApiResponse.ok([_data(row) for row in rows])
+    return ApiResponse.ok([_data(row, name) for row, name in rows])
 
 
 @router.post("/blackouts", response_model=ApiResponse[BlackoutData], status_code=201)
@@ -135,7 +109,7 @@ async def create_blackout(
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[BlackoutData]:
     _require_manager(principal)
-    if not await _can_manage_scope(session, principal, payload.scope_type, payload.scope_id):
+    if not await can_manage_scope(session, principal, payload.scope_type, payload.scope_id):
         raise ApiError("FORBIDDEN", "只能配置自己负责范围内的不可预约日期", 403)
     duplicate = await session.scalar(
         select(ReservationBlackout).where(
@@ -198,7 +172,7 @@ async def delete_blackout(
     row = await session.scalar(
         select(ReservationBlackout).where(ReservationBlackout.id == blackout_id)
     )
-    if row is None or not await _can_manage_scope(session, principal, row.scope_type, row.scope_id):
+    if row is None or not await can_manage_scope(session, principal, row.scope_type, row.scope_id):
         raise ApiError("BLACKOUT_NOT_FOUND", "不可预约日期不存在或无权操作", 404)
     row.active = False
     append_audit(

@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import type { Component } from 'vue'
+
 // EmptyState — 空态
 // 居中 flex column:弱辉光圆底 + 图标(--text-tertiary)+ 标题 + 描述 + 可选 action
 // icon 传 EP 图标组件名(全局已注册,如 "Inbox"/"DocumentRemove")
 defineProps<{
-  icon?: string
+  icon?: string | Component
   title?: string
   description?: string
 }>()

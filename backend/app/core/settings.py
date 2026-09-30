@@ -22,19 +22,37 @@ class Settings(BaseSettings):
     # Local runtime uses a schema-scoped account; credentials belong in .env.
     mysql_dsn: str = "mysql+asyncmy://lab_runtime@127.0.0.1:3306/lab_reservation?charset=utf8mb4"
     redis_url: str = "redis://127.0.0.1:6379/0"
+    celery_broker_url: str = "redis://127.0.0.1:6379/1"
+    celery_visibility_timeout_seconds: int = Field(default=7_260, ge=60, le=86_400)
+    celery_task_soft_time_limit_seconds: int = Field(default=7_140, ge=60, le=86_400)
+    celery_task_time_limit_seconds: int = Field(default=7_200, ge=60, le=86_400)
+    celery_worker_concurrency: int = Field(default=1, ge=1, le=16)
+    ai_knowledge_build_embed_batch_size: int = Field(default=32, ge=1, le=256)
+    ai_knowledge_build_lease_seconds: int = Field(default=300, ge=30, le=3_600)
+    ai_knowledge_build_dispatch_recovery_seconds: int = Field(default=600, ge=60, le=86_400)
+    ai_knowledge_build_reconcile_interval_seconds: int = Field(default=30, ge=5, le=3_600)
+    ai_knowledge_build_max_redeliveries: int = Field(default=3, ge=1, le=20)
     redis_socket_timeout_seconds: float = 0.5
     redis_circuit_failure_threshold: int = 3
     redis_circuit_recovery_seconds: float = 5.0
     qdrant_url: str = "http://127.0.0.1:6333"
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
+    )
     # Metrics are disabled unless an operator configures a scrape token.
     metrics_token: str | None = None
     # Forwarding headers are only honored when the direct peer is explicitly trusted.
     trusted_proxy_ips: list[str] = Field(default_factory=list)
     jwt_secret: str = "dev-only-change-this-secret-32chars-minimum"
     jwt_issuer: str = "lab-reservation"
-    access_token_minutes: int = 30
-    refresh_token_days: int = 14
+    jwt_audience: str = "lab-reservation-web"
+    access_token_minutes: int = 15
+    refresh_token_days: int = 7
+    access_cookie_name: str = "lab_access"
+    refresh_cookie_name: str = "lab_refresh"
+    csrf_cookie_name: str = "lab_csrf"
+    cookie_secure: bool = False
+    cookie_domain: str | None = None
     enable_workers: bool = True
     bootstrap_admin_username: str = Field(default="admin", min_length=3, max_length=64)
     bootstrap_admin_password: str | None = Field(default=None, min_length=8, max_length=128)
@@ -42,6 +60,7 @@ class Settings(BaseSettings):
     db_max_overflow: int = 20
     db_pool_timeout_seconds: int = 10
     db_pool_recycle_seconds: int = 1800
+    request_queue_capacity: int = Field(default=1000, ge=0, le=10000)
     request_health_capacity: int = 8
     outbox_claim_timeout_seconds: int = 300
     outbox_max_attempts: int = 5
@@ -55,19 +74,20 @@ class Settings(BaseSettings):
     upload_total_quota_bytes: int = 2 * 1024 * 1024 * 1024
     upload_orphan_retention_hours: int = 24
     upload_cleanup_interval_seconds: int = 3600
-    websocket_max_connections: int = 500
-    websocket_max_per_user: int = 5
-    websocket_max_pending: int = 100
-    websocket_max_pending_per_ip: int = 5
-    websocket_auth_timeout_seconds: float = 5.0
+    notification_sse_max_connections: int = Field(default=500, ge=1, le=10000)
+    notification_sse_max_per_user: int = Field(default=5, ge=1, le=100)
+    notification_sse_max_pending: int = Field(default=100, ge=1, le=1000)
+    notification_sse_max_pending_per_ip: int = Field(default=5, ge=1, le=100)
+    notification_sse_auth_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    notification_sse_heartbeat_seconds: float = Field(default=20.0, ge=5, le=120)
+    notification_sse_revalidate_seconds: float = Field(default=60.0, ge=10, le=600)
+    notification_sse_max_replay_events: int = Field(default=100, ge=1, le=100)
     reservation_max_days: int = 31
     reservation_advance_days: int = 30
     reservation_manager_advance_days: int = 90
     reservation_lock_ttl_seconds: int = 8
     reservation_lock_wait_seconds: float = 2.0
     reservation_lock_poll_seconds: float = 0.05
-    reservation_user_active_limit: int = 10
-    reservation_user_days_limit: int = 31
     credit_block_threshold: int = 60
     credit_block_days: int = 7
     cache_default_ttl_seconds: int = 300
@@ -105,9 +125,7 @@ class Settings(BaseSettings):
     recommend_cache_ttl_seconds: int = 300
     ai_provider: str = "deepseek"
     ai_model: str = "deepseek-flash"
-    ai_allowed_models: list[str] = Field(
-        default_factory=lambda: ["deepseek-flash"]
-    )
+    ai_allowed_models: list[str] = Field(default_factory=lambda: ["deepseek-flash"])
     ai_api_key: str | None = None
     ai_base_url: str = "https://api.deepseek.com"
     ai_allowed_base_urls: list[str] = Field(
@@ -131,6 +149,7 @@ class Settings(BaseSettings):
     ai_global_daily_token_cap: int = Field(default=10_000_000, gt=0, le=10_000_000_000)
     ai_qdrant_collection: str = "lab_knowledge_v2"
     ai_qdrant_timeout_seconds: int = 5
+    ai_rag_query_concurrency: int = Field(default=4, ge=1, le=16)
     ai_max_context_documents: int = 6
     ai_confirmation_ttl_minutes: int = 10
     ai_max_input_chars: int = 8000
@@ -146,7 +165,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_security(self) -> "Settings":
+        if self.celery_task_soft_time_limit_seconds >= self.celery_task_time_limit_seconds:
+            raise ValueError("Celery hard task limit must exceed its soft task limit")
+        if self.celery_visibility_timeout_seconds <= self.celery_task_time_limit_seconds:
+            raise ValueError("Celery Redis visibility timeout must exceed the hard task limit")
         if self.environment == "prod":
+            if not self.cookie_secure:
+                raise ValueError("生产环境必须启用 LAB_COOKIE_SECURE")
             secret = self.jwt_secret.strip().lower()
             if (
                 len(secret) < 32
@@ -178,6 +203,8 @@ class Settings(BaseSettings):
                 raise ValueError(f"生产环境必须配置 AI 密钥：{', '.join(missing_ai_keys)}")
         if self.metrics_token and len(self.metrics_token) < 32:
             raise ValueError("LAB_METRICS_TOKEN 配置后必须至少 32 个字符")
+        if self.environment == "prod" and not self.metrics_token:
+            raise ValueError("生产环境必须配置 LAB_METRICS_TOKEN 以启用受保护的指标抓取")
         return self
 
 

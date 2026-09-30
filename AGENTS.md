@@ -45,7 +45,7 @@ pnpm test
 
 - FastAPI 是唯一后端运行面；不要新增 Java、Spring Boot、MyBatis、Flyway 或 RabbitMQ。
 - 单体服务内使用异步 I/O。通知、超时、缓存失效和候补递补走持久化 Outbox，必须可恢复、可重试、幂等。
-- MySQL 8 是业务事实源，Redis 只负责缓存、辅助锁、限流和低延迟实时分发；Redis 故障不能破坏预约正确性。
+- MySQL 8 是业务与授权版本事实源；Redis 保存登录会话及短期权限快照，并负责缓存、辅助锁、限流和低延迟实时分发。Redis 故障不能破坏预约正确性，但 Redis 会话不可用时认证必须失败关闭。
 - 学院是租户边界。普通用户只能访问和预约本学院设备；负责人只能管理和审批自己负责的实验室/学院；系统管理员才可跨学院。
 - 预约只按自然日：`start_date`、`end_date` 首尾包含；冲突最小单位是 `(device_id, reservation_date)`。禁止重新引入分钟槽位或时分秒预约输入。
 - 预约状态只能由应用服务集中流转：`PENDING → APPROVED → IN_USE → COMPLETED`；待审批/已批准且尚未开始可取消；批准/使用中可违规；批准后可爽约；驳回使用独立的 `REJECTED` 终态。
@@ -60,15 +60,17 @@ pnpm test
 
 - 状态写入使用条件更新并检查影响行数，防止重复审批、重复签到、重复归还和超时任务覆盖。
 - Outbox 任务使用租约、`SKIP LOCKED`、指数退避、死信和唯一任务键；重复消费不能产生重复通知或重复业务变更。
-- 通知表是历史事实源；WebSocket 只做实时提示，断线后必须通过 HTTP 历史/未读接口补偿。
+- 通知表是历史事实源；SSE 只做单向实时推送，按用户严格递增序号处理同一 EventSource 的 `Last-Event-ID` 重连，最多补发 100 条，更多通过 HTTP 历史/未读接口补偿；Redis Pub/Sub 只作唤醒提示。
 - 生产环境禁止使用默认数据库密码、默认 JWT secret 或默认 AI 凭据；配置缺失时启动失败。
-- Token 刷新必须轮换并可撤销；用户禁用、换学院或撤权后，服务端依赖应重新读取当前用户状态。
+- 浏览器使用 HttpOnly Cookie 承载短时 JWT；JWT 仅含 `sid/type/jti/iss/aud/iat/exp`，身份、角色和权限不放入 JWT。SID 使用 `secrets.token_urlsafe(32)` 生成，登录会话和轮换后的 Refresh Token 状态保存在 Redis。
+- 每个请求从 MySQL 读取账号启用状态、当前学院和全局授权版本；角色/权限快照按 `sid + authz_version` 缓存在 Redis，缓存失效或不可用时从 MySQL 关系回源。角色分配或权限修改必须递增授权版本。
+- Token 刷新必须轮换并可撤销；写请求必须通过可信 Origin 与双提交 CSRF 校验；用户禁用、换学院或撤权后，服务端依赖应重新读取当前用户状态。
 - 所有设备状态变更要记录操作人、原状态、新状态和原因；维修、报废设备不能被预约。
 - 报修完成前必须先受理；归还要保存验收结果，损坏/缺失自动进入维护状态。
 
 ## 数据库迁移
 
-当前 Alembic head 为 `0023_refresh_session_families`。新增表或索引时：
+当前 Alembic head 为 `0034_notification_sequence`。新增表或索引时：
 
 1. 新建 `backend/migrations/versions/00xx_*.py`。
 2. 更新 ORM 模型和测试夹具。

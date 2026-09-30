@@ -102,6 +102,8 @@ async def list_device_documents(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[list[DeviceDocumentData]]:
+    if not principal.has_permission("device:read"):
+        raise ApiError("FORBIDDEN", "当前账号没有查看设备文档的权限", 403)
     service = ReservationService(session, principal)
     await service._load_device(device_id)
     rows = list(
@@ -133,6 +135,8 @@ async def upload_device_document(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DeviceDocumentData]:
+    if not principal.has_permission("device:documents:manage"):
+        raise ApiError("FORBIDDEN", "当前账号没有管理设备文档的权限", 403)
     if document_type not in DOCUMENT_TYPES:
         raise ApiError("DOCUMENT_TYPE_INVALID", "文档类型必须是设备手册或操作规程", 422)
     normalized_title = title.strip()
@@ -226,6 +230,8 @@ async def archive_device_document(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
+    if not principal.has_permission("device:documents:manage"):
+        raise ApiError("FORBIDDEN", "当前账号没有管理设备文档的权限", 403)
     service = ReservationService(session, principal)
     device = await service._load_device(device_id)
     if not await service._can_manage_device(device):
@@ -260,6 +266,8 @@ async def download_device_document(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> FileResponse:
+    if not principal.has_permission("device:read"):
+        raise ApiError("FORBIDDEN", "当前账号没有查看设备文档的权限", 403)
     document = await _load_device_document(session, asset_token, principal)
     root = _upload_root(request)
     path = Path(document.asset.storage_path).resolve()

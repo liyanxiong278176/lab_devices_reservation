@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: production
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  - job_name: lab-api
+    metrics_path: /api/v2/metrics
+    authorization:
+      type: Bearer
+      credentials_file: /tmp/lab_metrics_token
+    static_configs:
+      - targets: [app:8000]
+
+  - job_name: mysql
+    static_configs:
+      - targets: [mysqld-exporter:9104]
+
+  - job_name: redis
+    static_configs:
+      - targets: [redis-exporter:9121]
+
+  - job_name: containers
+    static_configs:
+      - targets: [cadvisor:8080]

@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MAX_RESERVATION_PLAN_DAYS = 31
 
@@ -11,7 +13,7 @@ class DateWindow(BaseModel):
     end_date: date
 
     @model_validator(mode="after")
-    def validate_order(self) -> "DateWindow":
+    def validate_order(self) -> DateWindow:
         if self.end_date < self.start_date:
             raise ValueError("结束日期不能早于开始日期")
         if (self.end_date - self.start_date).days + 1 > MAX_RESERVATION_PLAN_DAYS:
@@ -39,7 +41,7 @@ class ReservationPlanRequest(BaseModel):
     commit_mode: Literal["all_or_nothing", "available_only"] = "all_or_nothing"
 
     @model_validator(mode="after")
-    def validate_shape(self) -> "ReservationPlanRequest":
+    def validate_shape(self) -> ReservationPlanRequest:
         has_range = self.start_date is not None or self.end_date is not None
         has_dates = bool(self.dates)
         has_windows = bool(self.windows)
@@ -58,6 +60,12 @@ class ReservationPlanRequest(BaseModel):
             if requested_days > MAX_RESERVATION_PLAN_DAYS:
                 raise ValueError("单次预约最多支持 31 个自然日")
         elif self.windows:
+            ordered_windows = sorted(self.windows, key=lambda item: item.start_date)
+            if any(
+                current.start_date <= previous.end_date
+                for previous, current in zip(ordered_windows, ordered_windows[1:])
+            ):
+                raise ValueError("重复日期区间不能重叠")
             requested_days = sum(
                 (window.end_date - window.start_date).days + 1 for window in self.windows
             )
@@ -77,6 +85,14 @@ class ReservationPlanRequest(BaseModel):
         for window in self.windows_for_request():
             values.extend(window.dates())
         return sorted(set(values))
+
+    def reservation_segments(self) -> list[list[date]]:
+        """Preserve one continuous range/window or each explicit date booking."""
+        if self.start_date is not None and self.end_date is not None:
+            return [DateWindow(start_date=self.start_date, end_date=self.end_date).dates()]
+        if self.dates:
+            return [[item] for item in self.dates]
+        return [window.dates() for window in self.windows or []]
 
 
 class ReservationConflict(BaseModel):
@@ -115,6 +131,7 @@ class DeviceSummary(BaseModel):
     requires_safety_ack: bool = False
     requires_qualification: bool = False
     max_advance_days: int | None = None
+    maintenance_warning: str | None = None
 
 
 class DeviceDetail(DeviceSummary):
@@ -157,6 +174,7 @@ class AvailabilityDay(BaseModel):
     available: bool
     reservation_id: int | None = None
     status: str | None = None
+    reason: str | None = None
 
 
 class ReservationData(BaseModel):
@@ -208,12 +226,20 @@ class ReservationDeviceSuggestion(BaseModel):
     category_name: str | None = None
 
 
+class ReservationPolicySnapshot(BaseModel):
+    user_category: Literal["STUDENT", "LAB_ADMIN"]
+    max_booking_days: int
+    max_advance_days: int
+    approval_required: bool
+
+
 class ReservationPreflightData(BaseModel):
     device: DeviceSummary
     requested_dates: list[date]
     available_dates: list[date]
     conflicts: list[ReservationConflict]
     all_available: bool
+    effective_policy: ReservationPolicySnapshot
     safety_required: bool = False
     safety_acknowledged: bool = False
     qualification_required: bool = False
@@ -242,6 +268,124 @@ class ReservationPage(BaseModel):
 class FeedbackCreateRequest(BaseModel):
     rating: int = Field(ge=1, le=5)
     comment: str | None = Field(default=None, max_length=500)
+
+
+class MaintenancePlanWrite(BaseModel):
+    plan_type: Literal["ROUTINE", "CALIBRATION", "SAFETY_CHECK"]
+    title: str = Field(min_length=2, max_length=160)
+    interval_value: int = Field(ge=1, le=365)
+    interval_unit: Literal["DAY", "MONTH", "YEAR"]
+    due_date: date
+    downtime_start: date | None = None
+    downtime_end: date | None = None
+    active: bool = True
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 2:
+            raise ValueError("计划名称至少需要 2 个字符")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_downtime(self) -> MaintenancePlanWrite:
+        if (self.downtime_start is None) != (self.downtime_end is None):
+            raise ValueError("计划停机开始和结束日期必须同时填写")
+        if (
+            self.downtime_start is not None
+            and self.downtime_end is not None
+            and self.downtime_end < self.downtime_start
+        ):
+            raise ValueError("计划停机结束日期不能早于开始日期")
+        return self
+
+
+class MaintenanceRecordCreate(BaseModel):
+    cycle_due_date: date
+    completed_date: date
+    result: Literal["PASSED", "FAILED"]
+    notes: str | None = Field(default=None, max_length=2000)
+    evidence_asset_token: str | None = Field(default=None, min_length=20, max_length=64)
+
+    @field_validator("notes")
+    @classmethod
+    def normalize_notes(cls, value: str | None) -> str | None:
+        return value.strip() if value and value.strip() else None
+
+    @model_validator(mode="after")
+    def validate_failure_reason(self) -> MaintenanceRecordCreate:
+        if self.result == "FAILED" and not self.notes:
+            raise ValueError("检查不合格时请填写不合格情况")
+        return self
+
+
+class MaintenanceEvidenceData(BaseModel):
+    asset_token: str
+    name: str
+    content_type: str
+    size_bytes: int
+    url: str
+
+
+class MaintenanceRecordData(BaseModel):
+    id: int
+    plan_id: int
+    device_id: int
+    college_id: int | None
+    cycle_due_date: date
+    completed_date: date
+    downtime_start: date | None = None
+    downtime_end: date | None = None
+    result: Literal["PASSED", "FAILED"]
+    notes: str | None = None
+    performed_by: int
+    performed_by_name: str | None = None
+    evidence_asset_token: str | None = None
+    evidence_name: str | None = None
+    evidence_content_type: str | None = None
+    evidence_size_bytes: int | None = None
+    evidence_url: str | None = None
+    repair_report_id: int | None = None
+    created_at: datetime | None = None
+
+
+class MaintenancePlanData(BaseModel):
+    id: int
+    device_id: int
+    device_name: str
+    device_asset_code: str | None = None
+    college_id: int | None
+    plan_type: Literal["ROUTINE", "CALIBRATION", "SAFETY_CHECK"]
+    title: str
+    interval_value: int
+    interval_unit: Literal["DAY", "MONTH", "YEAR"]
+    due_date: date
+    downtime_start: date | None = None
+    downtime_end: date | None = None
+    active: bool
+    temporarily_unbookable: bool = False
+    unbookable_reason: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class MaintenancePlanPage(BaseModel):
+    items: list[MaintenancePlanData]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    truncated: bool = False
+
+
+class MaintenanceRecordPage(BaseModel):
+    items: list[MaintenanceRecordData]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    truncated: bool = False
 
 
 class FeedbackData(BaseModel):
@@ -346,6 +490,7 @@ class BlackoutData(BaseModel):
     id: int
     scope_type: str
     scope_id: int
+    scope_name: str | None = None
     blocked_date: date
     reason: str
     active: bool

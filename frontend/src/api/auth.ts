@@ -5,27 +5,45 @@ export interface LoginPayload {
   password: string
 }
 
+export interface RegisterPayload extends LoginPayload {
+  real_name: string
+  college_id: number
+}
+
 export interface UserInfoVO {
   id: number
   username: string
   real_name: string | null
   college_id: number | null
   roles: string[]
+  permissions: string[]
 }
 
-export interface TokenVO {
-  access_token: string
-  refresh_token: string
-  token_type: string
+export interface SessionVO {
+  authenticated: boolean
   expires_in: number
+  csrf_token: string
 }
 
-export const login = (data: LoginPayload) => request.post<unknown, TokenVO>('/auth/login', data)
+export interface PublicCollegeVO {
+  id: number
+  code: string
+  name: string
+}
 
-export const refresh = (refreshToken: string) =>
-  request.post<unknown, TokenVO>('/auth/refresh', { refresh_token: refreshToken })
+export const getCsrf = () => request.get<unknown, { csrf_token: string }>('/auth/csrf')
+
+export const listRegistrationColleges = () =>
+  request.get<unknown, PublicCollegeVO[]>('/auth/colleges')
+
+export const login = (data: LoginPayload) =>
+  request.post<unknown, SessionVO>('/auth/login', data)
+
+export const register = (data: RegisterPayload) =>
+  request.post<unknown, SessionVO>('/auth/register', data)
+
+export const refresh = () => request.post<unknown, SessionVO>('/auth/refresh', {})
 
 export const getMe = () => request.get<unknown, UserInfoVO>('/auth/me')
 
-export const logout = (refreshToken: string) =>
-  request.post<unknown, void>('/auth/logout', { refresh_token: refreshToken })
+export const logout = () => request.post<unknown, void>('/auth/logout', {})

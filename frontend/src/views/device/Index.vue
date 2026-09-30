@@ -16,6 +16,7 @@ import Tag from '@/components/ui/Tag.vue'
 import TextButton from '@/components/ui/TextButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageDepthNotice from '@/components/ui/PageDepthNotice.vue'
+import PageSizeControl from '@/components/ui/PageSizeControl.vue'
 
 const router = useRouter()
 
@@ -186,12 +187,13 @@ onMounted(load)
           </h3>
 
           <p class="device-card__specs">{{ row.specs || '暂无规格信息' }}</p>
+          <p v-if="row.maintenanceWarning" class="device-card__maintenance">{{ row.maintenanceWarning }}</p>
 
           <div class="device-card__foot">
             <span class="device-card__meta">
               {{ [row.labName, row.categoryName].filter(Boolean).join(' · ') || '未分配' }}
             </span>
-            <TextButton size="small" @click.stop="goReserve(row)">预约</TextButton>
+            <TextButton size="small" :disabled="row.status !== 'IDLE' || Boolean(row.maintenanceWarning)" @click.stop="goReserve(row)">预约</TextButton>
           </div>
         </GlowCard>
       </div>
@@ -209,12 +211,17 @@ onMounted(load)
     <!-- 分页 -->
     <div v-if="page.records.length > 0" class="device-page__pager">
       <PageDepthNotice v-if="page.truncated" :total="page.total" />
+      <PageSizeControl
+        :model-value="query.size ?? 24"
+        :options="[24, 48, 96]"
+        label="每页显示设备数量"
+        @change="onSizeChange"
+      />
       <el-pagination
         :current-page="page.current"
         :page-size="page.size"
         :total="page.truncated ? Math.min(page.total, (page.pages || 1) * page.size) : page.total"
-        :page-sizes="[24, 48, 96]"
-        layout="total, sizes, prev, pager, next"
+        layout="total, prev, pager, next"
         background
         @current-change="onPageChange"
         @size-change="onSizeChange"
@@ -253,6 +260,7 @@ onMounted(load)
           </Tag>
           <span class="device-drawer__limit">最多 {{ selectedDevice.maxReservationDays ?? '—' }} 天</span>
         </div>
+        <el-alert v-if="selectedDevice?.maintenanceWarning" :title="selectedDevice.maintenanceWarning" type="warning" :closable="false" show-icon />
 
         <section class="device-drawer__section">
           <span class="section-kicker">LOCATION</span>
@@ -269,7 +277,7 @@ onMounted(load)
 
         <footer class="device-drawer__actions">
           <TextButton @click="goFullDetail">查看完整详情</TextButton>
-          <el-button type="primary" :disabled="selectedDevice?.status !== 'IDLE'" @click="reserveSelected">预约设备</el-button>
+          <el-button type="primary" :disabled="selectedDevice?.status !== 'IDLE' || Boolean(selectedDevice?.maintenanceWarning)" @click="reserveSelected">预约设备</el-button>
         </footer>
       </div>
     </el-drawer>
@@ -277,6 +285,7 @@ onMounted(load)
 </template>
 
 <style scoped lang="scss">
+.device-card__maintenance { margin: 8px 0 0; color: var(--status-warning); font-size: 12px; line-height: 1.45; }
 .device-page {
   display: flex;
   flex-direction: column;
@@ -316,9 +325,12 @@ onMounted(load)
 
   &__pager {
     display: flex;
+    align-items: center;
+    gap: 14px;
     justify-content: flex-end;
     padding-top: 4px;
   }
+
 }
 
 // ---- 设备网格 ---------------------------------------------------------------

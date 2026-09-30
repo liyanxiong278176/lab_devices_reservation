@@ -7,8 +7,14 @@ import pytest
 from app.core.errors import ApiError
 from app.core.settings import Settings
 from app.core.uploads import cleanup_orphan_uploads, upload_quota_guard
-from app.infrastructure.db.models import KnowledgeDocument, RepairReport, UploadAsset
+from app.infrastructure.db.models import (
+    KnowledgeDocument,
+    RepairReport,
+    UploadAsset,
+    UploadQuotaBucket,
+)
 from app.main import create_app
+from sqlalchemy import select
 from starlette.requests import Request
 
 
@@ -117,6 +123,35 @@ async def test_upload_quotas_bound_per_user_and_total_storage(seeded, tmp_path: 
             ):
                 pass
         assert total_error.value.code == "UPLOAD_STORAGE_FULL"
+
+
+@pytest.mark.asyncio
+async def test_global_user_upload_quota_works_without_a_college(seeded) -> None:
+    factory, _college, _, user, *_ = seeded
+    app = create_app(
+        Settings(
+            environment="test",
+            enable_workers=False,
+            upload_total_quota_bytes=100,
+            upload_college_quota_bytes=100,
+            upload_user_quota_bytes=100,
+        )
+    )
+    async with factory() as session:
+        async with upload_quota_guard(
+            upload_request(app),
+            session,
+            user_id=user.id,
+            college_id=None,
+            incoming_bytes=7,
+        ):
+            pass
+        buckets = list((await session.scalars(select(UploadQuotaBucket))).all())
+
+    assert {(bucket.scope_type, bucket.scope_id, bucket.used_bytes) for bucket in buckets} == {
+        ("global", 0, 7),
+        ("user", user.id, 7),
+    }
 
 
 @pytest.mark.asyncio

@@ -37,6 +37,9 @@ async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
         if engine is None:
             engine = build_engine(request.app.state.settings)
             request.app.state.db_engine = engine
+        metrics = getattr(request.app.state, "metrics", None)
+        if metrics is not None:
+            metrics.monitor_sqlalchemy_pool(engine)
         session_factory = build_session_factory(engine)
         request.app.state.session_factory = session_factory
 

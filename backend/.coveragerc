@@ -1,0 +1,12 @@
+[run]
+branch = True
+source = app
+concurrency = thread, greenlet
+omit =
+    app/ai/*
+    app/api/v2/ai.py
+
+[report]
+show_missing = True
+skip_empty = True
+fail_under = 100

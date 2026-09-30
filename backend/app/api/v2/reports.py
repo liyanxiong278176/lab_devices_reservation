@@ -335,11 +335,7 @@ async def report_summary(
         event_index = 0
         for offset in range(day_count):
             current_day = start + timedelta(days=offset)
-            midnight = datetime.combine(current_day, datetime.min.time())
-            next_midnight = midnight + timedelta(days=1)
-            while event_index < len(events) and events[event_index].created_at < midnight:
-                state = str(events[event_index].new_status)
-                event_index += 1
+            next_midnight = datetime.combine(current_day + timedelta(days=1), datetime.min.time())
             day_state = state
             end_state = state
             next_index = event_index
@@ -477,7 +473,7 @@ async def create_export(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ExportTaskData]:
-    if not principal.is_lab_admin:
+    if not principal.has_permission("report:read"):
         raise ApiError("FORBIDDEN", "只有负责人或系统管理员可以创建导出任务", 403)
     if payload.start_date and payload.end_date and payload.end_date < payload.start_date:
         raise ApiError("DATE_RANGE_INVALID", "结束日期不能早于开始日期", 422)

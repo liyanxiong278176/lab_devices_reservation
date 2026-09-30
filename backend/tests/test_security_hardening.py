@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from time import perf_counter
-
 import pytest
 from app.auth.security import Principal
 from app.core.client_ip import resolve_client_ip
@@ -15,6 +13,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from starlette.requests import Request
 
 
@@ -55,6 +54,7 @@ def test_production_settings_reject_mysql_root_runtime_account() -> None:
         Settings(
             environment="prod",
             jwt_secret="s" * 48,
+            cookie_secure=True,
             mysql_dsn="mysql+asyncmy://root:separate-strong-value@localhost/lab_reservation",
         )
 
@@ -64,6 +64,7 @@ def test_production_settings_reject_public_jwt_example_placeholder() -> None:
         Settings(
             environment="prod",
             jwt_secret="replace-with-a-long-random-secret-at-least-32-characters",
+            cookie_secure=True,
         )
 
 
@@ -72,6 +73,7 @@ async def test_public_registration_rate_limit_uses_local_fallback() -> None:
     app = FastAPI()
     app.state.settings = Settings(
         environment="test",
+        rate_limit_enabled=True,
         rate_limit_register_ip_capacity=1,
         rate_limit_register_ip_refill_per_second=0.001,
         rate_limit_register_username_capacity=10,
@@ -93,17 +95,13 @@ async def test_public_registration_rate_limit_uses_local_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_registration_requires_admin_tenant_assignment_before_login(seeded) -> None:
-    factory, college, _, student1, _, _, _, _ = seeded
-    async with factory() as session:
-        if await session.scalar(select(Role).where(Role.role_code == "STUDENT")) is None:
-            session.add(Role(role_code="STUDENT", role_name="学生"))
-            await session.commit()
-
+async def test_registration_selects_college_and_authenticates_immediately(seeded) -> None:
+    factory, college, other_college, _, _, _, _, _ = seeded
     app = create_app(
         Settings(
             environment="test",
-            cors_origins=[],
+            cors_origins=["http://test"],
+            redis_url="redis://127.0.0.1:6379/15",
             enable_workers=False,
             rate_limit_enabled=False,
         )
@@ -116,84 +114,64 @@ async def test_registration_requires_admin_tenant_assignment_before_login(seeded
     app.dependency_overrides[get_db] = override_db
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            started = perf_counter()
+            csrf_response = await client.get("/api/v2/auth/csrf")
+            csrf = {
+                "Origin": "http://test",
+                "X-CSRF-Token": csrf_response.json()["data"]["csrf_token"],
+            }
+            colleges = await client.get("/api/v2/auth/colleges")
+            assert {row["id"] for row in colleges.json()["data"]} == {college.id, other_college.id}
             registered = await client.post(
                 "/api/v2/auth/register",
                 json={
-                    "username": "unverified-student",
+                    "username": "registered-student",
                     "password": "Password123!",
-                    "real_name": "待核验学生",
+                    "real_name": "新注册学生",
                     "college_id": college.id,
                 },
+                headers=csrf,
             )
-            first_response_seconds = perf_counter() - started
-            assert registered.status_code == 202
-            assert first_response_seconds >= 0.45
+            assert registered.status_code == 201
             payload = registered.json()
             assert payload["code"] == "OK"
-            assert payload["data"] == {"received": True}
+            assert payload["data"]["authenticated"] is True
+            csrf["X-CSRF-Token"] = payload["data"]["csrf_token"]
+            assert client.cookies.get("lab_access")
+            assert client.cookies.get("lab_refresh")
 
-            started = perf_counter()
+            me = await client.get("/api/v2/auth/me")
+            assert me.status_code == 200
+            assert me.json()["data"]["college_id"] == college.id
+            assert me.json()["data"]["roles"] == ["STUDENT"]
+
             duplicate = await client.post(
                 "/api/v2/auth/register",
                 json={
-                    "username": "unverified-student",
+                    "username": "registered-student",
                     "password": "DifferentPassword123!",
-                    "real_name": "另一个名字",
+                    "real_name": "重复注册",
                     "college_id": college.id,
                 },
+                headers=csrf,
             )
-            duplicate_response_seconds = perf_counter() - started
-            assert duplicate.status_code == registered.status_code
-            assert duplicate_response_seconds >= 0.45
-            assert duplicate.json()["code"] == payload["code"]
-            assert duplicate.json()["message"] == payload["message"]
-            assert duplicate.json()["data"] == payload["data"]
-
+            assert duplicate.status_code == 409
             login = await client.post(
                 "/api/v2/auth/login",
-                json={"username": "unverified-student", "password": "Password123!"},
+                json={"username": "registered-student", "password": "Password123!"},
+                headers=csrf,
             )
-            assert login.status_code == 401
-
-        from app.api.v2.users import update_user_status
+            assert login.status_code == 200
 
         async with factory() as session:
             created_user = await session.scalar(
-                select(User).where(User.username == "unverified-student")
+                select(User)
+                .options(selectinload(User.roles))
+                .where(User.username == "registered-student")
             )
             assert created_user is not None
-            assert created_user.status == 0
-            assert created_user.college_id is None
-            created_user.college_id = college.id
-            await session.commit()
-            await update_user_status(
-                created_user.id,
-                1,
-                Principal(
-                    user_id=student1.id,
-                    username=student1.username,
-                    college_id=student1.college_id,
-                    roles=("SYS_ADMIN",),
-                    token_type="access",
-                    token_id="admin-review-test",
-                ),
-                session,
-            )
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            approved_login = await client.post(
-                "/api/v2/auth/login",
-                json={"username": "unverified-student", "password": "Password123!"},
-            )
-        assert approved_login.status_code == 200
-
-        async with factory() as session:
-            user = await session.scalar(select(User).where(User.username == "unverified-student"))
-            assert user is not None
-            assert user.status == 1
-            assert user.college_id == college.id
-            assert user.id != student1.id
+            assert created_user.status == 1
+            assert created_user.college_id == college.id
+            assert [role.role_code for role in created_user.roles] == ["STUDENT"]
     finally:
         app.dependency_overrides.clear()
 
@@ -227,5 +205,11 @@ async def test_admin_cannot_enable_unassigned_regular_user(seeded) -> None:
             token_id="registration-review-test",
         )
         with pytest.raises(ApiError) as error:
-            await update_user_status(pending_id, 1, admin, session)
+            await update_user_status(
+                pending_id,
+                _request(FastAPI(), "/api/v2/users/1/status"),
+                1,
+                admin,
+                session,
+            )
         assert error.value.code == "COLLEGE_REQUIRED"

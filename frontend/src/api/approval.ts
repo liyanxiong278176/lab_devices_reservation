@@ -44,7 +44,7 @@ function mapApproval(item: V2Approval): ApprovalItemVO {
 }
 
 /**
- * 审批接口（对齐 ApprovalController）。全部需 device:approve 权限。
+ * 审批接口（对齐 ApprovalController）。全部需 reservation:approve 权限。
  *
  * 关键契约：
  *  - GET  /approvals/pending?page&size          → IPage<ApprovalItemVO>（按自辖 lab 范围过滤）

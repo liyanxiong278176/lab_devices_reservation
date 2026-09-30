@@ -32,7 +32,17 @@ test('管理员实际浏览 AI 对话、环境配置状态、知识库与用量�
     await expect(page.locator('.ai-config-required')).toBeVisible()
     await expect(page.locator('.ai-composer textarea')).toBeDisabled()
   }
-  await expect(page.locator('.prompt-grid button').last()).toBeInViewport({ ratio: 1 })
+  const chatBody = page.locator('.ai-chat__body')
+  await expect.poll(async () => chatBody.evaluate((element) => {
+    const chat = element as HTMLElement
+    return chat.scrollHeight - chat.scrollTop - chat.clientHeight
+  })).toBeLessThan(100)
+  const promptButtons = page.locator('.prompt-grid button')
+  if (await promptButtons.count()) {
+    await expect(promptButtons.last()).toBeInViewport({ ratio: 1 })
+  } else {
+    await expect(page.locator('.chat-message__bubble').last()).toBeVisible()
+  }
   await page.screenshot({ path: testInfo.outputPath('ai-workbench-chat.png'), animations: 'disabled' })
 
   const configsResponsePromise = page.waitForResponse((response) => {
@@ -74,6 +84,28 @@ test('管理员实际浏览 AI 对话、环境配置状态、知识库与用量�
 
   await page.getByRole('button', { name: '知识库' }).click()
   await expect(page.getByRole('heading', { name: '知识库', exact: true })).toBeVisible()
+  const scopeRolesResponsePromise = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/api/v2/ai/knowledge/scope-roles',
+  )
+  await page.getByRole('button', { name: '新建文本' }).click()
+  const scopeRolesResponse = await scopeRolesResponsePromise
+  expect(scopeRolesResponse.status()).toBe(200)
+  const scopeRoles = (await scopeRolesResponse.json()).data as Array<{ code: string; name: string }>
+  const labAdminRole = scopeRoles.find((role) => role.code === 'LAB_ADMIN')
+  expect(labAdminRole).toBeTruthy()
+  const knowledgeDialog = page.getByRole('dialog', { name: '新建文本知识' })
+  await expect(knowledgeDialog).toBeVisible()
+  await expect(knowledgeDialog.getByText('实验室范围')).toBeVisible()
+  await expect(knowledgeDialog.getByText('设备范围')).toBeVisible()
+  await expect(knowledgeDialog.getByText(/可见角色/)).toBeVisible()
+  const roleSelect = knowledgeDialog.locator('.el-select').last()
+  await roleSelect.click()
+  const labAdminOption = page.getByRole('option', { name: labAdminRole!.name })
+  await expect(labAdminOption).toBeVisible()
+  await labAdminOption.click()
+  await expect(roleSelect).toContainText(labAdminRole!.name)
+  await page.screenshot({ path: testInfo.outputPath('ai-workbench-knowledge-scope.png'), animations: 'disabled' })
+  await knowledgeDialog.getByRole('button', { name: '取消' }).click()
   await page.screenshot({ path: testInfo.outputPath('ai-workbench-knowledge.png'), animations: 'disabled' })
 
   await page.getByRole('button', { name: '用量与额度' }).click()

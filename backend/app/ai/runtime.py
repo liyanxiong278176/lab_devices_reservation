@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,6 +19,7 @@ from app.infrastructure.db.models import (
     AiConversation,
     AiRun,
     AiRunEvent,
+    Role,
     User,
 )
 from app.infrastructure.db.session import build_session_factory
@@ -62,9 +64,30 @@ async def execute_ai_run(app: FastAPI, run_id: int) -> None:
     current_task = asyncio.current_task()
     if current_task is not None:
         active[run_id] = current_task
+    started = time.perf_counter()
+    outcome = "returned"
     try:
         await _execute_ai_run(app, run_id)
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        raise
+    except Exception:
+        outcome = "error"
+        raise
     finally:
+        metrics = getattr(app.state, "metrics", None)
+        if metrics is not None:
+            metrics.observe(
+                "ai_run_duration_seconds",
+                time.perf_counter() - started,
+                labels={"outcome": outcome},
+            )
+        logger.info(
+            "AI run finished run_id=%s duration_ms=%s outcome=%s",
+            run_id,
+            int((time.perf_counter() - started) * 1000),
+            outcome,
+        )
         active.pop(run_id, None)
 
 
@@ -90,7 +113,7 @@ async def _execute_ai_run(app: FastAPI, run_id: int) -> None:
         )
         user = await session.scalar(
             select(User)
-            .options(selectinload(User.roles))
+            .options(selectinload(User.roles).selectinload(Role.permissions))
             .where(User.id == run.user_id, User.status == 1)
         )
         if conversation is None or user is None or user.college_id != run.college_id:
@@ -106,6 +129,22 @@ async def _execute_ai_run(app: FastAPI, run_id: int) -> None:
             )
             await _settle_failed(session, run_id)
             return
+        current_permissions = {
+            permission.permission_code for role in user.roles for permission in role.permissions
+        }
+        if "ai:use" not in current_permissions:
+            await _fail_run(session, run_id, "AI_PERMISSION_REVOKED")
+            await append_run_event(
+                factory,
+                run_id,
+                {
+                    "type": "error",
+                    "code": "AI_PERMISSION_REVOKED",
+                    "message": "当前账号已无权使用 AI 工作台，请联系管理员",
+                },
+            )
+            await _settle_failed(session, run_id)
+            return
         principal = Principal(
             user_id=user.id,
             username=user.username,
@@ -113,6 +152,7 @@ async def _execute_ai_run(app: FastAPI, run_id: int) -> None:
             roles=tuple(role.role_code for role in user.roles),
             token_type="access",
             token_id=f"ai-run-{run_id}",
+            permissions=tuple(sorted(current_permissions)),
         )
         runtime = await get_runtime_config(session, principal, app.state.settings)
         embedding = await get_component_config(session, app.state.settings, "embedding")

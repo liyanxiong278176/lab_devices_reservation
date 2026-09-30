@@ -4,7 +4,7 @@
 #
 # ============================================================
 # 生产环境不再为数据库密码和 JWT 密钥提供默认值；缺失时直接拒绝启动。
-#   - 4G 机器内存分配：mysql 512M / redis 128M / qdrant 256M / app 768M / frontend 64M
+#   - 4G 机器内存分配：mysql 512M / redis 128M / qdrant 256M / app 768M / Celery worker 768M / frontend 64M
 # ============================================================
 name: labprod
 
@@ -21,7 +21,9 @@ services:
       MYSQL_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD must be set}
       TZ: Asia/Shanghai
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
-    volumes: ["mysql_data:/var/lib/mysql"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - mysql_socket:/var/run/mysqld
     # 数据库只允许 Docker 内部 app 服务访问，不发布到宿主机/公网。
     mem_limit: 512m
     healthcheck:
@@ -34,6 +36,9 @@ services:
     image: redis:7-alpine
     networks: [lab-internal]
     restart: unless-stopped
+    # Broker uses DB 1 and app sessions/cache use DB 0. AOF narrows the broker
+    # restart-loss window; noeviction preserves queued/session keys under pressure.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "96mb", "--maxmemory-policy", "noeviction"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -43,7 +48,7 @@ services:
     # Redis 只允许 Docker 内部 app 服务访问，不发布到宿主机/公网。
     mem_limit: 128m
   qdrant:
-    image: qdrant/qdrant:v1.14.1
+    image: qdrant/qdrant:v1.19.0
     networks: [lab-internal]
     restart: unless-stopped
     volumes: ["qdrant_data:/qdrant/storage"]
@@ -70,12 +75,15 @@ services:
       # Runtime uses the application account scoped to lab_reservation, never MySQL root.
       LAB_MYSQL_DSN: mysql+asyncmy://${DB_APP_USER:?DB_APP_USER must be set}:${DB_APP_PASSWORD:?DB_APP_PASSWORD must be set}@mysql:3306/lab_reservation?charset=utf8mb4
       LAB_REDIS_URL: redis://redis:6379/0
+      LAB_CELERY_BROKER_URL: redis://redis:6379/1
       LAB_QDRANT_URL: http://qdrant:6333
       LAB_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
-      LAB_CORS_ORIGINS: '["http://localhost"]'
+      LAB_COOKIE_SECURE: "true"
+      LAB_CORS_ORIGINS: "[\"${APP_PUBLIC_ORIGIN:?APP_PUBLIC_ORIGIN must be set}\"]"
       # frontend nginx + Docker host gateway; the host TLS proxy must append the real client IP.
       LAB_TRUSTED_PROXY_IPS: '["172.29.0.1/32","172.29.0.2/32"]'
       LAB_ENABLE_WORKERS: "true"
+      LAB_METRICS_TOKEN: ${PROMETHEUS_METRICS_TOKEN:?PROMETHEUS_METRICS_TOKEN must be set}
     volumes:
       - app_data:/app/backend/.data
     mem_limit: 768m
@@ -85,6 +93,32 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
+  celery-worker:
+    build: .
+    networks: [lab-internal]
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      qdrant: { condition: service_healthy }
+    environment:
+      LAB_ENVIRONMENT: prod
+      LAB_DEBUG: "false"
+      LAB_MYSQL_DSN: mysql+asyncmy://${DB_APP_USER:?DB_APP_USER must be set}:${DB_APP_PASSWORD:?DB_APP_PASSWORD must be set}@mysql:3306/lab_reservation?charset=utf8mb4
+      LAB_REDIS_URL: redis://redis:6379/0
+      LAB_CELERY_BROKER_URL: redis://redis:6379/1
+      LAB_QDRANT_URL: http://qdrant:6333
+      LAB_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      LAB_COOKIE_SECURE: "true"
+      LAB_METRICS_TOKEN: ${PROMETHEUS_METRICS_TOKEN:?PROMETHEUS_METRICS_TOKEN must be set}
+      LAB_ENABLE_WORKERS: "false"
+    command: ["uv", "run", "--no-dev", "celery", "-A", "app.infrastructure.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1", "--hostname=knowledge@%h"]
+    volumes:
+      - app_data:/app/backend/.data
+    # One worker process limits simultaneous source files and embedding batches.
+    mem_limit: 768m
   frontend:
     build: ./frontend
     networks:
@@ -96,11 +130,97 @@ services:
     depends_on:
       app: { condition: service_healthy }
     mem_limit: 64m
+  mysql-exporter-setup:
+    image: mysql:8.0
+    networks: [lab-internal]
+    restart: "no"
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD must be set}
+      MYSQL_DATABASE: lab_reservation
+      MYSQL_USER: ${DB_APP_USER:?DB_APP_USER must be set}
+      MYSQL_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD must be set}
+      MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?MYSQL_EXPORTER_PASSWORD must be set}
+    volumes:
+      - mysql_socket:/var/run/mysqld
+      - ./monitoring/mysql/setup-exporter-user.sh:/setup-exporter-user.sh:ro
+    entrypoint: ["/bin/sh", "/setup-exporter-user.sh"]
+    mem_limit: 64m
+  mysqld-exporter:
+    image: quay.io/prometheus/mysqld-exporter:v0.20.0
+    networks: [lab-internal]
+    restart: unless-stopped
+    depends_on:
+      mysql-exporter-setup: { condition: service_completed_successfully }
+    environment:
+      MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?MYSQL_EXPORTER_PASSWORD must be set}
+    volumes:
+      - ./monitoring/mysql/exporter-entrypoint.sh:/etc/mysqld-exporter/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/etc/mysqld-exporter/entrypoint.sh"]
+    expose: ["9104"]
+    mem_limit: 64m
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.92.0
+    networks: [lab-internal]
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    expose: ["9121"]
+    mem_limit: 64m
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.6
+    networks: [lab-internal]
+    restart: unless-stopped
+    command: ["--docker_only=true", "--housekeeping_interval=30s"]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    expose: ["8080"]
+    mem_limit: 128m
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    networks: [lab-internal]
+    restart: unless-stopped
+    environment:
+      PROMETHEUS_METRICS_TOKEN: ${PROMETHEUS_METRICS_TOKEN:?PROMETHEUS_METRICS_TOKEN must be set}
+    volumes:
+      - ./monitoring/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/entrypoint.sh:/etc/prometheus/entrypoint.sh:ro
+      - prometheus_data:/prometheus
+    entrypoint: ["/bin/sh", "/etc/prometheus/entrypoint.sh"]
+    expose: ["9090"]
+    mem_limit: 512m
+  grafana:
+    image: grafana/grafana:13.2.2
+    networks: [lab-internal]
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?GRAFANA_ADMIN_USER must be set}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3000/
+    ports: ["127.0.0.1:3000:3000"]
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    mem_limit: 256m
 volumes:
   mysql_data:
+  mysql_socket:
   redis_data:
   qdrant_data:
   app_data:
+  prometheus_data:
+  grafana_data:
 networks:
   lab-internal:
     ipam:

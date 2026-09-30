@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import logging
 import secrets
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,7 +12,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.config import (
@@ -22,23 +24,48 @@ from app.ai.config import (
     runtime_config,
     validate_provider_config,
 )
+from app.ai.dlp import redact_text, redact_value
+from app.ai.knowledge_build import (
+    build_job_data,
+    enqueue_knowledge_build,
+    latest_build_job_data,
+    latest_build_jobs,
+    retry_failed_knowledge_build,
+)
+from app.ai.memory import (
+    confirm_l2_memory,
+    find_memories_forget_preview,
+    invalidate_memories,
+    reject_l2_memory,
+)
 from app.ai.providers import test_provider
-from app.ai.rag.qdrant_store import QdrantKnowledgeStore, split_text
+from app.ai.rag.access import document_role_visible, document_scope_conditions
+from app.ai.rag.qdrant_store import (
+    QdrantKnowledgeStore,
+    parent_context_excerpt,
+    split_document_sections,
+)
 from app.ai.runtime import append_run_event, run_event_stream
 from app.ai.schemas import (
     AiConfigData,
     AiConfigTestData,
+    AiDomainTermCreateRequest,
+    AiDomainTermData,
     AiEmbeddingRebuildData,
     AiEmbeddingRebuildRequest,
     ChatRequest,
     ConversationCreateRequest,
     ConversationData,
+    KnowledgeBuildAcceptedData,
+    KnowledgeBuildJobData,
+    KnowledgeBuildSkipRequest,
     KnowledgeCreateRequest,
     KnowledgeData,
     KnowledgeReviewRequest,
+    KnowledgeRoleOption,
 )
+from app.ai.tools.policy import TOOL_POLICIES
 from app.ai.usage import (
-    add_aux_usage,
     estimate_reservation,
     reserve_chat_tokens,
     scoped_usage,
@@ -57,23 +84,190 @@ from app.infrastructure.db.models import (
     AiCheckpoint,
     AiCheckpointWrite,
     AiConfirmation,
+    AiContextSnapshot,
     AiConversation,
+    AiDomainTerm,
     AiEmbeddingRebuildJob,
     AiKnowledgeIndexState,
+    AiMemory,
     AiMessage,
     AiRun,
     AiRunEvent,
     AiUsageBucket,
     AiUsageEvent,
     College,
+    Device,
+    KnowledgeBuildJob,
     KnowledgeChunk,
     KnowledgeDocument,
+    KnowledgeSection,
+    Lab,
     OutboxTask,
+    Role,
     UploadAsset,
 )
 from app.infrastructure.db.session import get_db
 
-router = APIRouter()
+
+async def require_ai_access(
+    principal: Principal = Depends(get_current_principal),
+) -> None:
+    if not principal.has_permission("ai:use"):
+        raise ApiError("FORBIDDEN", "当前账号没有使用 AI 工作台的权限", 403)
+
+
+router = APIRouter(dependencies=[Depends(require_ai_access)])
+logger = logging.getLogger(__name__)
+
+
+def _ai_json_hash(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+@router.post("/ai/memories/{memory_id}/confirm")
+async def confirm_ai_memory(
+    memory_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[dict[str, Any]]:
+    memory = await confirm_l2_memory(
+        session,
+        user_id=principal.user_id,
+        memory_id=memory_id,
+    )
+    if memory is None:
+        raise ApiError("AI_MEMORY_NOT_FOUND", "记忆候选不存在或已处理", 404)
+    await session.commit()
+    return ApiResponse.ok({"id": memory.id, "status": memory.status})
+
+
+@router.post("/ai/memories/{memory_id}/reject")
+async def reject_ai_memory(
+    memory_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[dict[str, Any]]:
+    memory = await reject_l2_memory(
+        session,
+        user_id=principal.user_id,
+        memory_id=memory_id,
+    )
+    if memory is None:
+        raise ApiError("AI_MEMORY_NOT_FOUND", "记忆候选不存在或已处理", 404)
+    await session.commit()
+    return ApiResponse.ok({"id": memory.id, "status": memory.status})
+
+
+@router.get("/ai/domain-terms", response_model=ApiResponse[list[AiDomainTermData]])
+async def list_ai_domain_terms(
+    college_id: int | None = Query(default=None, gt=0),
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[AiDomainTermData]]:
+    if not principal.is_lab_admin and not principal.is_system_admin:
+        raise ApiError("FORBIDDEN", "无权管理 AI 领域词典", 403)
+    if not principal.is_system_admin and principal.college_id is None:
+        raise ApiError("FORBIDDEN", "负责人账号未绑定学院，不能维护学院词典", 403)
+    conditions = [AiDomainTerm.status == "APPROVED"]
+    if principal.is_system_admin:
+        if college_id is not None:
+            conditions.append(
+                or_(AiDomainTerm.college_id.is_(None), AiDomainTerm.college_id == college_id)
+            )
+    else:
+        conditions.append(
+            or_(
+                AiDomainTerm.college_id.is_(None),
+                AiDomainTerm.college_id == principal.college_id,
+            )
+        )
+    rows = list(
+        (
+            await session.scalars(
+                select(AiDomainTerm).where(*conditions).order_by(AiDomainTerm.term, AiDomainTerm.id)
+            )
+        ).all()
+    )
+    return ApiResponse.ok(
+        [
+            AiDomainTermData(
+                id=row.id,
+                college_id=row.college_id,
+                term=row.term,
+                canonical=row.canonical,
+                kind=row.kind,
+                status=row.status,
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.post("/ai/domain-terms", response_model=ApiResponse[AiDomainTermData], status_code=201)
+async def create_ai_domain_term(
+    payload: AiDomainTermCreateRequest,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[AiDomainTermData]:
+    if not principal.is_lab_admin and not principal.is_system_admin:
+        raise ApiError("FORBIDDEN", "无权管理 AI 领域词典", 403)
+    if not principal.is_system_admin and principal.college_id is None:
+        raise ApiError("FORBIDDEN", "负责人账号未绑定学院，不能维护学院词典", 403)
+    term = payload.term.strip()
+    canonical = payload.canonical.strip() if payload.canonical else None
+    if not term or (payload.kind == "SYNONYM" and not canonical):
+        raise ApiError("AI_DOMAIN_TERM_INVALID", "同义词类型必须填写标准词", 422)
+    scope = payload.college_id if principal.is_system_admin else principal.college_id
+    conditions = [
+        func.lower(AiDomainTerm.term) == term.casefold(),
+        AiDomainTerm.kind == payload.kind,
+        AiDomainTerm.college_id.is_(None) if scope is None else AiDomainTerm.college_id == scope,
+    ]
+    if await session.scalar(select(AiDomainTerm.id).where(*conditions).limit(1)) is not None:
+        raise ApiError("AI_DOMAIN_TERM_EXISTS", "该范围内已存在相同词条", 409)
+    row = AiDomainTerm(
+        college_id=scope,
+        term=term,
+        canonical=canonical if payload.kind == "SYNONYM" else None,
+        kind=payload.kind,
+        status="APPROVED",
+        created_by=principal.user_id,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return ApiResponse.ok(
+        AiDomainTermData(
+            id=row.id,
+            college_id=row.college_id,
+            term=row.term,
+            canonical=row.canonical,
+            kind=row.kind,
+            status=row.status,
+        )
+    )
+
+
+@router.delete("/ai/domain-terms/{term_id}")
+async def delete_ai_domain_term(
+    term_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[dict[str, Any]]:
+    if not principal.is_lab_admin and not principal.is_system_admin:
+        raise ApiError("FORBIDDEN", "无权管理 AI 领域词典", 403)
+    if not principal.is_system_admin and principal.college_id is None:
+        raise ApiError("FORBIDDEN", "负责人账号未绑定学院，不能维护学院词典", 403)
+    conditions = [AiDomainTerm.id == term_id]
+    if not principal.is_system_admin:
+        conditions.append(AiDomainTerm.college_id == principal.college_id)
+    row = await session.scalar(select(AiDomainTerm).where(*conditions).with_for_update())
+    if row is None:
+        raise ApiError("AI_DOMAIN_TERM_NOT_FOUND", "词条不存在或无权删除", 404)
+    await session.delete(row)
+    await session.commit()
+    return ApiResponse.ok({"id": term_id, "deleted": True})
 
 
 @router.get("/ai/status")
@@ -293,8 +487,36 @@ async def list_messages(
         )
         active_pending_ids = {confirmation.id for confirmation in confirmations}
 
+    memory_candidate_ids: set[int] = set()
+    for row in rows:
+        metadata = row.metadata_json or {}
+        candidates = metadata.get("memory_candidates", []) if isinstance(metadata, dict) else []
+        for candidate in candidates:
+            if isinstance(candidate, dict) and str(candidate.get("id", "")).isdigit():
+                memory_candidate_ids.add(int(candidate["id"]))
+    memory_statuses: dict[int, str] = {}
+    if memory_candidate_ids:
+        memory_rows = list(
+            (
+                await session.scalars(
+                    select(AiMemory).where(
+                        AiMemory.id.in_(memory_candidate_ids),
+                        AiMemory.user_id == principal.user_id,
+                    )
+                )
+            ).all()
+        )
+        memory_statuses = {memory.id: memory.status for memory in memory_rows}
+
     def message_metadata(row: AiMessage) -> dict[str, Any]:
         metadata = dict(row.metadata_json or {})
+        candidates = metadata.get("memory_candidates")
+        if isinstance(candidates, list):
+            metadata["memory_candidates"] = [
+                {**candidate, "status": memory_statuses.get(int(candidate.get("id", 0)), "INVALID")}
+                for candidate in candidates
+                if isinstance(candidate, dict)
+            ]
         pending = metadata.get("pending_confirmation")
         if isinstance(pending, dict):
             try:
@@ -319,6 +541,117 @@ async def list_messages(
     )
 
 
+@router.get("/ai/citations/knowledge/{point_id}")
+async def get_knowledge_citation(
+    point_id: str,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[dict[str, Any]]:
+    row = (
+        await session.execute(
+            select(KnowledgeChunk, KnowledgeDocument, KnowledgeSection)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .outerjoin(KnowledgeSection, KnowledgeSection.id == KnowledgeChunk.parent_section_id)
+            .where(
+                KnowledgeChunk.point_id == point_id,
+                KnowledgeDocument.status == "PUBLISHED",
+                *document_scope_conditions(principal),
+            )
+        )
+    ).first()
+    if row is None:
+        raise ApiError("AI_CITATION_NOT_FOUND", "引用内容不存在或已下架", 404)
+    chunk, document, section = row
+    if not document_role_visible(document.allowed_roles, principal):
+        raise ApiError("AI_CITATION_NOT_FOUND", "引用内容不存在或无权查看", 404)
+    return ApiResponse.ok(
+        {
+            "citation_id": chunk.point_id,
+            "document_id": document.id,
+            "document_version": document.version,
+            "title": document.title,
+            "source_type": document.source_type,
+            "section": section.section_path
+            if section is not None
+            else (chunk.metadata_json or {}).get("section", f"片段 {chunk.chunk_index + 1}"),
+            "content": redact_text(
+                parent_context_excerpt(section.content, chunk.content)
+                if section is not None
+                else chunk.content
+            ).text,
+            "chunk_content": redact_text(chunk.content).text,
+        }
+    )
+
+
+@router.get("/ai/citations/business/{citation_id:path}")
+async def get_business_citation(
+    citation_id: str,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[dict[str, Any]]:
+    parts = citation_id.split(":")
+    if len(parts) < 3 or parts[0] != "business":
+        raise ApiError("AI_CITATION_NOT_FOUND", "引用格式无效", 404)
+    _, entity, raw_id, *extra = parts
+    try:
+        entity_id = int(raw_id)
+    except ValueError as exc:
+        raise ApiError("AI_CITATION_NOT_FOUND", "引用格式无效", 404) from exc
+    service = ReservationService(session, principal)
+    if entity == "device":
+        if not principal.has_permission("device:read"):
+            raise ApiError("AI_CITATION_NOT_FOUND", "引用内容不存在或无权查看", 404)
+        device = await service._load_device(entity_id)
+        detail = {
+            "id": device.id,
+            "name": device.name,
+            "asset_code": device.asset_code,
+            "status": device.status,
+            "model": device.model,
+            "lab_name": device.lab.name if device.lab else None,
+        }
+        title = f"设备 · {device.name}"
+    elif entity == "reservation":
+        reservation = await service.get_reservation(entity_id)
+        detail = reservation.model_dump(mode="json")
+        title = f"预约 #{reservation.id} · {reservation.device_name}"
+    elif entity == "availability" and len(extra) == 2:
+        if not principal.has_permission("device:read"):
+            raise ApiError("AI_CITATION_NOT_FOUND", "引用内容不存在或无权查看", 404)
+        from datetime import date as date_type
+
+        try:
+            start_date = date_type.fromisoformat(extra[0])
+            end_date = date_type.fromisoformat(extra[1])
+        except ValueError as exc:
+            raise ApiError("AI_CITATION_NOT_FOUND", "引用日期格式无效", 404) from exc
+        if end_date < start_date or (end_date - start_date).days > 366:
+            raise ApiError("AI_CITATION_NOT_FOUND", "引用日期范围无效", 404)
+        device = await service._load_device(entity_id)
+        days = await service.availability(entity_id, start_date, end_date)
+        detail = {
+            "device_id": entity_id,
+            "device_name": device.name,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "days": [item.model_dump(mode="json") for item in days],
+        }
+        title = f"设备可用性 · {device.name}"
+    else:
+        raise ApiError("AI_CITATION_NOT_FOUND", "引用内容不存在或已失效", 404)
+    return ApiResponse.ok(
+        {
+            "citation_id": citation_id,
+            "title": title,
+            "source_type": "BUSINESS",
+            "section": entity,
+            "document_version": 0,
+            "content": json.dumps(detail, ensure_ascii=False, indent=2),
+        }
+    )
+
+
 @router.post("/ai/conversations/{conversation_id}/stream")
 async def stream_message(
     conversation_id: int,
@@ -328,7 +661,8 @@ async def stream_message(
     session: AsyncSession = Depends(get_db),
 ):
     settings = request.app.state.settings
-    content = payload.content.strip()
+    redaction = redact_text(payload.content.strip())
+    content = redaction.text
     if not content:
         raise ApiError("AI_INPUT_EMPTY", "请输入问题或任务", 422)
     if len(content) > settings.ai_max_input_chars:
@@ -370,10 +704,27 @@ async def stream_message(
             college_id=principal.college_id,
             role="user",
             content=content,
-            metadata_json={"run_key": run.run_key},
+            metadata_json={
+                "run_key": run.run_key,
+                "redacted_categories": list(redaction.categories),
+            },
         )
     )
     await session.flush()
+    if redaction.categories:
+        session.add(
+            AiRunEvent(
+                run_id=run.id,
+                sequence=1,
+                event_type="dlp_notice",
+                payload={
+                    "type": "dlp_notice",
+                    "categories": list(redaction.categories),
+                    "redacted_content": content,
+                    "message": "为保护隐私，输入中的敏感信息已在保存和发送给模型前脱敏。",
+                },
+            )
+        )
     reservation_tokens = estimate_reservation(
         content,
         max_output_tokens=settings.ai_max_output_tokens,
@@ -548,6 +899,14 @@ async def confirm_ai_action(
         )
     if confirmation.status != "PENDING":
         raise ApiError("CONFIRMATION_ALREADY_HANDLED", "确认请求已经被处理", 409)
+    forget_memory_action = confirmation.tool_name == "forget_ai_memories"
+    if forget_memory_action:
+        if not principal.has_permission("ai:use"):
+            raise ApiError("FORBIDDEN", "当前账号已无权管理自己的 AI 记忆", 403)
+    else:
+        policy = TOOL_POLICIES.get(confirmation.tool_name)
+        if policy is None or not policy.write or not policy.allowed(principal):
+            raise ApiError("FORBIDDEN", "当前账号已无权执行该 AI 操作", 403)
 
     # Keep scalar identifiers before any downstream commit/rollback.  A
     # rollback expires ORM instances, and reading confirmation.run_id from the
@@ -572,14 +931,132 @@ async def confirm_ai_action(
     if result.rowcount != 1:
         raise ApiError("CONFIRMATION_ALREADY_HANDLED", "确认请求已经被处理", 409)
     args = dict(confirmation.arguments_json or {})
+
+    async def require_current_preview(preview: dict[str, Any]) -> None:
+        safe_preview, _ = redact_value(preview)
+        current_hash = _ai_json_hash(safe_preview)
+        stored_hash = confirmation.preview_hash or _ai_json_hash(confirmation.preview_json or {})
+        if current_hash == stored_hash:
+            return
+        confirmation.status = "PENDING"
+        confirmation.preview_json = safe_preview
+        confirmation.preview_hash = current_hash
+        await session.commit()
+        raise ApiError(
+            "AI_CONFIRMATION_PREVIEW_CHANGED",
+            "操作目标或影响已变化，请核对更新后的预览再确认一次",
+            409,
+            data={
+                "confirmation_id": confirmation.id,
+                "status": "PENDING",
+                "preview": safe_preview,
+            },
+        )
+
     try:
-        if confirmation.tool_name == "create_reservation":
+        if forget_memory_action:
+            topic = str(args.get("topic", "")).strip()
+            if not topic:
+                raise ApiError("AI_MEMORY_TOPIC_REQUIRED", "记忆主题缺失，请重新发起", 409)
+            matches = await find_memories_forget_preview(
+                session,
+                user_id=principal.user_id,
+                topic=topic,
+            )
+            refreshed_preview = [
+                {
+                    "id": memory.id,
+                    "level": memory.level,
+                    "scenario": memory.scenario,
+                    "content": redact_text(memory.content).text,
+                }
+                for memory in matches
+            ]
+            refreshed_args = {
+                "memory_ids": [memory.id for memory in matches],
+                "source_message_ids": sorted(
+                    {
+                        message_id
+                        for memory in matches
+                        for message_id in (memory.source_message_ids or [])
+                    }
+                ),
+                "topic": topic,
+            }
+            safe_preview = {"topic": topic, "matches": refreshed_preview}
+            current_hash = _ai_json_hash(safe_preview)
+            stored_hash = confirmation.preview_hash or _ai_json_hash(
+                confirmation.preview_json or {}
+            )
+            if current_hash != stored_hash:
+                confirmation.status = "PENDING"
+                confirmation.arguments_json = refreshed_args
+                confirmation.arguments_hash = _ai_json_hash(refreshed_args)
+                confirmation.preview_json = safe_preview
+                confirmation.preview_hash = current_hash
+                await session.commit()
+                raise ApiError(
+                    "AI_CONFIRMATION_PREVIEW_CHANGED",
+                    "匹配的记忆已变化，请核对更新后的预览再确认",
+                    409,
+                    data={
+                        "confirmation_id": confirmation.id,
+                        "status": "PENDING",
+                        "preview": safe_preview,
+                    },
+                )
+            memory_ids = refreshed_args["memory_ids"]
+            source_message_ids = refreshed_args["source_message_ids"]
+            forgotten_count = await invalidate_memories(
+                session,
+                user_id=principal.user_id,
+                memory_ids=memory_ids,
+            )
+            if source_message_ids:
+                derived_conversation_ids = set(
+                    await session.scalars(
+                        select(AiMessage.conversation_id).where(
+                            AiMessage.id.in_(source_message_ids),
+                            AiMessage.user_id == principal.user_id,
+                        )
+                    )
+                )
+                snapshots = (
+                    list(
+                        (
+                            await session.scalars(
+                                select(AiContextSnapshot).where(
+                                    AiContextSnapshot.user_id == principal.user_id,
+                                    AiContextSnapshot.conversation_id.in_(derived_conversation_ids),
+                                )
+                            )
+                        ).all()
+                    )
+                    if derived_conversation_ids
+                    else []
+                )
+                for snapshot in snapshots:
+                    # The snapshot may have compacted away its full source-ID
+                    # ledger; deleting the conversation snapshot prevents the
+                    # forgotten fact surviving in derived summary text.
+                    await session.delete(snapshot)
+            data = {
+                "forgotten_count": forgotten_count,
+                "raw_conversation_preserved": True,
+            }
+        elif confirmation.tool_name == "create_reservation":
             plan = ReservationPlanRequest(
                 device_id=int(args["device_id"]),
                 start_date=args["start_date"],
                 end_date=args["end_date"],
                 purpose=str(args.get("purpose", "实验室设备使用")),
             )
+            refreshed_preview = await ReservationService(
+                session,
+                principal,
+                max_days=request.app.state.settings.reservation_max_days,
+            ).preflight(plan)
+            await require_current_preview(refreshed_preview.model_dump(mode="json"))
             async with reservation_lock(request, plan.device_id):
                 execution = await ReservationService(
                     session,
@@ -588,6 +1065,12 @@ async def confirm_ai_action(
                 ).create(plan, idempotency_key=f"ai-confirmation:{confirmation_id}")
             data = execution.model_dump(mode="json")
         elif confirmation.tool_name == "cancel_reservation":
+            current_reservation = await ReservationService(
+                session,
+                principal,
+                max_days=request.app.state.settings.reservation_max_days,
+            ).get_reservation(int(args["reservation_id"]))
+            await require_current_preview(current_reservation.model_dump(mode="json"))
             data = (
                 await ReservationService(
                     session,
@@ -596,7 +1079,22 @@ async def confirm_ai_action(
                 ).cancel(int(args["reservation_id"]))
             ).model_dump(mode="json")
         elif confirmation.tool_name == "submit_repair":
-            execution = await RepairService(session, principal).create(
+            repair_service = RepairService(session, principal)
+            current_device = await ReservationService(
+                session,
+                principal,
+                max_days=request.app.state.settings.reservation_max_days,
+            )._load_device(int(args["device_id"]))
+            await require_current_preview(
+                {
+                    "device_id": current_device.id,
+                    "device_name": current_device.name,
+                    "title": str(args.get("title", "设备故障报修")).strip(),
+                    "description": str(args.get("description", "")).strip() or None,
+                    "next_status": "MAINTENANCE",
+                }
+            )
+            execution = await repair_service.create(
                 device_id=int(args["device_id"]),
                 title=str(args.get("title", "设备故障报修")),
                 description=str(args.get("description", "")) or None,
@@ -605,9 +1103,10 @@ async def confirm_ai_action(
             data = execution.model_dump(mode="json")
         else:
             raise ApiError("AI_TOOL_NOT_EXECUTABLE", "该 AI 操作当前不可执行", 422)
-    except ApiError:
-        confirmation.status = "FAILED"
-        await session.commit()
+    except ApiError as exc:
+        if exc.code != "AI_CONFIRMATION_PREVIEW_CHANGED":
+            confirmation.status = "FAILED"
+            await session.commit()
         raise
     except Exception as exc:
         # Do not leave a confirmed action permanently stuck when a downstream
@@ -631,7 +1130,12 @@ async def confirm_ai_action(
     run = await session.scalar(select(AiRun).where(AiRun.id == confirmation.run_id))
     if run is not None:
         run.status = "COMPLETED"
-        run.output_text = "操作已按你的确认执行完成。"
+        completion_text = (
+            "已删除匹配的记忆，原始对话仍保留。"
+            if forget_memory_action
+            else "操作已按你的确认执行完成。"
+        )
+        run.output_text = completion_text
         run.completed_at = now
         session.add(
             AiMessage(
@@ -639,7 +1143,7 @@ async def confirm_ai_action(
                 user_id=principal.user_id,
                 college_id=principal.college_id,
                 role="assistant",
-                content="操作已按你的确认执行完成。",
+                content=completion_text,
                 metadata_json={"confirmation_id": confirmation.id, "result": data},
             )
         )
@@ -768,9 +1272,7 @@ async def get_ai_usage(
     from app.ai.usage import usage_day
 
     settings = request.app.state.settings
-    result: dict[str, Any] = {
-        "mine": await user_usage(session, principal.user_id, settings)
-    }
+    result: dict[str, Any] = {"mine": await user_usage(session, principal.user_id, settings)}
     auxiliary_query = select(
         AiAuxUsageEvent.component,
         AiAuxUsageEvent.operation,
@@ -979,6 +1481,43 @@ def _can_manage_knowledge(principal: Principal, college_id: int | None) -> bool:
     return principal.is_lab_admin and scope is not None and college_id == scope
 
 
+async def _validate_knowledge_scope(
+    session: AsyncSession,
+    *,
+    college_id: int | None,
+    lab_id: int | None,
+    device_id: int | None,
+    allowed_roles: list[str],
+) -> list[str]:
+    roles = sorted({role.strip().upper() for role in allowed_roles if role.strip()})
+    if len(roles) > 20:
+        raise ApiError("KNOWLEDGE_SCOPE_INVALID", "可见角色不能超过 20 个", 422)
+    if roles:
+        existing_roles = set(
+            (await session.scalars(select(Role.role_code).where(Role.role_code.in_(roles)))).all()
+        )
+        if existing_roles != set(roles):
+            raise ApiError("KNOWLEDGE_SCOPE_INVALID", "包含系统中不存在的角色", 422)
+    if (lab_id is not None or device_id is not None) and college_id is None:
+        raise ApiError("KNOWLEDGE_SCOPE_INVALID", "全校知识不能绑定学院实验室或设备", 422)
+    if college_id is not None:
+        college_exists = await session.scalar(select(College.id).where(College.id == college_id))
+        if college_exists is None:
+            raise ApiError("KNOWLEDGE_SCOPE_INVALID", "指定学院不存在", 422)
+    lab = None
+    if lab_id is not None:
+        lab = await session.get(Lab, lab_id)
+        if lab is None or lab.college_id != college_id:
+            raise ApiError("KNOWLEDGE_SCOPE_INVALID", "实验室不属于指定学院", 422)
+    if device_id is not None:
+        device = await session.get(Device, device_id)
+        if device is None or device.college_id != college_id:
+            raise ApiError("KNOWLEDGE_SCOPE_INVALID", "设备不属于指定学院", 422)
+        if lab is not None and device.lab_id != lab.id:
+            raise ApiError("KNOWLEDGE_SCOPE_INVALID", "设备不属于指定实验室", 422)
+    return roles
+
+
 @router.post("/ai/knowledge", response_model=ApiResponse[KnowledgeData], status_code=201)
 async def create_knowledge_document(
     payload: KnowledgeCreateRequest,
@@ -994,38 +1533,73 @@ async def create_knowledge_document(
         college_id = college_scope(principal)
     if not _can_manage_knowledge(principal, college_id):
         raise ApiError("FORBIDDEN", "只能维护全局或自己学院的知识库", 403)
+    allowed_roles = await _validate_knowledge_scope(
+        session,
+        college_id=college_id,
+        lab_id=payload.lab_id,
+        device_id=payload.device_id,
+        allowed_roles=payload.allowed_roles,
+    )
+    redaction = redact_text(payload.body.strip())
+    safe_body = redaction.text
     document = KnowledgeDocument(
         college_id=college_id,
+        lab_id=payload.lab_id,
+        device_id=payload.device_id,
+        allowed_roles=allowed_roles or None,
         title=payload.title.strip(),
         source_type=payload.source_type,
-        body=payload.body.strip(),
-        extracted_text=payload.body.strip(),
+        body=safe_body,
+        extracted_text=safe_body,
         parse_status="PARSED",
         version=1,
         status="DRAFT",
         created_by=principal.user_id,
-        checksum=hashlib.sha256(payload.body.encode()).hexdigest(),
+        checksum=hashlib.sha256(safe_body.encode()).hexdigest(),
+        dlp_categories=list(redaction.categories),
     )
     session.add(document)
+    await session.flush()
+    job = enqueue_knowledge_build(
+        session,
+        document,
+        requested_by=principal.user_id,
+        build_kind="TEXT",
+    )
     await session.commit()
     await session.refresh(document)
-    return ApiResponse.ok(_knowledge_data(document, 0))
+    await session.refresh(job)
+    return ApiResponse.ok(_knowledge_data(document, 0, job))
 
 
-@router.post("/ai/knowledge/upload", response_model=ApiResponse[KnowledgeData], status_code=201)
+@router.post(
+    "/ai/knowledge/upload",
+    response_model=ApiResponse[KnowledgeBuildAcceptedData],
+    status_code=202,
+)
 async def upload_knowledge_document(
     request: Request,
     title: str = Form(min_length=1, max_length=200),
     source_type: str = Form(default="SOP", max_length=40),
     college_id: int | None = Form(default=None, gt=0),
+    lab_id: int | None = Form(default=None, gt=0),
+    device_id: int | None = Form(default=None, gt=0),
+    allowed_roles: list[str] = Form(default=[]),
     file: UploadFile = File(...),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
-) -> ApiResponse[KnowledgeData]:
+) -> ApiResponse[KnowledgeBuildAcceptedData]:
     if college_id is None and not principal.is_system_admin:
         college_id = college_scope(principal)
     if not _can_manage_knowledge(principal, college_id):
         raise ApiError("FORBIDDEN", "只能维护全局或自己学院的知识库", 403)
+    normalized_roles = await _validate_knowledge_scope(
+        session,
+        college_id=college_id,
+        lab_id=lab_id,
+        device_id=device_id,
+        allowed_roles=allowed_roles,
+    )
     original_name = (file.filename or "document").replace("\\", "/").split("/")[-1]
     suffix = Path(original_name).suffix.lower()
     allowed = {
@@ -1091,6 +1665,9 @@ async def upload_knowledge_document(
         )
         document = KnowledgeDocument(
             college_id=college_id,
+            lab_id=lab_id,
+            device_id=device_id,
+            allowed_roles=normalized_roles or None,
             title=title.strip(),
             source_type=source_type.strip() or "SOP",
             body="",
@@ -1106,13 +1683,46 @@ async def upload_knowledge_document(
         session.add_all([asset, document])
         try:
             await asyncio.to_thread(target.write_bytes, content)
+            await session.flush()
+            job = enqueue_knowledge_build(
+                session,
+                document,
+                requested_by=principal.user_id,
+                build_kind="UPLOAD",
+            )
             await session.commit()
             await session.refresh(document)
+            await session.refresh(job)
         except Exception:
             await session.rollback()
             await asyncio.to_thread(target.unlink, missing_ok=True)
             raise
-    return ApiResponse.ok(_knowledge_data(document, 0))
+    build_data = build_job_data(job)
+    return ApiResponse.ok(
+        KnowledgeBuildAcceptedData(
+            document_id=document.id,
+            job_id=job.id,
+            task_id=job.celery_task_id,
+            status=job.status,
+            build_job=build_data,
+        )
+    )
+
+
+@router.get(
+    "/ai/knowledge/scope-roles",
+    response_model=ApiResponse[list[KnowledgeRoleOption]],
+)
+async def list_knowledge_scope_roles(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[KnowledgeRoleOption]]:
+    if not principal.is_lab_admin:
+        raise ApiError("FORBIDDEN", "只有实验室负责人或系统管理员可以管理知识库", 403)
+    rows = (
+        await session.execute(select(Role.role_code, Role.role_name).order_by(Role.role_code))
+    ).all()
+    return ApiResponse.ok([KnowledgeRoleOption(code=code, name=name) for code, name in rows])
 
 
 @router.get("/ai/knowledge/{document_id}")
@@ -1124,9 +1734,15 @@ async def get_knowledge_document(
     document = await _load_knowledge_document(session, principal, document_id)
     if not _can_manage_knowledge(principal, document.college_id):
         raise ApiError("DOCUMENT_NOT_FOUND", "知识文档不存在或无权操作", 404)
+    build_job = await session.scalar(
+        select(KnowledgeBuildJob)
+        .where(KnowledgeBuildJob.document_id == document.id)
+        .order_by(KnowledgeBuildJob.created_at.desc(), KnowledgeBuildJob.id.desc())
+        .limit(1)
+    )
     return ApiResponse.ok(
         {
-            **_knowledge_data(document, 0).model_dump(),
+            **_knowledge_data(document, 0, build_job).model_dump(),
             "body": document.body,
             "extracted_text": document.extracted_text,
             "reviewed_text": document.reviewed_text,
@@ -1148,36 +1764,223 @@ async def _load_knowledge_document(
     return document
 
 
-@router.post("/ai/knowledge/{document_id}/parse", response_model=ApiResponse[KnowledgeData])
+@router.post(
+    "/ai/knowledge/{document_id}/parse",
+    response_model=ApiResponse[KnowledgeBuildAcceptedData],
+    status_code=202,
+)
 async def parse_knowledge_document(
     document_id: int,
-    request: Request,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
-) -> ApiResponse[KnowledgeData]:
-    document = await _load_knowledge_document(session, principal, document_id)
-    if not document.source_file_path or document.parse_status not in {"UPLOADED", "FAILED"}:
-        raise ApiError("DOCUMENT_PARSE_STATE_INVALID", "文档当前状态不允许启动解析", 409)
-    ocr_runtime = await get_component_config(session, request.app.state.settings, "mineru")
-    if ocr_runtime is None or not ocr_runtime.enabled or not ocr_runtime.api_key:
-        raise ApiError("MINERU_NOT_CONFIGURED", "MinerU 尚未配置或未启用，请先完成服务配置", 503)
-    document.parse_status = "QUEUED"
-    document.parse_error = None
-    task_key = f"ai-knowledge-parse:{document.id}:v{document.version}:{uuid4().hex}"
-    session.add(
-        OutboxTask(
-            task_key=task_key,
-            task_type="AI_KNOWLEDGE_PARSE",
-            aggregate_key=f"ai-knowledge:{document.id}",
-            college_id=document.college_id,
-            payload={"document_id": document.id, "task_key": task_key},
-            status="PENDING",
-            execute_at=datetime.now(UTC).replace(tzinfo=None),
+) -> ApiResponse[KnowledgeBuildAcceptedData]:
+    document = await session.scalar(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.id == document_id)
+        .with_for_update()
+    )
+    if document is None or not _can_manage_knowledge(principal, document.college_id):
+        raise ApiError("DOCUMENT_NOT_FOUND", "知识文档不存在或无权操作", 404)
+    if document.parse_status not in {"UPLOADED", "FAILED"}:
+        raise ApiError("DOCUMENT_PARSE_STATE_INVALID", "文档当前状态不允许重新构建", 409)
+    active_job = await session.scalar(
+        select(KnowledgeBuildJob.id).where(
+            KnowledgeBuildJob.document_id == document.id,
+            KnowledgeBuildJob.status.in_(["QUEUED", "PROCESSING", "RETRYING"]),
         )
     )
+    if active_job is not None:
+        raise ApiError("DOCUMENT_BUILD_IN_PROGRESS", "当前文档已有构建任务，请稍后再提交", 409)
+    if document.source_file_path:
+        build_kind = "UPLOAD"
+    elif document.reviewed_text:
+        build_kind = "REVIEWED"
+    elif document.body:
+        build_kind = "TEXT"
+    else:
+        raise ApiError("DOCUMENT_SOURCE_MISSING", "文档没有可重新构建的来源内容", 409)
+    failed_job = await session.scalar(
+        select(KnowledgeBuildJob)
+        .where(
+            KnowledgeBuildJob.document_id == document.id,
+            KnowledgeBuildJob.version == document.version,
+            KnowledgeBuildJob.status == "FAILED",
+        )
+        .order_by(KnowledgeBuildJob.sequence)
+        .limit(1)
+        .with_for_update()
+    )
+    if failed_job is not None:
+        job = retry_failed_knowledge_build(session, document, failed_job)
+    else:
+        job = enqueue_knowledge_build(
+            session,
+            document,
+            requested_by=principal.user_id,
+            build_kind=build_kind,
+        )
     await session.commit()
     await session.refresh(document)
-    return ApiResponse.ok(_knowledge_data(document, 0))
+    await session.refresh(job)
+    build_data = build_job_data(job)
+    return ApiResponse.ok(
+        KnowledgeBuildAcceptedData(
+            document_id=document.id,
+            job_id=job.id,
+            task_id=job.celery_task_id,
+            status=job.status,
+            build_job=build_data,
+        )
+    )
+
+
+@router.post(
+    "/ai/knowledge/{document_id}/build-jobs/{job_id}/skip",
+    response_model=ApiResponse[KnowledgeBuildJobData],
+)
+async def skip_failed_knowledge_build(
+    document_id: int,
+    job_id: str,
+    payload: KnowledgeBuildSkipRequest,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[KnowledgeBuildJobData]:
+    document = await session.scalar(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.id == document_id)
+        .with_for_update()
+    )
+    if document is None or not _can_manage_knowledge(principal, document.college_id):
+        raise ApiError("DOCUMENT_NOT_FOUND", "知识文档不存在或无权操作", 404)
+    job = await session.scalar(
+        select(KnowledgeBuildJob)
+        .where(
+            KnowledgeBuildJob.id == job_id,
+            KnowledgeBuildJob.document_id == document.id,
+            KnowledgeBuildJob.college_id == document.college_id,
+        )
+        .with_for_update()
+    )
+    if job is None:
+        raise ApiError("KNOWLEDGE_BUILD_NOT_FOUND", "构建任务不存在或无权操作", 404)
+    if job.status != "FAILED":
+        raise ApiError("KNOWLEDGE_BUILD_NOT_FAILED", "只有失败的构建任务可以跳过", 409)
+    earlier_unresolved = await session.scalar(
+        select(KnowledgeBuildJob.id)
+        .where(
+            KnowledgeBuildJob.document_id == document.id,
+            KnowledgeBuildJob.sequence < job.sequence,
+            KnowledgeBuildJob.status.in_(
+                ["QUEUED", "PROCESSING", "RETRYING", "FAILED"]
+            ),
+        )
+        .order_by(KnowledgeBuildJob.sequence)
+        .limit(1)
+    )
+    if earlier_unresolved is not None:
+        raise ApiError(
+            "KNOWLEDGE_BUILD_PREDECESSOR_PENDING",
+            "请先处理更早的构建任务",
+            409,
+        )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    job.status = "SKIPPED"
+    job.stage = "SKIPPED"
+    job.skipped_by = principal.user_id
+    job.skipped_at = now
+    job.skip_reason = payload.reason
+    job.completed_at = now
+    await session.commit()
+    await session.refresh(job)
+    logger.info(
+        "knowledge build skipped document_id=%s job_id=%s tenant_id=%s "
+        "actor_id=%s reason_length=%s",
+        document.id,
+        job.id,
+        document.college_id,
+        principal.user_id,
+        len(payload.reason),
+    )
+    return ApiResponse.ok(build_job_data(job))
+
+
+@router.post(
+    "/ai/knowledge/{document_id}/build-jobs/{job_id}/retry",
+    response_model=ApiResponse[KnowledgeBuildAcceptedData],
+    status_code=202,
+)
+async def retry_failed_knowledge_build_job(
+    document_id: int,
+    job_id: str,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[KnowledgeBuildAcceptedData]:
+    document = await session.scalar(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.id == document_id)
+        .with_for_update()
+    )
+    if document is None or not _can_manage_knowledge(principal, document.college_id):
+        raise ApiError("DOCUMENT_NOT_FOUND", "知识文档不存在或无权操作", 404)
+    job = await session.scalar(
+        select(KnowledgeBuildJob)
+        .where(
+            KnowledgeBuildJob.id == job_id,
+            KnowledgeBuildJob.document_id == document.id,
+            KnowledgeBuildJob.college_id == document.college_id,
+        )
+        .with_for_update()
+    )
+    if job is None:
+        raise ApiError("KNOWLEDGE_BUILD_NOT_FOUND", "构建任务不存在或无权操作", 404)
+    if job.status != "FAILED":
+        raise ApiError("KNOWLEDGE_BUILD_NOT_FAILED", "只有失败的构建任务可以重试", 409)
+    if job.version != document.version:
+        raise ApiError(
+            "KNOWLEDGE_BUILD_VERSION_SUPERSEDED",
+            "该失败任务属于旧文档版本，请跳过它以继续后续构建",
+            409,
+        )
+    earlier_unresolved = await session.scalar(
+        select(KnowledgeBuildJob.id)
+        .where(
+            KnowledgeBuildJob.document_id == document.id,
+            KnowledgeBuildJob.sequence < job.sequence,
+            KnowledgeBuildJob.status.in_(
+                ["QUEUED", "PROCESSING", "RETRYING", "FAILED"]
+            ),
+        )
+        .order_by(KnowledgeBuildJob.sequence)
+        .limit(1)
+    )
+    if earlier_unresolved is not None:
+        raise ApiError(
+            "KNOWLEDGE_BUILD_PREDECESSOR_PENDING",
+            "请先处理更早的构建任务",
+            409,
+        )
+    retried = retry_failed_knowledge_build(session, document, job)
+    await session.commit()
+    await session.refresh(retried)
+    logger.info(
+        "knowledge build retry requested document_id=%s job_id=%s tenant_id=%s "
+        "actor_id=%s sequence=%s",
+        document.id,
+        retried.id,
+        document.college_id,
+        principal.user_id,
+        retried.sequence,
+    )
+    data = build_job_data(retried)
+    return ApiResponse.ok(
+        KnowledgeBuildAcceptedData(
+            document_id=document.id,
+            job_id=retried.id,
+            task_id=retried.celery_task_id,
+            status=retried.status,
+            build_job=data,
+        )
+    )
 
 
 @router.put("/ai/knowledge/{document_id}/review", response_model=ApiResponse[KnowledgeData])
@@ -1187,19 +1990,55 @@ async def review_knowledge_document(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[KnowledgeData]:
-    document = await _load_knowledge_document(session, principal, document_id)
+    document = await session.scalar(
+        select(KnowledgeDocument).where(KnowledgeDocument.id == document_id).with_for_update()
+    )
+    if document is None or not _can_manage_knowledge(principal, document.college_id):
+        raise ApiError("DOCUMENT_NOT_FOUND", "知识文档不存在或无权操作", 404)
     if document.parse_status not in {"PARSED", "REVIEWED", "PUBLISHED"}:
         raise ApiError("DOCUMENT_NOT_PARSED", "请等待文档解析完成后再审核", 409)
-    if document.status == "PUBLISHED":
-        document.version += 1
-    document.reviewed_text = payload.reviewed_text.strip()
+    active_job = await session.scalar(
+        select(KnowledgeBuildJob).where(
+            KnowledgeBuildJob.document_id == document.id,
+            KnowledgeBuildJob.status.in_(["QUEUED", "PROCESSING", "RETRYING"]),
+        )
+    )
+    if active_job is not None:
+        raise ApiError("DOCUMENT_BUILD_IN_PROGRESS", "当前文档版本仍在构建，请稍后再审核", 409)
+    redaction = redact_text(payload.reviewed_text.strip())
+    document.reviewed_text = redaction.text
+    document.dlp_categories = sorted(set(document.dlp_categories or ()) | set(redaction.categories))
     document.reviewed_by = principal.user_id
     document.reviewed_at = datetime.now(UTC).replace(tzinfo=None)
-    document.parse_status = "REVIEWED"
-    document.status = "DRAFT"
+    content_sha256 = hashlib.sha256(redaction.text.encode("utf-8")).hexdigest()
+    job = await session.scalar(
+        select(KnowledgeBuildJob)
+        .where(
+            KnowledgeBuildJob.document_id == document.id,
+            KnowledgeBuildJob.version == document.version,
+            KnowledgeBuildJob.status == "COMPLETED",
+            KnowledgeBuildJob.content_sha256 == content_sha256,
+        )
+        .order_by(KnowledgeBuildJob.created_at.desc())
+    )
+    if job is None:
+        document.version = max(document.version, document.active_version or 0) + 1
+        if document.active_version is None:
+            document.status = "DRAFT"
+        document.parse_status = "QUEUED"
+        job = enqueue_knowledge_build(
+            session,
+            document,
+            requested_by=principal.user_id,
+            build_kind="REVIEWED",
+        )
+    else:
+        document.parse_status = "REVIEWED"
+        document.parse_error = None
     await session.commit()
     await session.refresh(document)
-    return ApiResponse.ok(_knowledge_data(document, 0))
+    await session.refresh(job)
+    return ApiResponse.ok(_knowledge_data(document, 0, job))
 
 
 @router.get("/ai/knowledge/{document_id}/chunks/preview")
@@ -1210,11 +2049,18 @@ async def preview_knowledge_chunks(
 ) -> ApiResponse[list[dict[str, Any]]]:
     document = await _load_knowledge_document(session, principal, document_id)
     content = document.reviewed_text or document.extracted_text or document.body
-    chunks = split_text(content)
+    sections, chunks = split_document_sections(content)
     return ApiResponse.ok(
         [
-            {"index": index, "content": chunk, "characters": len(chunk)}
-            for index, chunk in enumerate(chunks)
+            {
+                "index": chunk.index,
+                "section_path": chunk.section_path,
+                "parent_section_index": chunk.section_index,
+                "parent_heading": sections[chunk.section_index].heading,
+                "content": chunk.content,
+                "characters": len(chunk.content),
+            }
+            for chunk in chunks
         ]
     )
 
@@ -1222,74 +2068,81 @@ async def preview_knowledge_chunks(
 @router.post("/ai/knowledge/{document_id}/publish", response_model=ApiResponse[KnowledgeData])
 async def publish_knowledge_document(
     document_id: int,
-    request: Request,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[KnowledgeData]:
     document = await session.scalar(
-        select(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
+        select(KnowledgeDocument).where(KnowledgeDocument.id == document_id).with_for_update()
     )
     if document is None or not _can_manage_knowledge(principal, document.college_id):
         raise ApiError("DOCUMENT_NOT_FOUND", "知识文档不存在或无权操作", 404)
     if document.parse_status != "REVIEWED" or not document.reviewed_text:
         raise ApiError("DOCUMENT_REVIEW_REQUIRED", "请先审核并确认提取内容，再发布到知识库", 409)
-    runtime = await get_component_config(session, request.app.state.settings, "embedding")
-    if runtime is None or not runtime.enabled or not runtime.api_key:
-        raise ApiError("AI_EMBEDDING_NOT_CONFIGURED", "Embedding 服务尚未配置或未启用", 503)
-    store = QdrantKnowledgeStore(request.app.state.settings, runtime)
-    try:
-        chunks = split_text(document.reviewed_text)
-        point_ids = await store.upsert_chunks(
-            document_id=document.id,
-            title=document.title,
-            source_type=document.source_type,
-            college_id=document.college_id,
-            chunks=chunks,
-            version=document.version,
+    content_sha256 = hashlib.sha256(document.reviewed_text.encode("utf-8")).hexdigest()
+    build_job = await session.scalar(
+        select(KnowledgeBuildJob)
+        .where(
+            KnowledgeBuildJob.document_id == document.id,
+            KnowledgeBuildJob.version == document.version,
+            KnowledgeBuildJob.status == "COMPLETED",
+            KnowledgeBuildJob.content_sha256 == content_sha256,
+        )
+        .order_by(KnowledgeBuildJob.created_at.desc())
+    )
+    if build_job is None:
+        raise ApiError(
+            "DOCUMENT_BUILD_REQUIRED",
+            "当前审核文本尚未完成向量构建，请等待任务完成后再发布",
+            409,
+        )
+    chunk_count = int(
+        await session.scalar(
+            select(func.count(KnowledgeChunk.id)).where(
+                KnowledgeChunk.document_id == document.id,
+                KnowledgeChunk.version == document.version,
+            )
+        )
+        or 0
+    )
+    if chunk_count == 0:
+        raise ApiError("DOCUMENT_INDEX_EMPTY", "当前版本没有可发布的检索片段", 409)
+
+    previous_version = document.active_version
+    document.body = document.reviewed_text
+    document.active_version = document.version
+    document.status = "PUBLISHED"
+    document.parse_status = "PUBLISHED"
+    document.parse_error = None
+    document.published_at = datetime.now(UTC).replace(tzinfo=None)
+    if previous_version is not None and previous_version != document.version:
+        await session.execute(
+            delete(KnowledgeChunk).where(
+                KnowledgeChunk.document_id == document.id,
+                KnowledgeChunk.version != document.version,
+            )
         )
         await session.execute(
-            KnowledgeChunk.__table__.delete().where(KnowledgeChunk.document_id == document.id)
-        )
-        for index, (point_id, content) in enumerate(zip(point_ids, chunks, strict=True)):
-            session.add(
-                KnowledgeChunk(
-                    document_id=document.id,
-                    college_id=document.college_id,
-                    point_id=point_id,
-                    chunk_index=index,
-                    content=content,
-                    metadata_json={
-                        "title": document.title,
-                        "source_type": document.source_type,
-                        "version": document.version,
-                    },
-                )
+            delete(KnowledgeSection).where(
+                KnowledgeSection.document_id == document.id,
+                KnowledgeSection.version != document.version,
             )
-        document.body = document.reviewed_text
-        document.status = "PUBLISHED"
-        document.parse_status = "PUBLISHED"
-        document.published_at = datetime.now(UTC).replace(tzinfo=None)
-        add_aux_usage(
-            session,
-            event_key=f"embedding-publish:{document.id}:v{document.version}",
-            component="embedding",
-            operation="document_index",
-            model=runtime.model,
-            user_id=principal.user_id,
-            college_id=document.college_id,
-            item_count=len(chunks),
-            input_units=sum(len(chunk) for chunk in chunks),
         )
-        await session.commit()
-        try:
-            await store.delete_old_document_versions(document.id, document.version)
-        except Exception:
-            # MySQL's current chunk rows are the authorization source; stale Qdrant
-            # points are ignored and can be removed by a later index maintenance.
-            pass
-        return ApiResponse.ok(_knowledge_data(document, len(chunks)))
-    finally:
-        await store.close()
+        now = datetime.now(UTC).replace(tzinfo=None)
+        session.add(
+            OutboxTask(
+                task_key=f"ai-knowledge-cleanup:{document.id}:keep:{document.version}",
+                task_type="AI_KNOWLEDGE_CLEANUP",
+                aggregate_key=f"ai-knowledge:{document.id}",
+                college_id=document.college_id,
+                payload={"document_id": document.id, "keep_version": document.version},
+                status="PENDING",
+                execute_at=now,
+            )
+        )
+    await session.commit()
+    await session.refresh(document)
+    await session.refresh(build_job)
+    return ApiResponse.ok(_knowledge_data(document, chunk_count, build_job))
 
 
 @router.get("/ai/knowledge", response_model=ApiResponse[list[KnowledgeData]])
@@ -1314,13 +2167,21 @@ async def list_knowledge(
         ).all()
     )
     document_ids = [row.id for row in rows]
+    jobs = await latest_build_jobs(session, document_ids)
     counts = (
         {
             int(row[0]): int(row[1])
             for row in (
                 await session.execute(
                     select(KnowledgeChunk.document_id, func.count(KnowledgeChunk.id))
-                    .where(KnowledgeChunk.document_id.in_(document_ids))
+                    .join(
+                        KnowledgeDocument,
+                        KnowledgeDocument.id == KnowledgeChunk.document_id,
+                    )
+                    .where(
+                        KnowledgeChunk.document_id.in_(document_ids),
+                        KnowledgeChunk.version == KnowledgeDocument.version,
+                    )
                     .group_by(KnowledgeChunk.document_id)
                 )
             ).all()
@@ -1328,7 +2189,43 @@ async def list_knowledge(
         if document_ids
         else {}
     )
-    return ApiResponse.ok([_knowledge_data(row, counts.get(row.id, 0)) for row in rows])
+    job_data = await latest_build_job_data(session, jobs)
+    documents = []
+    for row in rows:
+        data = _knowledge_data(row, counts.get(row.id, 0), jobs.get(row.id))
+        if row.id in job_data:
+            data.build_job = job_data[row.id]
+        documents.append(data)
+    return ApiResponse.ok(documents)
+
+
+@router.get(
+    "/ai/knowledge/{document_id}/build-jobs/{job_id}",
+    response_model=ApiResponse[KnowledgeBuildJobData],
+)
+async def get_knowledge_build_job(
+    document_id: int,
+    job_id: str,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[KnowledgeBuildJobData]:
+    document = await _load_knowledge_document(session, principal, document_id)
+    tenant_condition = (
+        KnowledgeBuildJob.college_id.is_(None)
+        if document.college_id is None
+        else KnowledgeBuildJob.college_id == document.college_id
+    )
+    job = await session.scalar(
+        select(KnowledgeBuildJob).where(
+            KnowledgeBuildJob.id == job_id,
+            KnowledgeBuildJob.document_id == document.id,
+            tenant_condition,
+        )
+    )
+    if job is None:
+        raise ApiError("KNOWLEDGE_BUILD_NOT_FOUND", "构建任务不存在或无权访问", 404)
+    job_data = (await latest_build_job_data(session, {document.id: job}))[document.id]
+    return ApiResponse.ok(job_data)
 
 
 @router.delete("/ai/knowledge/{document_id}")
@@ -1342,6 +2239,19 @@ async def delete_knowledge_document(
     if document.status == "DELETED":
         return ApiResponse.ok({"document_id": document.id, "deleted": True})
     document.status = "DELETING"
+    await session.execute(
+        update(KnowledgeBuildJob)
+        .where(
+            KnowledgeBuildJob.document_id == document.id,
+            KnowledgeBuildJob.status.in_(["QUEUED", "PROCESSING", "RETRYING"]),
+        )
+        .values(
+            status="CANCELLED",
+            stage="CANCELLED",
+            error_summary="文档已删除。",
+            completed_at=datetime.now(UTC).replace(tzinfo=None),
+        )
+    )
     await session.commit()
 
     embedding = await get_component_config(session, request.app.state.settings, "embedding")
@@ -1369,6 +2279,9 @@ async def delete_knowledge_document(
         if source_path.is_relative_to(upload_root) and source_path.is_file():
             source_path.unlink(missing_ok=True)
     await session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
+    await session.execute(
+        delete(KnowledgeSection).where(KnowledgeSection.document_id == document.id)
+    )
     document.body = ""
     document.extracted_text = None
     document.reviewed_text = None
@@ -1380,12 +2293,19 @@ async def delete_knowledge_document(
     return ApiResponse.ok({"document_id": document.id, "deleted": True})
 
 
-def _knowledge_data(document: KnowledgeDocument, chunk_count: int) -> KnowledgeData:
+def _knowledge_data(
+    document: KnowledgeDocument,
+    chunk_count: int,
+    build_job: KnowledgeBuildJob | None = None,
+) -> KnowledgeData:
     return KnowledgeData(
         id=document.id,
         title=document.title,
         source_type=document.source_type,
         college_id=document.college_id,
+        lab_id=document.lab_id,
+        device_id=document.device_id,
+        allowed_roles=list(document.allowed_roles or ()),
         status=document.status,
         version=document.version,
         chunk_count=chunk_count,
@@ -1394,4 +2314,6 @@ def _knowledge_data(document: KnowledgeDocument, chunk_count: int) -> KnowledgeD
         source_file_name=document.source_file_name,
         parse_status=document.parse_status,
         parse_error=document.parse_error,
+        dlp_categories=list(document.dlp_categories or ()),
+        build_job=build_job_data(build_job) if build_job is not None else None,
     )

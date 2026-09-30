@@ -10,6 +10,7 @@ from app.core.settings import Settings
 from app.infrastructure.db.models import (
     CreditEvent,
     DeviceHandover,
+    DeviceMaintenancePlan,
     Notification,
     OutboxTask,
     RepairReport,
@@ -18,6 +19,7 @@ from app.infrastructure.db.models import (
     ReservationItem,
     ReservationWaitlist,
     ReservationWaitlistOffer,
+    Role,
     UploadAsset,
     User,
 )
@@ -27,6 +29,19 @@ from sqlalchemy import func, select, update
 
 
 def principal(user: User, *roles: str) -> Principal:
+    permission_map = {
+        "STUDENT": (
+            "device:read", "reservation:create", "reservation:read:own", "reservation:cancel",
+            "reservation:check-in", "reservation:return", "repair:create",
+            "repair:read:own", "repair:confirm",
+        ),
+        "LAB_ADMIN": (
+            "device:read", "device:manage", "reservation:read:scope", "reservation:approve",
+            "reservation:handover", "reservation:accept-return", "repair:read:scope",
+            "repair:handle", "report:read", "maintenance:manage",
+            "reservation-rule:manage",
+        ),
+    }
     return Principal(
         user_id=user.id,
         username=user.username,
@@ -34,6 +49,7 @@ def principal(user: User, *roles: str) -> Principal:
         roles=roles,
         token_type="access",
         token_id="worker-test-token",
+        permissions=tuple({code for role in roles for code in permission_map.get(role, ())}),
     )
 
 
@@ -446,6 +462,7 @@ async def test_stale_repair_auto_close_does_not_run_after_reopen_and_reschedule(
         roles=("STUDENT",),
         token_type="access",
         token_id="student-test",
+        permissions=("repair:create", "repair:read:own", "repair:confirm"),
     )
     manager_principal = Principal(
         user_id=manager.id,
@@ -454,6 +471,7 @@ async def test_stale_repair_auto_close_does_not_run_after_reopen_and_reschedule(
         roles=("LAB_ADMIN",),
         token_type="access",
         token_id="manager-test",
+        permissions=("repair:read:scope", "repair:handle"),
     )
     async with factory() as session:
         created = await RepairService(session, student_principal).create(
@@ -520,12 +538,15 @@ async def test_waitlist_offer_holds_device_and_expiry_promotes_next_user(seeded)
     reservation_date = date.today() + timedelta(days=4)
     async with factory() as session:
         session.add(device)
+        student_role = await session.scalar(select(Role).where(Role.role_code == "STUDENT"))
+        assert student_role is not None
         second_user = User(
             username="waitlist-second-user",
             password_hash="test",
             real_name="候补用户二",
             college_id=college.id,
             status=1,
+            roles=[student_role],
         )
         session.add(second_user)
         await session.flush()
@@ -622,3 +643,237 @@ async def test_waitlist_offer_holds_device_and_expiry_promotes_next_user(seeded)
         assert saved_entry is not None and saved_entry.status == "CONFIRMED"
         assert saved_offer is None
         assert saved_reservation is not None and saved_reservation.status == "PENDING"
+
+
+@pytest.mark.asyncio
+async def test_waitlist_skips_ineligible_user_and_promotes_next_candidate(seeded) -> None:
+    factory, college, _, first_user, _, _, device, _ = seeded
+    requested_date = date.today() + timedelta(days=4)
+    async with factory() as session:
+        student_role = await session.scalar(select(Role).where(Role.role_code == "STUDENT"))
+        assert student_role is not None
+        second_user = User(
+            username="waitlist-eligible-user",
+            password_hash="test",
+            real_name="候补用户二",
+            college_id=college.id,
+            status=1,
+            roles=[student_role],
+        )
+        session.add(second_user)
+        await session.flush()
+        second_user_id = second_user.id
+        reservation = await ReservationService(
+            session,
+            principal(first_user, "STUDENT"),
+        ).create(
+            ReservationPlanRequest(
+                device_id=device.id,
+                start_date=requested_date,
+                end_date=requested_date,
+                purpose="释放候补日期",
+            )
+        )
+        first_entry = await ReservationService(
+            session,
+            principal(first_user, "STUDENT"),
+        ).join_waitlist(
+            device_id=device.id,
+            reservation_date=requested_date,
+            purpose="已失去预约资格的候补",
+        )
+        second_entry = await ReservationService(
+            session,
+            principal(second_user, "STUDENT"),
+        ).join_waitlist(
+            device_id=device.id,
+            reservation_date=requested_date,
+            purpose="下一位有效候补",
+        )
+        await ReservationService(
+            session,
+            principal(first_user, "STUDENT"),
+        ).cancel(reservation.created[0].id)
+        stored_user = await session.get(User, first_user.id)
+        assert stored_user is not None
+        stored_user.status = 0
+        await session.commit()
+
+    app = FastAPI()
+    app.state.settings = Settings(environment="test", cors_origins=[], enable_workers=False)
+    app.state.session_factory = factory
+    await OutboxWorker(app)._handle(
+        "WAITLIST_PROMOTE",
+        {"device_id": device.id, "reservation_date": requested_date.isoformat()},
+    )
+
+    async with factory() as session:
+        skipped = await session.get(ReservationWaitlist, first_entry.id)
+        offered = await session.get(ReservationWaitlist, second_entry.id)
+        offer = await session.scalar(
+            select(ReservationWaitlistOffer).where(
+                ReservationWaitlistOffer.waitlist_id == second_entry.id
+            )
+        )
+        notification = await session.scalar(
+            select(OutboxTask).where(
+                OutboxTask.task_key
+                == f"notification:waitlist:{first_entry.id}:ineligible:{requested_date.isoformat()}"
+            )
+        )
+        assert skipped is not None and skipped.status == "SKIPPED"
+        assert offered is not None and offered.user_id == second_user_id
+        assert offered.status == "OFFERED"
+        assert offer is not None
+        assert notification is not None and "停用" in notification.payload["content"]
+
+
+@pytest.mark.asyncio
+async def test_waitlist_promotion_continues_after_one_hundred_ineligible_users(seeded) -> None:
+    factory, college, _, _, _, _, device, _ = seeded
+    requested_date = date.today() + timedelta(days=4)
+    async with factory() as session:
+        student_role = await session.scalar(select(Role).where(Role.role_code == "STUDENT"))
+        assert student_role is not None
+        inactive_users = [
+            User(
+                username=f"waitlist-ineligible-{index}",
+                password_hash="test",
+                real_name=f"停用候补用户{index}",
+                college_id=college.id,
+                status=0,
+                roles=[student_role],
+            )
+            for index in range(101)
+        ]
+        eligible_user = User(
+            username="waitlist-after-large-invalid-queue",
+            password_hash="test",
+            real_name="长队列后的有效候补",
+            college_id=college.id,
+            status=1,
+            roles=[student_role],
+        )
+        session.add_all([*inactive_users, eligible_user])
+        await session.flush()
+        session.add_all(
+            [
+                ReservationWaitlist(
+                    device_id=device.id,
+                    college_id=college.id,
+                    user_id=user.id,
+                    reservation_date=requested_date,
+                    purpose="长队列候补测试",
+                    status="WAITING",
+                )
+                for user in [*inactive_users, eligible_user]
+            ]
+        )
+        await session.commit()
+        eligible_user_id = eligible_user.id
+
+    app = FastAPI()
+    app.state.settings = Settings(environment="test", cors_origins=[], enable_workers=False)
+    app.state.session_factory = factory
+    worker = OutboxWorker(app)
+    payload = {"device_id": device.id, "reservation_date": requested_date.isoformat()}
+
+    await worker._handle("WAITLIST_PROMOTE", payload)
+    async with factory() as session:
+        skipped_count = await session.scalar(
+            select(func.count(ReservationWaitlist.id)).where(
+                ReservationWaitlist.device_id == device.id,
+                ReservationWaitlist.reservation_date == requested_date,
+                ReservationWaitlist.status == "SKIPPED",
+            )
+        )
+        continuation = await session.scalar(
+            select(OutboxTask).where(
+                OutboxTask.task_type == "WAITLIST_PROMOTE",
+                OutboxTask.task_key.like("waitlist:promote:continue:%"),
+            )
+        )
+        assert skipped_count == 100
+        assert continuation is not None
+
+    # A second worker pass represents the durable continuation task.
+    await worker._handle("WAITLIST_PROMOTE", payload)
+    async with factory() as session:
+        eligible_entry = await session.scalar(
+            select(ReservationWaitlist).where(
+                ReservationWaitlist.user_id == eligible_user_id,
+                ReservationWaitlist.device_id == device.id,
+                ReservationWaitlist.reservation_date == requested_date,
+            )
+        )
+        offer = await session.scalar(
+            select(ReservationWaitlistOffer).where(
+                ReservationWaitlistOffer.user_id == eligible_user_id,
+                ReservationWaitlistOffer.device_id == device.id,
+                ReservationWaitlistOffer.reservation_date == requested_date,
+            )
+        )
+        assert eligible_entry is not None and eligible_entry.status == "OFFERED"
+        assert offer is not None
+
+
+@pytest.mark.asyncio
+async def test_waitlist_promotion_skips_newly_maintenance_blocked_date(seeded) -> None:
+    factory, _, _, user, _, manager, device, _ = seeded
+    requested_date = date.today() + timedelta(days=4)
+    async with factory() as session:
+        reservation = await ReservationService(
+            session,
+            principal(user, "STUDENT"),
+        ).create(
+            ReservationPlanRequest(
+                device_id=device.id,
+                start_date=requested_date,
+                end_date=requested_date,
+                purpose="释放维护冲突候补日期",
+            )
+        )
+        entry = await ReservationService(
+            session,
+            principal(user, "STUDENT"),
+        ).join_waitlist(
+            device_id=device.id,
+            reservation_date=requested_date,
+            purpose="维护到期前加入候补",
+        )
+        await ReservationService(session, principal(user, "STUDENT")).cancel(
+            reservation.created[0].id
+        )
+        session.add(
+            DeviceMaintenancePlan(
+                device_id=device.id,
+                college_id=device.college_id,
+                plan_type="CALIBRATION",
+                title="逾期校准",
+                interval_value=1,
+                interval_unit="YEAR",
+                due_date=date.today() - timedelta(days=1),
+                active=True,
+                created_by=manager.id,
+                updated_by=manager.id,
+            )
+        )
+        await session.commit()
+
+    app = FastAPI()
+    app.state.settings = Settings(environment="test", cors_origins=[], enable_workers=False)
+    app.state.session_factory = factory
+    await OutboxWorker(app)._handle(
+        "WAITLIST_PROMOTE",
+        {"device_id": device.id, "reservation_date": requested_date.isoformat()},
+    )
+
+    async with factory() as session:
+        skipped = await session.get(ReservationWaitlist, entry.id)
+        offer = await session.scalar(
+            select(ReservationWaitlistOffer).where(
+                ReservationWaitlistOffer.waitlist_id == entry.id
+            )
+        )
+        assert skipped is not None and skipped.status == "SKIPPED"
+        assert offer is None

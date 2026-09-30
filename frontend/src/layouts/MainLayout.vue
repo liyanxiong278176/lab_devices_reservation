@@ -6,7 +6,7 @@ import { Bell, Moon, Sunny } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useNotificationStore } from '@/stores/notification'
 import { useThemeStore } from '@/stores/theme'
-import { connectWs, disconnectWs } from '@/composables/useWebSocket'
+import { connectEventStream, disconnectEventStream } from '@/composables/useEventStream'
 
 const router = useRouter()
 const route = useRoute()
@@ -17,12 +17,12 @@ const themeStore = useThemeStore()
 let notifTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   notifStore.loadUnread()
-  connectWs()
+  connectEventStream()
   notifTimer = setInterval(() => notifStore.loadUnread(), 30000)
 })
 onUnmounted(() => {
   if (notifTimer) clearInterval(notifTimer)
-  disconnectWs()
+  disconnectEventStream()
 })
 
 interface MenuItem {
@@ -38,9 +38,9 @@ const menuItems = computed<MenuItem[]>(() => {
     .filter((c) => c.meta?.title)
     .filter((c) => !(c.meta as Record<string, unknown>)?.hidden)
     .filter((c) => {
-      const need = c.meta?.roles as string[] | undefined
+      const need = c.meta?.permissions as string[] | undefined
       if (!need || need.length === 0) return true
-      return need.some((r) => userStore.roles.includes(r))
+      return userStore.hasAnyPerm(need)
     })
     .map((c) => ({
       path: `/${c.path}`,
@@ -53,10 +53,13 @@ const activeMenu = computed(() => route.path)
 const displayName = computed(() => userStore.realName || userStore.username || '用户')
 const themeLabel = computed(() => (themeStore.isDark ? '切换浅色' : '切换深色'))
 
-function onLogout() {
-  userStore.logout()
-  ElMessage.success('已退出登录')
-  router.push('/login')
+async function onLogout() {
+  try {
+    await userStore.logout()
+    ElMessage.success('已退出登录')
+  } finally {
+    await router.push('/login')
+  }
 }
 
 function toggleTheme() {
@@ -501,6 +504,10 @@ function toggleTheme() {
   .layout__user,
   .layout__header-right > :deep(.el-button) {
     display: none;
+  }
+
+  :deep(.layout__icon-button .el-badge__content.is-fixed) {
+    right: 20px;
   }
 }
 

@@ -53,30 +53,29 @@ class RecommendationService:
         limit = max(1, min(limit, MAX_CACHE_SIZE))
         if self.cache is not None and not self.principal.is_system_admin:
             scope = college_scope(self.principal)
-            if scope is not None:
-                try:
-                    scope_key = f"college:{scope}"
-                    version = await self.cache.version(scope_key)
-                    viewer = "manager" if self.principal.is_lab_admin else "member"
-                    cache_key = (
-                        f"lab:v2:recommendations:{scope_key}:v{version}:"
-                        f"{viewer}:user:{self.principal.user_id}"
-                    )
+            try:
+                scope_key = f"college:{scope}"
+                version = await self.cache.version(scope_key)
+                viewer = "manager" if self.principal.is_lab_admin else "member"
+                cache_key = (
+                    f"lab:v2:recommendations:{scope_key}:v{version}:"
+                    f"{viewer}:user:{self.principal.user_id}"
+                )
 
-                    async def load() -> list[dict[str, object]]:
-                        return [item.model_dump(mode="json") for item in await self._compute()]
+                async def load() -> list[dict[str, object]]:
+                    return [item.model_dump(mode="json") for item in await self._compute()]
 
-                    raw = await self.cache.get_or_set_json(
-                        cache_key,
-                        load,
-                        ttl_seconds=cache_ttl_seconds,
-                    )
-                    if isinstance(raw, list):
-                        return [RecommendationData.model_validate(item) for item in raw][:limit]
-                except Exception:
-                    # Recommendations are an optimization; always fall back
-                    # to the authoritative calculation on cache failure.
-                    pass
+                raw = await self.cache.get_or_set_json(
+                    cache_key,
+                    load,
+                    ttl_seconds=cache_ttl_seconds,
+                )
+                if isinstance(raw, list):
+                    return [RecommendationData.model_validate(item) for item in raw][:limit]
+            except Exception:
+                # Recommendations are an optimization; always fall back
+                # to the authoritative calculation on cache failure.
+                pass
         cache_key = self._cache_key()
         cached = await self._read_cache(cache_key)
         if cached is not None:

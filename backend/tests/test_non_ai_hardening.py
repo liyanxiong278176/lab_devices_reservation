@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from app.auth.csrf import enforce_csrf
 from app.auth.security import Principal, get_current_principal
 from app.core.settings import Settings
 from app.infrastructure.db.models import Reservation, ReservationItem
@@ -31,6 +32,7 @@ async def test_repair_upload_is_validated_and_college_scoped(seeded, tmp_path: P
         roles=("STUDENT",),
         token_type="access",
         token_id="upload-test",
+        permissions=("repair:create",),
     )
 
     async def override_db():
@@ -42,6 +44,7 @@ async def test_repair_upload_is_validated_and_college_scoped(seeded, tmp_path: P
 
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_current_principal] = override_principal
+    app.dependency_overrides[enforce_csrf] = lambda: None
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             valid_png = b"\x89PNG\r\n\x1a\n" + b"safe-test"
@@ -66,6 +69,7 @@ async def test_repair_upload_is_validated_and_college_scoped(seeded, tmp_path: P
                 roles=("STUDENT",),
                 token_type="access",
                 token_id="upload-other-college",
+                permissions=("repair:create",),
             )
             forbidden = await client.get(payload["url"])
             assert forbidden.status_code == 404
@@ -116,6 +120,7 @@ async def test_completed_reservation_has_one_college_scoped_feedback(seeded) -> 
         roles=("STUDENT",),
         token_type="access",
         token_id="feedback-test",
+        permissions=("feedback:create", "feedback:read:own"),
     )
 
     async def override_db():
@@ -127,8 +132,32 @@ async def test_completed_reservation_has_one_college_scoped_feedback(seeded) -> 
 
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_current_principal] = override_principal
+    app.dependency_overrides[enforce_csrf] = lambda: None
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            current = Principal(
+                user_id=student1.id,
+                username=student1.username,
+                college_id=college.id,
+                roles=("STUDENT",),
+                token_type="access",
+                token_id="feedback-no-submit-permission",
+                permissions=("feedback:read:own",),
+            )
+            denied = await client.post(
+                f"/api/v2/reservations/{reservation_id}/feedback",
+                json={"rating": 4},
+            )
+            assert denied.status_code == 403
+            current = Principal(
+                user_id=student1.id,
+                username=student1.username,
+                college_id=college.id,
+                roles=("STUDENT",),
+                token_type="access",
+                token_id="feedback-test",
+                permissions=("feedback:create", "feedback:read:own"),
+            )
             created = await client.post(
                 f"/api/v2/reservations/{reservation_id}/feedback",
                 json={"rating": 4, "comment": "设备状态良好"},
@@ -153,6 +182,7 @@ async def test_completed_reservation_has_one_college_scoped_feedback(seeded) -> 
                 roles=("STUDENT",),
                 token_type="access",
                 token_id="feedback-other-college",
+                permissions=("feedback:create", "feedback:read:own"),
             )
             forbidden = await client.get(f"/api/v2/reservations/{reservation_id}/feedback")
             assert forbidden.status_code == 404
@@ -181,6 +211,9 @@ async def test_device_documents_and_blackouts_are_validated_and_scoped(
         roles=("LAB_ADMIN",),
         token_type="access",
         token_id="document-manager",
+        permissions=(
+            "device:read", "device:documents:manage", "reservation-rule:manage",
+        ),
     )
 
     async def override_db():
@@ -192,6 +225,7 @@ async def test_device_documents_and_blackouts_are_validated_and_scoped(
 
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_current_principal] = override_principal
+    app.dependency_overrides[enforce_csrf] = lambda: None
     target = (date.today() + timedelta(days=7)).isoformat()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -219,6 +253,9 @@ async def test_device_documents_and_blackouts_are_validated_and_scoped(
                 },
             )
             assert blackout.status_code == 201
+            blackouts = await client.get("/api/v2/blackouts")
+            assert blackouts.status_code == 200
+            assert blackouts.json()["data"][0]["scope_name"] == device.name
 
             current = Principal(
                 user_id=student1.id,
@@ -227,6 +264,7 @@ async def test_device_documents_and_blackouts_are_validated_and_scoped(
                 roles=("STUDENT",),
                 token_type="access",
                 token_id="document-student",
+                permissions=("device:read",),
             )
             availability = await client.get(
                 f"/api/v2/devices/{device.id}/availability",
@@ -242,6 +280,7 @@ async def test_device_documents_and_blackouts_are_validated_and_scoped(
                 roles=("STUDENT",),
                 token_type="access",
                 token_id="document-other-college",
+                permissions=("device:read",),
             )
             forbidden = await client.get(f"/api/v2/devices/{device.id}/documents")
             assert forbidden.status_code == 404

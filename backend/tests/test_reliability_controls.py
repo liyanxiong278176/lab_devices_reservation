@@ -45,6 +45,7 @@ async def test_rate_limit_uses_local_fallback_and_returns_retry_after() -> None:
     app.state.settings = Settings(
         environment="test",
         cors_origins=[],
+        rate_limit_enabled=True,
         rate_limit_login_capacity=1,
         rate_limit_login_refill_per_second=0.01,
     )
@@ -77,6 +78,7 @@ async def test_login_limits_accounts_independently_from_shared_ip() -> None:
     app.state.settings = Settings(
         environment="test",
         cors_origins=[],
+        rate_limit_enabled=True,
         rate_limit_login_ip_capacity=2,
         rate_limit_login_ip_refill_per_second=0.001,
         rate_limit_login_capacity=5,
@@ -115,6 +117,10 @@ async def test_reservation_can_jump_directly_to_stable_id_page(seeded) -> None:
         roles=("STUDENT",),
         token_type="access",
         token_id="page-number-test",
+        permissions=(
+            "device:read", "reservation:create", "reservation:read:own",
+            "reservation:cancel", "reservation:check-in", "reservation:return",
+        ),
     )
     first_day = date.today() + timedelta(days=10)
     async with factory() as session:

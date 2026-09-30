@@ -2,15 +2,48 @@ from datetime import date, timedelta
 
 import pytest
 from app.api.v2.catalog import list_colleges, list_labs
-from app.api.v2.dashboard import dashboard_me, dashboard_overview
+from app.api.v2.dashboard import dashboard_me, dashboard_overview, dashboard_summary
 from app.application.repairs import RepairService
 from app.auth.security import Principal
 from app.core.errors import ApiError
-from app.infrastructure.db.models import OutboxTask, RepairReport, RepairWorklog, Reservation
+from app.infrastructure.db.models import (
+    Device,
+    DeviceCategory,
+    OutboxTask,
+    RepairReport,
+    RepairWorklog,
+    Reservation,
+)
 from sqlalchemy import select
 
 
 def principal(user, *roles: str) -> Principal:
+    permission_map = {
+        "STUDENT": (
+            "dashboard:read",
+            "device:read",
+            "reservation:create",
+            "reservation:read:own",
+            "reservation:cancel",
+            "reservation:check-in",
+            "reservation:return",
+            "repair:create",
+            "repair:read:own",
+            "repair:confirm",
+        ),
+        "LAB_ADMIN": (
+            "dashboard:read",
+            "device:read",
+            "reservation:read:scope",
+            "reservation:approve",
+            "reservation:handover",
+            "reservation:accept-return",
+            "repair:read:scope",
+            "repair:handle",
+            "report:read",
+            "organization:read",
+        ),
+    }
     return Principal(
         user_id=user.id,
         username=user.username,
@@ -18,6 +51,7 @@ def principal(user, *roles: str) -> Principal:
         roles=roles,
         token_type="access",
         token_id=f"test-{user.id}",
+        permissions=tuple({code for role in roles for code in permission_map.get(role, ())}),
     )
 
 
@@ -39,9 +73,10 @@ async def test_repair_scope_and_lifecycle(seeded) -> None:
         assert report is not None
         assert report.status == "PENDING"
 
-        # A manager from another college cannot even load or operate this ticket.
+        # Model a manager principal scoped to the other college; access must be
+        # hidden as not-found after its repair:handle permission is accepted.
         with pytest.raises(ApiError) as error:
-            await RepairService(session, principal(student2, "STUDENT")).take(created.id)
+            await RepairService(session, principal(student2, "LAB_ADMIN")).take(created.id)
         assert error.value.status_code == 404
 
     async with factory() as session:
@@ -204,6 +239,65 @@ async def test_dashboard_is_scoped_and_uses_day_granularity(seeded) -> None:
 
 
 @pytest.mark.asyncio
+async def test_personal_dashboard_aggregates_reservations_without_loading_history(seeded) -> None:
+    factory, college, _, student, _, _, device, _ = seeded
+    category = DeviceCategory(name="光学设备")
+    today = date.today()
+    async with factory() as session:
+        session.add(category)
+        await session.flush()
+        stored_device = await session.get(Device, device.id)
+        assert stored_device is not None
+        stored_device.category_id = category.id
+        session.add_all(
+            [
+                Reservation(
+                    college_id=college.id,
+                    user_id=student.id,
+                    device_id=device.id,
+                    purpose="当天实验",
+                    start_date=today,
+                    end_date=today,
+                    status="APPROVED",
+                ),
+                Reservation(
+                    college_id=college.id,
+                    user_id=student.id,
+                    device_id=device.id,
+                    purpose="未来实验",
+                    start_date=today + timedelta(days=3),
+                    end_date=today + timedelta(days=3),
+                    status="PENDING",
+                ),
+                Reservation(
+                    college_id=college.id,
+                    user_id=student.id,
+                    device_id=device.id,
+                    purpose="历史实验",
+                    start_date=today - timedelta(days=40),
+                    end_date=today - timedelta(days=40),
+                    status="COMPLETED",
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with factory() as session:
+        result = await dashboard_me(principal(student, "STUDENT"), session)
+
+    assert result.data is not None
+    assert result.data["myReservationsByStatus"] == {
+        "APPROVED": 1,
+        "PENDING": 1,
+        "COMPLETED": 1,
+    }
+    assert result.data["myTrend30d"][-1] == {"date": today.isoformat(), "count": 1}
+    assert result.data["myCategoryDist"] == [
+        {"categoryId": category.id, "categoryName": "光学设备", "count": 3}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_dashboard_overview_heatmap_uses_reservation_date(seeded) -> None:
     factory, college, _, student1, _, manager, device, _ = seeded
     async with factory() as session:
@@ -268,6 +362,69 @@ async def test_dashboard_pending_approvals_includes_future_reservations(seeded) 
 
     assert overview.data is not None
     assert overview.data["cards"]["pendingApprovals"] == 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_role_scopes_empty_results_category_grouping_and_summary(seeded) -> None:
+    factory, college, _other_college, student, _other_student, manager, *_ = seeded
+    scoped_student = Principal(
+        user_id=student.id,
+        username=student.username,
+        college_id=college.id,
+        roles=("STUDENT",),
+        token_type="access",
+        token_id="dashboard-scoped-student",
+        permissions=("report:read",),
+    )
+    global_admin = Principal(
+        user_id=manager.id,
+        username=manager.username,
+        college_id=None,
+        roles=("SYS_ADMIN",),
+        token_type="access",
+        token_id="dashboard-global-admin",
+        permissions=("report:read",),
+    )
+    out_of_scope_manager = Principal(
+        user_id=manager.id,
+        username=manager.username,
+        college_id=999999,
+        roles=("LAB_ADMIN",),
+        token_type="access",
+        token_id="dashboard-empty-scope",
+        permissions=("report:read",),
+    )
+
+    async with factory() as session:
+        with pytest.raises(ApiError) as error:
+            await dashboard_overview(
+                "device", 30, principal=principal(student, "STUDENT"), session=session
+            )
+        assert error.value.status_code == 403
+
+        scoped = await dashboard_overview("category", 30, principal=scoped_student, session=session)
+        assert scoped.data is not None
+        assert scoped.data["categoryDist"]
+
+        empty = await dashboard_overview(
+            "device", 30, principal=out_of_scope_manager, session=session
+        )
+        assert empty.data is not None
+        assert empty.data["utilization"] == []
+        assert empty.data["cards"]["pendingApprovals"] == 0
+
+        global_result = await dashboard_overview(
+            "device", 30, principal=global_admin, session=session
+        )
+        assert global_result.data is not None
+        assert global_result.data["deviceStatus"]
+        global_personal = await dashboard_me(global_admin, session)
+        assert global_personal.data is not None
+        assert "unreadCount" in global_personal.data
+
+        summary = await dashboard_summary(principal=scoped_student, session=session)
+        assert summary.data is not None
+        assert "myRepairCount" in summary.data
 
 
 @pytest.mark.asyncio

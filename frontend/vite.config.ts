@@ -13,12 +13,6 @@ export default defineConfig({
       '/api': {
         target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000',
         changeOrigin: true,
-        ws: true,
-      },
-      '/ws': {
-        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000',
-        ws: true,
-        changeOrigin: true,
       },
     },
   },
@@ -26,5 +20,27 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     exclude: ['e2e/**', '**/node_modules/**', '**/dist/**'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/**/*.{ts,tsx,vue}'],
+      exclude: [
+        'src/**/__tests__/**',
+        'src/**/ai/**',
+        'src/api/aiV2.ts',
+        'src/stores/aiWorkbench.ts',
+        'src/types/aiWorkbench.ts',
+      ],
+      thresholds: {
+        lines: 100,
+        functions: 100,
+        branches: 100,
+        statements: 100,
+        'src/api/request.ts': { lines: 85, branches: 65, functions: 100 },
+        'src/composables/useEventStream.ts': { lines: 90, branches: 70, functions: 75 },
+        'src/stores/notification.ts': { lines: 90, branches: 80, functions: 90 },
+        'src/utils/fetch-all-pages.ts': { lines: 100, branches: 50, functions: 100 },
+      },
+    },
   },
 })

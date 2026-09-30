@@ -34,6 +34,7 @@ import GhostButton from '@/components/ui/GhostButton.vue'
 import GradientButton from '@/components/ui/GradientButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageDepthNotice from '@/components/ui/PageDepthNotice.vue'
+import PageSizeControl from '@/components/ui/PageSizeControl.vue'
 
 const router = useRouter()
 
@@ -389,12 +390,17 @@ onMounted(() => {
     <!-- 分页(深色全局已桥接) -->
     <div v-if="page.records.length > 0" class="mine__pager">
       <PageDepthNotice v-if="page.truncated" :total="page.total" />
+      <PageSizeControl
+        :model-value="page.size"
+        :options="[9, 18, 36]"
+        label="每页显示预约记录数量"
+        @change="onSizeChange"
+      />
       <el-pagination
         :current-page="page.current"
         :page-size="page.size"
         :total="page.truncated ? Math.min(page.total, (page.pages || 1) * page.size) : page.total"
-        :page-sizes="[9, 18, 36]"
-        layout="total, sizes, prev, pager, next"
+        layout="total, prev, pager, next"
         background
         @current-change="onPageChange"
         @size-change="onSizeChange"
@@ -723,6 +729,8 @@ onMounted(() => {
   // ---- 分页 ----------------------------------------------------------------
   &__pager {
     display: flex;
+    align-items: center;
+    gap: 14px;
     justify-content: flex-end;
     padding-top: 4px;
   }

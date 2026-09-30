@@ -10,6 +10,7 @@ import PieWidget from '@/components/charts/PieWidget.vue'
 import BarWidget from '@/components/charts/BarWidget.vue'
 import LineWidget from '@/components/charts/LineWidget.vue'
 import { useStagger } from '@/composables/useStagger'
+import { useNotificationStore } from '@/stores/notification'
 import {
   RESERVATION_STATUS_ORDER,
   RESERVATION_STATUS_LABELS,
@@ -20,6 +21,7 @@ import {
 const loading = ref(false)
 const data = ref<DashboardMeVO | null>(null)
 const router = useRouter()
+const notifStore = useNotificationStore()
 
 // 图表网格错峰入场容器(spec §6.2):首次进入视口时,内部 [data-stagger] 图表卡
 // 按 60ms 错峰 fade+rise;reduced-motion 由 useStagger 内部短路(守铁律 §6.1)。
@@ -78,7 +80,7 @@ onMounted(load)
     <!-- 数字卡片 -->
     <el-row :gutter="16" class="dash__row">
       <el-col :xs="24" :sm="12">
-        <StatCard label="未读通知" :value="data?.unreadCount ?? 0" icon="Bell" />
+        <StatCard label="未读通知" :value="notifStore.unread" icon="Bell" />
       </el-col>
       <el-col :xs="24" :sm="12">
         <StatCard label="我的报修单" :value="data?.myRepairCount ?? 0" icon="Tools" />

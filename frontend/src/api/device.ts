@@ -1,5 +1,6 @@
 import request from './request'
 import type { Page } from '@/types/common'
+import { fetchAllPages } from '@/utils/fetch-all-pages'
 import type {
   DeviceAvailabilityVO,
   DeviceCalendarItemVO,
@@ -20,6 +21,8 @@ interface V2Device {
   category_name?: string | null
   lab_id?: number | null
   lab_name?: string | null
+  college_id?: number | null
+  college_name?: string | null
   need_approval: boolean
   max_reservation_days: number
   tags?: string[] | null
@@ -34,6 +37,7 @@ interface V2Device {
   requires_safety_ack?: boolean
   requires_qualification?: boolean
   max_advance_days?: number | null
+  maintenance_warning?: string | null
 }
 
 interface V2DevicePage {
@@ -50,6 +54,7 @@ interface V2DeviceAvailability {
   available: boolean
   reservation_id?: number | null
   status?: string | null
+  reason?: string | null
 }
 
 function mapDevice(item: V2Device): DeviceVO {
@@ -60,6 +65,8 @@ function mapDevice(item: V2Device): DeviceVO {
     categoryName: item.category_name || undefined,
     labId: item.lab_id ?? null,
     labName: item.lab_name || undefined,
+    collegeId: item.college_id ?? null,
+    collegeName: item.college_name || undefined,
     brand: item.brand,
     model: item.model,
     specs: item.specs,
@@ -80,6 +87,7 @@ function mapDevice(item: V2Device): DeviceVO {
     requiresSafetyAck: Boolean(item.requires_safety_ack),
     requiresQualification: Boolean(item.requires_qualification),
     maxAdvanceDays: item.max_advance_days ?? undefined,
+    maintenanceWarning: item.maintenance_warning || undefined,
   }
 }
 
@@ -115,6 +123,15 @@ export const searchDevices = async (q: DeviceQuery): Promise<Page<DeviceVO>> => 
   }
 }
 
+export const searchAllDevices = async (keyword: string, pageSize = 100): Promise<DeviceVO[]> => {
+  const normalized = keyword.trim()
+  if (!normalized) return []
+  return fetchAllPages(
+    (page, size) => searchDevices({ page, size, keyword: normalized }),
+    pageSize,
+  )
+}
+
 export const getDevice = async (id: number): Promise<DeviceVO> => {
   const data = await request.get<unknown, V2Device>(`/devices/${id}`)
   return mapDevice(data)
@@ -127,9 +144,9 @@ export const deviceCalendar = async (id: number, from: string, to?: string) => {
     .map(
       (day): DeviceCalendarItemVO => ({
         date: day.date,
-        slotIndex: 0,
-        reservationId: day.reservationId || 0,
+        reservationId: day.reservationId ?? null,
         status: day.status || 'BLOCKED',
+        reason: day.reason || undefined,
       }),
     )
 }
@@ -148,6 +165,7 @@ export const deviceAvailability = async (
     available: day.available,
     reservationId: day.reservation_id ?? null,
     status: day.status ?? null,
+    reason: day.reason ?? null,
   }))
 }
 

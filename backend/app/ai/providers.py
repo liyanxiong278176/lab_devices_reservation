@@ -49,6 +49,9 @@ async def test_provider(
                 base_url=runtime.base_url,
                 timeout=min(settings.ai_provider_timeout_seconds, 12),
                 max_retries=1,
+                # Ollama's OpenAI-compatible endpoint accepts text strings,
+                # but not LangChain's token-ID arrays.
+                check_embedding_ctx_length=runtime.provider.lower() != "ollama",
             )
             vector = await embeddings.aembed_query("实验室设备配置连通性检测")
             if len(vector) != settings.ai_embedding_dimension:
@@ -76,8 +79,28 @@ async def test_provider(
                 )
             if response.status_code in {401, 403}:
                 raise ApiError("AI_PROVIDER_AUTH_FAILED", "MinerU API Key 无效", 422)
-            if response.status_code >= 500:
+            if response.status_code == 429 or response.status_code >= 500:
                 raise ApiError("AI_PROVIDER_UNAVAILABLE", "MinerU 服务暂时不可用", 503)
+            if response.status_code >= 400:
+                raise ApiError("AI_PROVIDER_TEST_FAILED", "MinerU 连接测试失败", 502)
+            if response.status_code != 200:
+                raise ApiError("AI_PROVIDER_TEST_FAILED", "MinerU 连接测试未得到有效响应", 502)
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise ApiError("AI_PROVIDER_TEST_FAILED", "MinerU 返回了无效响应", 502) from exc
+            if not isinstance(payload, dict):
+                raise ApiError("AI_PROVIDER_TEST_FAILED", "MinerU 返回了无效响应", 502)
+            code = payload.get("code")
+            message = str(payload.get("msg", "")).casefold()
+            # The probe deliberately uses a nonexistent task ID; MinerU
+            # authenticates it and returns this task-level result.
+            if code != 0 and not (code == -60012 and "task not found" in message):
+                raise ApiError(
+                    "AI_PROVIDER_TEST_FAILED",
+                    "MinerU 服务返回错误，连接测试未通过",
+                    502,
+                )
         else:
             raise ApiError("AI_COMPONENT_INVALID", "未知的 AI 服务类型", 422)
     except ApiError:

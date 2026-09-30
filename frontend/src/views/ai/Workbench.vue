@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowDown,
   Reading,
@@ -19,6 +19,7 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import {
+  getAiCitation,
   getAiModelConfigs,
   getLatestAiEmbeddingRebuild,
   getAiReadiness,
@@ -27,21 +28,35 @@ import {
   testAiModelConfig,
 } from '@/api/aiV2'
 import KnowledgePanel from '@/components/ai/KnowledgePanel.vue'
+import DomainDictionaryPanel from '@/components/ai/DomainDictionaryPanel.vue'
 import UsagePanel from '@/components/ai/UsagePanel.vue'
 import { useAiWorkbenchStore } from '@/stores/aiWorkbench'
 import { useUserStore } from '@/stores/user'
-import type { AiEmbeddingRebuildJob, AiModelConfig, AiReadiness } from '@/types/aiWorkbench'
+import type {
+  AiCitation,
+  AiCitationDetail,
+  AiEmbeddingRebuildJob,
+  AiModelConfig,
+  AiReadiness,
+  AiMessage,
+  AiMemoryCandidate,
+} from '@/types/aiWorkbench'
 
 const store = useAiWorkbenchStore()
 const userStore = useUserStore()
 const input = ref('')
 const chatRef = ref<HTMLElement | null>(null)
+let followChatBottom = true
 const bootError = ref('')
 const aiStatusError = ref('')
 const aiReadiness = ref<AiReadiness | null>(null)
 const historyOpen = ref(false)
 const contextOpen = ref(false)
-const activeView = ref<'chat' | 'knowledge' | 'usage'>('chat')
+const activeView = ref<'chat' | 'knowledge' | 'domain' | 'usage'>('chat')
+const citationVisible = ref(false)
+const citationLoading = ref(false)
+const citationError = ref('')
+const selectedCitation = ref<AiCitationDetail | null>(null)
 
 const isSystemAdmin = computed(() => userStore.hasRole('SYS_ADMIN'))
 const isLabAdmin = computed(() => userStore.hasRole('LAB_ADMIN') || isSystemAdmin.value)
@@ -71,6 +86,11 @@ const aiStatusLabel = computed(() => {
   if (!aiReadiness.value) return '检查 AI 状态'
   return aiReady.value ? 'AI 服务就绪' : '等待模型配置'
 })
+
+function memoryCandidates(message: AiMessage): AiMemoryCandidate[] {
+  const value = message.metadata?.memory_candidates
+  return Array.isArray(value) ? value as AiMemoryCandidate[] : []
+}
 
 onMounted(async () => {
   const statusTask = refreshAiReadiness()
@@ -231,6 +251,66 @@ function formatTime(value?: string) {
   )
 }
 
+const dlpCategoryLabels: Record<string, string> = {
+  credential: '凭据',
+  password: '密码',
+  email: '邮箱',
+  phone: '手机号',
+  identity_number: '身份证号',
+  sensitive_field: '敏感字段',
+}
+
+function scrollChatToBottom() {
+  const chat = chatRef.value
+  if (chat) chat.scrollTop = chat.scrollHeight
+}
+
+function updateChatFollowState() {
+  const chat = chatRef.value
+  if (!chat) return
+  followChatBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 96
+}
+
+function messageText(message: AiMessage) {
+  return message.content.replace(/\s*\[citation:[^\]]+\]/g, '').trim()
+}
+
+function messageCitations(message: AiMessage): AiCitation[] {
+  const citations = message.metadata?.citations
+  return Array.isArray(citations) ? citations as AiCitation[] : []
+}
+
+watch(() => store.activeConversationId, async () => {
+  followChatBottom = true
+  await nextTick()
+  scrollChatToBottom()
+}, { flush: 'post' })
+
+watch(() => store.messages.map((message) => `${message.id}:${message.content?.length || 0}`), async () => {
+  await nextTick()
+  if (followChatBottom) scrollChatToBottom()
+}, { flush: 'post' })
+
+async function openCitation(citation: AiCitation) {
+  if (!citation.point_id && !citation.citation_id) return
+  citationVisible.value = true
+  citationLoading.value = true
+  citationError.value = ''
+  selectedCitation.value = null
+  try {
+    selectedCitation.value = await getAiCitation(citation)
+  } catch (err) {
+    citationError.value = (err as Error).message || '引用已下架或当前账号无权查看'
+  } finally {
+    citationLoading.value = false
+  }
+}
+
+function formatToolMessage(content: string) {
+  try { return JSON.stringify(JSON.parse(content), null, 2) }
+  catch { return content }
+}
+
 async function confirm() {
   if (await store.confirm()) ElMessage.success('操作已执行')
 }
@@ -268,6 +348,7 @@ async function confirm() {
     <nav class="ai-workbench__nav" aria-label="AI 工作台模块">
       <button type="button" :class="{ 'is-active': activeView === 'chat' }" @click="activeView = 'chat'"><Cpu /> 对话工作区</button>
       <button v-if="isLabAdmin" type="button" :class="{ 'is-active': activeView === 'knowledge' }" @click="activeView = 'knowledge'"><Document /> 知识库</button>
+      <button v-if="isLabAdmin" type="button" :class="{ 'is-active': activeView === 'domain' }" @click="activeView = 'domain'"><Reading /> 领域词典</button>
       <button type="button" :class="{ 'is-active': activeView === 'usage' }" @click="activeView = 'usage'"><Coin /> 用量与额度</button>
     </nav>
 
@@ -345,7 +426,11 @@ async function confirm() {
           </div>
         </header>
 
-        <div ref="chatRef" class="ai-chat__body">
+        <div ref="chatRef" class="ai-chat__body" @scroll="updateChatFollowState">
+          <div v-if="store.dlpNotice.length" class="dlp-notice" role="status">
+            <Lock />
+            <span>敏感信息已在保存和发送前脱敏：{{ store.dlpNotice.map((item) => dlpCategoryLabels[item] || item).join('、') }}</span>
+          </div>
           <div v-if="aiStatusError" class="workbench-alert" role="alert">
             <span>{{ aiStatusError }}。为避免请求失败，暂时停用发送。</span>
             <el-button text :icon="Refresh" @click="refreshAiReadiness">重试</el-button>
@@ -383,14 +468,44 @@ async function confirm() {
             class="chat-message"
             :class="`chat-message--${message.role}`"
           >
-            <div v-if="message.role === 'assistant'" class="message-avatar"><Cpu /></div>
+            <div v-if="message.role === 'assistant' || message.role === 'tool'" class="message-avatar"><Cpu /></div>
             <div class="chat-message__content">
               <div class="chat-message__meta">
-                {{ message.role === 'user' ? '你' : 'LabFlow Agent' }}
+                {{ message.role === 'user' ? '你' : message.role === 'tool' ? `工具结果 · ${message.metadata?.tool_name || ''}` : 'LabFlow Agent' }}
               </div>
-              <div class="chat-message__bubble">
-                <span v-if="message.content">{{ message.content }}</span>
+              <div class="chat-message__bubble" :class="{ 'chat-message__bubble--tool': message.role === 'tool' }">
+                <pre v-if="message.role === 'tool'">{{ formatToolMessage(message.content) }}</pre>
+                <span v-else-if="message.content">{{ messageText(message) }}</span>
                 <span v-else class="typing-indicator"><i></i><i></i><i></i></span>
+              </div>
+              <div v-if="message.role === 'assistant' && messageCitations(message).length" class="message-citations">
+                <button
+                  v-for="citation in messageCitations(message)"
+                  :key="citation.point_id || citation.citation_id"
+                  type="button"
+                  class="message-citation"
+                  :aria-label="`查看引用：${citation.title}`"
+                  @click="openCitation(citation)"
+                >
+                  <Reading /> {{ citation.title }} <span>查看来源</span>
+                </button>
+              </div>
+              <div
+                v-for="candidate in memoryCandidates(message)"
+                :key="candidate.id"
+                class="memory-suggestion"
+              >
+                <div>
+                  <strong>记住这个长期偏好吗？</strong>
+                  <p>{{ candidate.content }}</p>
+                </div>
+                <template v-if="!candidate.status || candidate.status === 'PENDING_CONFIRMATION'">
+                  <el-button size="small" @click="store.resolveMemory(candidate, false)">忽略</el-button>
+                  <el-button size="small" type="primary" @click="store.resolveMemory(candidate, true)">记住</el-button>
+                </template>
+                <span v-else class="memory-suggestion__status">
+                  {{ candidate.status === 'ACTIVE' ? '已记住' : '已忽略' }}
+                </span>
               </div>
             </div>
           </article>
@@ -400,7 +515,7 @@ async function confirm() {
               <div class="confirmation-card__icon"><Lock /></div>
               <div>
                 <span class="section-kicker section-kicker--amber">CONFIRMATION REQUIRED</span>
-                <h3>执行 {{ pending.tool_name }}？</h3>
+                <h3>{{ pending.tool_name === 'forget_ai_memories' ? '删除这些长期记忆？' : `执行 ${pending.tool_name}？` }}</h3>
               </div>
             </div>
             <p>{{ pending.reason }}</p>
@@ -457,10 +572,15 @@ async function confirm() {
         <div class="context-block context-block--sources">
           <div class="context-block__title"><span class="section-kicker">CITED KNOWLEDGE</span><Document /></div>
           <div v-if="!store.citations.length" class="context-muted">回答引用会出现在这里，并且已按学院范围过滤。</div>
-          <details v-for="citation in store.citations" :key="citation.point_id || citation.document_id" class="citation">
-            <summary><Reading /><span>{{ citation.title }}</span><small>{{ citation.score?.toFixed(2) }}</small></summary>
-            <p>{{ citation.content }}</p>
-          </details>
+          <button
+            v-for="citation in store.citations"
+            :key="citation.point_id || citation.document_id"
+            type="button"
+            class="citation citation__button"
+            @click="openCitation(citation)"
+          >
+            <Reading /><span>{{ citation.title }}</span><small>{{ citation.section || '查看原文' }}</small>
+          </button>
         </div>
 
         <div class="context-security"><Lock /><span>写操作默认预览<br />确认后才会落库</span></div>
@@ -473,6 +593,7 @@ async function confirm() {
     </footer>
     </template>
     <KnowledgePanel v-else-if="activeView === 'knowledge' && isLabAdmin" />
+    <DomainDictionaryPanel v-else-if="activeView === 'domain' && isLabAdmin" />
     <UsagePanel v-else />
 
     <el-dialog
@@ -557,6 +678,18 @@ async function confirm() {
         <el-button :loading="modelConfigTesting" @click="testModelConfig">测试连接</el-button>
       </template>
     </el-dialog>
+    <el-drawer v-model="citationVisible" title="引用来源" size="min(520px, 92vw)" class="citation-drawer">
+      <div v-loading="citationLoading" class="citation-detail">
+        <el-alert v-if="citationError" :title="citationError" type="warning" :closable="false" show-icon />
+        <template v-else-if="selectedCitation">
+          <div class="citation-detail__meta">
+            <strong>{{ selectedCitation.title }}</strong>
+            <span>{{ selectedCitation.source_type }} · {{ selectedCitation.section }} · v{{ selectedCitation.document_version }}</span>
+          </div>
+          <pre>{{ selectedCitation.content }}</pre>
+        </template>
+      </div>
+    </el-drawer>
   </main>
 </template>
 
@@ -784,6 +917,11 @@ async function confirm() {
 .chat-message__content { display: flex; flex-direction: column; gap: 5px; max-width: 82%; }
 .chat-message__meta { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
 .chat-message__bubble { padding: 11px 14px; color: var(--text-primary); background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 4px 12px 12px 12px; font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
+.message-citations { display:flex; flex-wrap:wrap; gap:7px; margin-top:8px; }
+.message-citation { display:inline-flex; align-items:center; gap:6px; padding:5px 9px; color:var(--text-secondary); background:var(--bg-sunken); border:1px solid var(--border-subtle); border-radius:999px; cursor:pointer; font:inherit; font-size:10px; }
+.message-citation:hover { color:var(--console-cyan); border-color:var(--console-cyan); }
+.message-citation svg { width:12px; color:var(--console-cyan); }
+.message-citation span { color:var(--text-tertiary); }
 .chat-message--user .chat-message__bubble { color: var(--text-on-accent); background: var(--console-cyan); border-color: transparent; border-radius: 12px 4px 12px 12px; }
 .message-avatar { flex: none; width: 25px; height: 25px; margin-top: 16px; border-radius: 7px; }
 .message-avatar svg { width: 13px; }
@@ -891,4 +1029,23 @@ async function confirm() {
   .ai-history.is-open,
   .ai-context.is-open { width: min(320px, calc(100% - 20px)); }
 }
+
+.chat-message__bubble--tool { background: var(--bg-sunken); }
+.memory-suggestion { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; padding:12px; background:color-mix(in srgb, var(--console-cyan) 6%, var(--bg-elevated)); border:1px solid color-mix(in srgb, var(--console-cyan) 24%, transparent); border-radius:10px; }
+.memory-suggestion > div { flex:1 1 100%; }
+.memory-suggestion strong { color:var(--text-primary); font-size:12px; }
+.memory-suggestion p { margin:5px 0 0; color:var(--text-secondary); font-size:12px; line-height:1.5; }
+.memory-suggestion__status { color:var(--text-tertiary); font-size:11px; }
+.chat-message__bubble--tool pre { max-width: min(72vw, 640px); max-height: 220px; overflow: auto; margin: 0; color: var(--text-secondary); font: 11px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dlp-notice { display:flex; align-items:center; gap:8px; max-width:720px; margin:0 auto 14px; padding:8px 11px; color:var(--text-secondary); background:color-mix(in srgb, var(--status-warning) 7%, transparent); border:1px solid color-mix(in srgb, var(--status-warning) 20%, transparent); border-radius:var(--radius-control); font-size:11px; }
+.dlp-notice svg { flex:none; width:14px; color:var(--status-warning); }
+.citation__button { display:flex; align-items:center; gap:8px; width:100%; padding:9px 0; color:var(--text-secondary); text-align:left; background:transparent; border:0; cursor:pointer; font:inherit; font-size:11px; }
+.citation__button:hover { color:var(--console-cyan); }
+.citation__button svg { flex:none; width:13px; color:var(--console-cyan); }
+.citation__button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.citation__button small { margin-left:auto; color:var(--text-tertiary); white-space:nowrap; }
+.citation-detail__meta { display:grid; gap:7px; margin-bottom:14px; }
+.citation-detail__meta strong { color:var(--text-primary); font-size:15px; }
+.citation-detail__meta span { color:var(--text-tertiary); font-size:11px; }
+.citation-detail pre { max-height:calc(100vh - 190px); overflow:auto; margin:0; padding:16px; color:var(--text-secondary); background:var(--bg-sunken); border:1px solid var(--border-subtle); border-radius:10px; font:12px/1.75 var(--font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }
 </style>

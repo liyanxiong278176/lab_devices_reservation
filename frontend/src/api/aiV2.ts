@@ -1,18 +1,22 @@
 import request from './request'
 import type {
   AiCitation,
+  AiCitationDetail,
   AiConfirmation,
   AiConversation,
   AiModelConfig,
   AiMessage,
+  AiDomainTerm,
   AiStreamEvent,
   AiUsageReport,
   AiEmbeddingRebuildJob,
   AiReadiness,
+  KnowledgeBuildAccepted,
+  KnowledgeBuildJob,
   KnowledgeDocument,
   KnowledgeChunkPreview,
 } from '@/types/aiWorkbench'
-import { useUserStore } from '@/stores/user'
+import { csrfHeaders, fetchWithSession } from '@/api/request'
 
 export const listAiConversations = () =>
   request.get<unknown, AiConversation[]>('/ai/conversations')
@@ -24,6 +28,15 @@ export const createAiConversation = (title?: string) =>
 
 export const listAiMessages = (conversationId: number) =>
   request.get<unknown, AiMessage[]>(`/ai/conversations/${conversationId}/messages`)
+
+export const getAiCitation = (citation: AiCitation) => {
+  const pointId = citation.point_id
+  const citationId = citation.citation_id
+  const path = pointId
+    ? `/ai/citations/knowledge/${encodeURIComponent(pointId)}`
+    : `/ai/citations/business/${encodeURIComponent(citationId || '')}`
+  return request.get<unknown, AiCitationDetail>(path)
+}
 
 export const getActiveAiRun = (conversationId: number) =>
   request.get<unknown, { run_id: number; status: string } | null>(
@@ -61,10 +74,16 @@ export const rollbackAiEmbeddingRebuild = (jobId: number) =>
 export const listKnowledgeDocuments = () =>
   request.get<unknown, KnowledgeDocument[]>('/ai/knowledge')
 
+export const listKnowledgeScopeRoles = () =>
+  request.get<unknown, Array<{ code: string; name: string }>>('/ai/knowledge/scope-roles')
+
 export const createKnowledgeDocument = (payload: {
   title: string
   source_type: string
   college_id?: number
+  lab_id?: number
+  device_id?: number
+  allowed_roles?: string[]
   body: string
 }) => request.post<unknown, KnowledgeDocument>('/ai/knowledge', payload)
 
@@ -80,18 +99,40 @@ export const uploadKnowledgeDocument = (payload: {
   title: string
   source_type: string
   college_id?: number
+  lab_id?: number
+  device_id?: number
+  allowed_roles?: string[]
   file: File
 }) => {
   const form = new FormData()
   form.set('title', payload.title)
   form.set('source_type', payload.source_type)
   if (payload.college_id) form.set('college_id', String(payload.college_id))
+  if (payload.lab_id) form.set('lab_id', String(payload.lab_id))
+  if (payload.device_id) form.set('device_id', String(payload.device_id))
+  for (const role of payload.allowed_roles || []) form.append('allowed_roles', role)
   form.set('file', payload.file)
-  return request.post<unknown, KnowledgeDocument>('/ai/knowledge/upload', form)
+  return request.post<unknown, KnowledgeBuildAccepted>('/ai/knowledge/upload', form)
 }
 
 export const requestKnowledgeParse = (documentId: number) =>
-  request.post<unknown, KnowledgeDocument>(`/ai/knowledge/${documentId}/parse`)
+  request.post<unknown, KnowledgeBuildAccepted>(`/ai/knowledge/${documentId}/parse`)
+
+export const skipKnowledgeBuild = (documentId: number, jobId: string, reason: string) =>
+  request.post<unknown, KnowledgeBuildJob>(
+    `/ai/knowledge/${documentId}/build-jobs/${encodeURIComponent(jobId)}/skip`,
+    { reason },
+  )
+
+export const retryKnowledgeBuild = (documentId: number, jobId: string) =>
+  request.post<unknown, KnowledgeBuildAccepted>(
+    `/ai/knowledge/${documentId}/build-jobs/${encodeURIComponent(jobId)}/retry`,
+  )
+
+export const getKnowledgeBuildJob = (documentId: number, jobId: string) =>
+  request.get<unknown, KnowledgeBuildJob>(
+    `/ai/knowledge/${documentId}/build-jobs/${encodeURIComponent(jobId)}`,
+  )
 
 export const reviewKnowledgeDocument = (documentId: number, reviewed_text: string) =>
   request.put<unknown, KnowledgeDocument>(`/ai/knowledge/${documentId}/review`, { reviewed_text })
@@ -115,6 +156,27 @@ export const cancelAiAction = (confirmationId: number) =>
     `/ai/confirmations/${confirmationId}/cancel`,
   )
 
+export const confirmAiMemory = (memoryId: number) =>
+  request.post<unknown, { id: number; status: string }>(`/ai/memories/${memoryId}/confirm`)
+
+export const rejectAiMemory = (memoryId: number) =>
+  request.post<unknown, { id: number; status: string }>(`/ai/memories/${memoryId}/reject`)
+
+export const listAiDomainTerms = (collegeId?: number) =>
+  request.get<unknown, AiDomainTerm[]>('/ai/domain-terms', {
+    params: collegeId ? { college_id: collegeId } : undefined,
+  })
+
+export const createAiDomainTerm = (payload: {
+  term: string
+  canonical?: string
+  kind: AiDomainTerm['kind']
+  college_id?: number
+}) => request.post<unknown, AiDomainTerm>('/ai/domain-terms', payload)
+
+export const deleteAiDomainTerm = (termId: number) =>
+  request.delete<unknown, { id: number; deleted: boolean }>(`/ai/domain-terms/${termId}`)
+
 export const stopAiRun = (runId: number) =>
   request.post<unknown, { run_id: number; status: string }>(`/ai/runs/${runId}/stop`)
 
@@ -123,8 +185,8 @@ export interface AiStreamHandlers {
   onRunId?: (runId: number) => void
 }
 
-function authHeaders(token: string): HeadersInit {
-  return { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' }
+function streamHeaders(): HeadersInit {
+  return { Accept: 'text/event-stream' }
 }
 
 async function readError(response: Response) {
@@ -142,7 +204,6 @@ async function consumeRunEvents(
   handlers: AiStreamHandlers,
   signal?: AbortSignal,
 ) {
-  const user = useUserStore()
   let response = initialResponse
   let cursor = 0
   let knownRunId = runId
@@ -204,8 +265,8 @@ async function consumeRunEvents(
       }, { once: true })
     })
     retryDelay = Math.min(Math.round(retryDelay * 1.7), 8000)
-    response = await fetch(`/api/v2/ai/runs/${knownRunId}/events?after_event_id=${cursor}`, {
-      headers: { ...authHeaders(user.accessToken), 'Last-Event-ID': String(cursor) },
+    response = await fetchWithSession(`/api/v2/ai/runs/${knownRunId}/events?after_event_id=${cursor}`, {
+      headers: { ...streamHeaders(), 'Last-Event-ID': String(cursor) },
       signal,
     })
   }
@@ -218,11 +279,10 @@ export async function streamAiMessage(
   handlers: AiStreamHandlers,
   signal?: AbortSignal,
 ) {
-  const user = useUserStore()
-  const response = await fetch(`/api/v2/ai/conversations/${conversationId}/stream`, {
+  const response = await fetchWithSession(`/api/v2/ai/conversations/${conversationId}/stream`, {
     method: 'POST',
     signal,
-    headers: { ...authHeaders(user.accessToken), 'Content-Type': 'application/json' },
+    headers: { ...(await csrfHeaders()), Accept: 'text/event-stream', 'Content-Type': 'application/json' },
     body: JSON.stringify({ content }),
   })
   const runId = Number(response.headers.get('X-AI-Run-ID')) || null
@@ -234,9 +294,8 @@ export async function resumeAiRun(
   handlers: AiStreamHandlers,
   signal?: AbortSignal,
 ) {
-  const user = useUserStore()
-  const response = await fetch(`/api/v2/ai/runs/${runId}/events`, {
-    headers: authHeaders(user.accessToken),
+  const response = await fetchWithSession(`/api/v2/ai/runs/${runId}/events`, {
+    headers: streamHeaders(),
     signal,
   })
   await consumeRunEvents(response, runId, handlers, signal)

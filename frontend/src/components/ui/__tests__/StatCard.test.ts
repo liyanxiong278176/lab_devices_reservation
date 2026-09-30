@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import StatCard from '../StatCard.vue'
+
+let intersectionCallback: IntersectionObserverCallback | undefined
 
 /**
  * jsdom 不实现 IntersectionObserver,@vueuse/core 的 useIntersectionObserver
@@ -8,10 +11,11 @@ import StatCard from '../StatCard.vue'
  * StatCard 组件测只验渲染 + props 透传,不断言 count-up 数值(动画逻辑由 useCountUp 单测覆盖)。
  */
 function stubIO() {
+  intersectionCallback = undefined
   vi.stubGlobal(
     'IntersectionObserver',
     class {
-      constructor(_cb: any) {}
+      constructor(callback: IntersectionObserverCallback) { intersectionCallback = callback }
       observe() {}
       unobserve() {}
       takeRecords() {
@@ -23,7 +27,10 @@ function stubIO() {
 }
 
 describe('StatCard', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    intersectionCallback = undefined
+  })
 
   it('mount + {value, label} 渲染 label 文本 + 数字节点存在', () => {
     stubIO()
@@ -70,5 +77,31 @@ describe('StatCard', () => {
       props: { value: 1280, label: '设备总数', icon: 'Monitor' },
     })
     expect(wrapper.find('.stat-card__icon').exists()).toBe(true)
+  })
+
+  it('handles empty and non-intersecting observer entries before entering the viewport', async () => {
+    stubIO()
+    const wrapper = mount(StatCard, { props: { value: 9, label: '预约数' } })
+    await nextTick()
+    expect(intersectionCallback).toBeDefined()
+    const observer = {} as IntersectionObserver
+
+    intersectionCallback?.([], observer)
+    intersectionCallback?.([{ isIntersecting: false } as IntersectionObserverEntry], observer)
+    expect(wrapper.find('.stat-card__value').exists()).toBe(true)
+
+    intersectionCallback?.([{ isIntersecting: true } as IntersectionObserverEntry], observer)
+    expect(wrapper.find('.stat-card__value').exists()).toBe(true)
+  })
+
+  it('omits unknown icons and renders an optional chart slot', () => {
+    stubIO()
+    const wrapper = mount(StatCard, {
+      props: { value: 9, label: '预约数', icon: 'UnknownIcon' },
+      slots: { chart: '<span>趋势图</span>' },
+    })
+
+    expect(wrapper.find('.stat-card__icon').exists()).toBe(false)
+    expect(wrapper.find('.stat-card__chart').text()).toBe('趋势图')
   })
 })

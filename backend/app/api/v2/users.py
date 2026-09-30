@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
-from sqlalchemy import func, select, update
+from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.application.lifecycle import append_audit
+from app.auth.rbac import bump_authz_version, lock_authz_version
 from app.auth.security import Principal, get_current_principal, hash_password
+from app.auth.sessions import SessionStoreUnavailable, revoke_user_sessions
 from app.common.response import ApiResponse
 from app.core.errors import ApiError
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
-from app.infrastructure.db.models import College, RefreshSession, Role, User
+from app.infrastructure.db.models import College, Role, User, user_roles
 from app.infrastructure.db.pagination import delayed_page_ids, page_metadata, page_offset
 from app.infrastructure.db.session import get_db
 
@@ -30,9 +30,17 @@ class UserRequest(BaseModel):
     role_codes: list[str] = Field(default_factory=list, max_length=5)
     college_id: int | None = Field(default=None, gt=0)
 
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("用户名至少需要 3 个字符")
+        return normalized
+
 
 def _require_admin(principal: Principal) -> None:
-    if not principal.is_system_admin:
+    if not principal.is_system_admin or not principal.has_permission("user:manage"):
         raise ApiError("FORBIDDEN", "仅系统管理员可以管理用户", 403)
 
 
@@ -77,11 +85,45 @@ async def _resolve_college(
 async def _roles(session: AsyncSession, codes: list[str]) -> list[Role]:
     if not codes:
         return []
+    if len(codes) != len(set(codes)):
+        raise ApiError("DUPLICATE_ROLE", "角色列表不能包含重复项", 422)
     rows = list((await session.scalars(select(Role).where(Role.role_code.in_(codes)))).all())
     missing = set(codes) - {row.role_code for row in rows}
     if missing:
         raise ApiError("ROLE_NOT_FOUND", f"角色不存在: {', '.join(sorted(missing))}", 422)
     return rows
+
+
+async def _protect_last_system_admin(
+    session: AsyncSession,
+    user: User,
+    next_status: int,
+    next_roles: list[Role] | None = None,
+) -> None:
+    current_is_admin = any(role.role_code == "SYS_ADMIN" for role in user.roles)
+    next_is_admin = (
+        any(role.role_code == "SYS_ADMIN" for role in next_roles)
+        if next_roles is not None
+        else current_is_admin
+    )
+    if user.status != 1 or not current_is_admin or (next_status == 1 and next_is_admin):
+        return
+
+    # Serialize operations that could remove the final active administrator.
+    await lock_authz_version(session)
+    active_admin_ids = list(
+        (
+            await session.scalars(
+                select(User.id)
+                .join(user_roles, user_roles.c.user_id == User.id)
+                .join(Role, Role.id == user_roles.c.role_id)
+                .where(User.status == 1, Role.role_code == "SYS_ADMIN")
+                .with_for_update()
+            )
+        ).all()
+    )
+    if len(active_admin_ids) <= 1:
+        raise ApiError("LAST_SYSTEM_ADMIN", "不能禁用或移除最后一个系统管理员", 409)
 
 
 async def _load_user_for_response(session: AsyncSession, user_id: int) -> User:
@@ -195,6 +237,7 @@ async def create_user(
 async def update_user(
     user_id: int,
     payload: UserRequest,
+    request: Request,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, object]]:
@@ -205,6 +248,8 @@ async def update_user(
     if user is None:
         raise ApiError("USER_NOT_FOUND", "用户不存在", 404)
     roles = await _roles(session, payload.role_codes)
+    await _protect_last_system_admin(session, user, user.status, roles)
+    roles_changed = {role.id for role in user.roles} != {role.id for role in roles}
     if payload.password:
         user.password_hash = hash_password(payload.password)
     user.real_name = payload.real_name
@@ -219,11 +264,15 @@ async def update_user(
     )
     user.roles = roles
     if payload.password:
-        await session.execute(
-            update(RefreshSession)
-            .where(RefreshSession.user_id == user.id, RefreshSession.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(UTC).replace(tzinfo=None))
-        )
+        try:
+            await revoke_user_sessions(request, user.id)
+        except SessionStoreUnavailable as exc:
+            await session.rollback()
+            raise ApiError(
+                "AUTH_SESSION_UNAVAILABLE", "暂时无法安全更新密码，请稍后重试", 503
+            ) from exc
+    if roles_changed:
+        await bump_authz_version(session)
     append_audit(
         session,
         user_id=principal.user_id,
@@ -241,21 +290,25 @@ async def update_user(
 @router.delete("/users/{user_id}", response_model=ApiResponse[None])
 async def delete_user(
     user_id: int,
+    request: Request,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
     _require_admin(principal)
     if user_id == principal.user_id:
         raise ApiError("SELF_DELETE_FORBIDDEN", "不能删除当前登录账号", 409)
-    user = await session.scalar(select(User).where(User.id == user_id))
+    user = await session.scalar(
+        select(User).options(selectinload(User.roles)).where(User.id == user_id)
+    )
     if user is None:
         raise ApiError("USER_NOT_FOUND", "用户不存在", 404)
+    await _protect_last_system_admin(session, user, 0)
+    try:
+        await revoke_user_sessions(request, user.id)
+    except SessionStoreUnavailable:
+        # The database status check blocks access even if Redis is unavailable.
+        pass
     user.status = 0
-    await session.execute(
-        update(RefreshSession)
-        .where(RefreshSession.user_id == user.id, RefreshSession.revoked_at.is_(None))
-        .values(revoked_at=datetime.now(UTC).replace(tzinfo=None))
-    )
     append_audit(
         session,
         user_id=principal.user_id,
@@ -271,6 +324,7 @@ async def delete_user(
 @router.patch("/users/{user_id}/status", response_model=ApiResponse[None])
 async def update_user_status(
     user_id: int,
+    request: Request,
     status: int = Query(ge=0, le=1),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
@@ -289,13 +343,14 @@ async def update_user_status(
         and not any(role.role_code == "SYS_ADMIN" for role in user.roles)
     ):
         raise ApiError("COLLEGE_REQUIRED", "启用普通用户前必须先分配所属学院", 422)
-    user.status = status
+    await _protect_last_system_admin(session, user, status)
     if status == 0:
-        await session.execute(
-            update(RefreshSession)
-            .where(RefreshSession.user_id == user.id, RefreshSession.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(UTC).replace(tzinfo=None))
-        )
+        try:
+            await revoke_user_sessions(request, user.id)
+        except SessionStoreUnavailable:
+            # The active-user lookup reads MySQL on each request and fails closed.
+            pass
+    user.status = status
     append_audit(
         session,
         user_id=principal.user_id,

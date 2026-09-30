@@ -198,7 +198,7 @@ onMounted(load)
 
       <el-tab-pane label="实验室配置" name="labs">
         <div v-loading="loading" class="organization__table panel-card">
-          <el-table :data="labs" stripe row-key="id">
+          <el-table :data="labs" stripe row-key="id" :fit="false">
             <el-table-column prop="name" label="实验室" min-width="180" />
             <el-table-column label="所属学院" min-width="160">
               <template #default="{ row }">{{ row.collegeName || collegeName(row.collegeId) }}</template>

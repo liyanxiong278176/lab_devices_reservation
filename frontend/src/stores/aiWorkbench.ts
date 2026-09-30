@@ -4,12 +4,14 @@ import { ElMessage } from 'element-plus'
 import {
   cancelAiAction,
   confirmAiAction,
+  confirmAiMemory,
   createAiConversation,
   deleteAiConversation,
   getActiveAiRun,
   listAiConversations,
   listAiMessages,
   resumeAiRun,
+  rejectAiMemory,
   stopAiRun,
   streamAiMessage,
 } from '@/api/aiV2'
@@ -18,6 +20,7 @@ import type {
   AiConfirmation,
   AiConversation,
   AiMessage,
+  AiMemoryCandidate,
   AiStep,
   AiStreamEvent,
 } from '@/types/aiWorkbench'
@@ -29,12 +32,14 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
   const messages = ref<AiMessage[]>([])
   const citations = ref<AiCitation[]>([])
   const steps = ref<AiStep[]>([])
+  const dlpNotice = ref<string[]>([])
   const pendingConfirmation = ref<AiConfirmation | null>(null)
   const loading = ref(false)
   const loadingHistory = ref(false)
   const error = ref('')
   let abortController: AbortController | null = null
   let generation = 0
+  let conversationSelection = 0
 
   const activeConversation = computed(() =>
     conversations.value.find((item) => item.id === activeConversationId.value) || null,
@@ -64,6 +69,7 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
   }
 
   async function createConversation() {
+    conversationSelection += 1
     detach()
     const conversation = await createAiConversation()
     conversations.value.unshift(conversation)
@@ -72,18 +78,24 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
     messages.value = []
     citations.value = []
     steps.value = []
+    dlpNotice.value = []
     pendingConfirmation.value = null
     error.value = ''
   }
 
   async function selectConversation(id: number) {
+    const selection = ++conversationSelection
     if (activeConversationId.value !== id) detach()
     activeConversationId.value = id
     activeRunId.value = null
-    messages.value = await listAiMessages(id)
+    messages.value = []
     citations.value = []
     steps.value = []
+    dlpNotice.value = []
     error.value = ''
+    const loadedMessages = await listAiMessages(id)
+    if (selection !== conversationSelection) return
+    messages.value = loadedMessages
     const latestAssistant = [...messages.value].reverse().find((message) => message.role === 'assistant')
     const storedCitations = latestAssistant?.metadata?.citations
     if (Array.isArray(storedCitations)) citations.value = storedCitations as AiCitation[]
@@ -105,6 +117,7 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
         }
       : null
     const active = await getActiveAiRun(id)
+    if (selection !== conversationSelection) return
     if (active) {
       const assistant: AiMessage = { id: `resume-${active.run_id}`, role: 'assistant', content: '' }
       messages.value.push(assistant)
@@ -144,12 +157,15 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
     if (!text || loading.value) return
     if (!activeConversationId.value) await createConversation()
     if (!activeConversationId.value) return
+    conversationSelection += 1
     error.value = ''
     loading.value = true
     pendingConfirmation.value = null
     steps.value = []
     citations.value = []
-    messages.value.push({ id: `local-${Date.now()}`, role: 'user', content: text })
+    dlpNotice.value = []
+    const userMessage: AiMessage = { id: `local-${Date.now()}`, role: 'user', content: text }
+    messages.value.push(userMessage)
     const assistant: AiMessage = { id: `assistant-${Date.now()}`, role: 'assistant', content: '' }
     messages.value.push(assistant)
     const conversationId = activeConversationId.value
@@ -161,7 +177,7 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
         text,
         {
           onRunId: (runId) => { activeRunId.value = runId },
-          onEvent: (event) => handleEvent(event, assistant),
+          onEvent: (event) => handleEvent(event, assistant, userMessage),
         },
         abortController.signal,
       )
@@ -195,8 +211,11 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
     }
   }
 
-  function handleEvent(event: AiStreamEvent, assistant: AiMessage) {
-    if (event.type === 'step' && event.name) {
+  function handleEvent(event: AiStreamEvent, assistant: AiMessage, userMessage?: AiMessage) {
+    if (event.type === 'dlp_notice') {
+      dlpNotice.value = event.categories || []
+      if (userMessage && event.redacted_content) userMessage.content = event.redacted_content
+    } else if (event.type === 'step' && event.name) {
       const existing = steps.value.find((step) => step.name === event.name && step.status === 'running')
       if (existing) Object.assign(existing, { status: event.status || 'completed', intent: event.intent })
       else steps.value.push({
@@ -217,6 +236,11 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
         preview: event.preview || {},
         status: 'PENDING',
       }
+    } else if (event.type === 'memory_suggestions' && event.items?.length) {
+      assistant.metadata = {
+        ...assistant.metadata,
+        memory_candidates: event.items,
+      }
     } else if (event.type === 'sources' || event.type === 'done') {
       citations.value = event.citations || event.sources || citations.value
       if (event.status === 'FAILED') {
@@ -227,23 +251,53 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
     }
   }
 
+  async function resolveMemory(candidate: AiMemoryCandidate, accept: boolean) {
+    try {
+      const result = accept
+        ? await confirmAiMemory(candidate.id)
+        : await rejectAiMemory(candidate.id)
+      candidate.status = result.status
+      ElMessage.success(accept ? '已保存为长期偏好' : '已忽略这条记忆')
+    } catch (err) {
+      ElMessage.error((err as Error).message || '处理记忆失败')
+    }
+  }
+
   async function confirm(): Promise<boolean> {
     if (!pendingConfirmation.value?.id || loading.value) return false
     const current = pendingConfirmation.value
     loading.value = true
     try {
-      await confirmAiAction(current.id)
+      const result = await confirmAiAction(current.id)
       current.status = 'EXECUTED'
-      messages.value.push({ id: `confirmation-${Date.now()}`, role: 'assistant', content: '已按你的确认执行完成。' })
+      const resultData = result.data && typeof result.data === 'object'
+        ? result.data as Record<string, unknown>
+        : {}
+      const completionText = current.tool_name === 'forget_ai_memories'
+        ? `已删除 ${Number(resultData.forgotten_count || 0)} 条匹配记忆，原始对话仍保留。`
+        : '已按你的确认执行完成。'
+      messages.value.push({ id: `confirmation-${Date.now()}`, role: 'assistant', content: completionText })
       pendingConfirmation.value = null
       await reloadActiveMessages()
       await refreshConversationList()
       return true
     } catch (err) {
-      const typedError = err as { response?: { status?: number; data?: { code?: string } }; code?: string; status?: number }
+      const typedError = err as {
+        response?: {
+          status?: number
+          data?: { code?: string; data?: { preview?: Record<string, unknown> } }
+        }
+        code?: string
+        status?: number
+      }
       const status = typedError.response?.status || typedError.status
       const code = typedError.response?.data?.code || typedError.code
-      if (status === 409 || status === 404 || code === 'CONFIRMATION_ALREADY_HANDLED') {
+      if (code === 'AI_CONFIRMATION_PREVIEW_CHANGED' && pendingConfirmation.value) {
+        const refreshed = typedError.response?.data?.data?.preview
+        if (refreshed) pendingConfirmation.value.preview = refreshed
+        pendingConfirmation.value.status = 'PENDING'
+        ElMessage.warning('操作影响已变化，请先检查更新后的预览，再次确认才会执行')
+      } else if (status === 409 || status === 404 || code === 'CONFIRMATION_ALREADY_HANDLED') {
         pendingConfirmation.value = null
       }
       return false
@@ -298,6 +352,8 @@ export const useAiWorkbenchStore = defineStore('ai-workbench', () => {
     messages,
     citations,
     steps,
+    dlpNotice,
+    resolveMemory,
     pendingConfirmation,
     loading,
     loadingHistory,

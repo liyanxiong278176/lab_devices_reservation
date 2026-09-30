@@ -44,8 +44,7 @@ export const markAllRead = () =>
   request.patch<unknown, void>('/notifications/read-all')
 
 /**
- * 未读数（轮询用）。只取 IPage.total，避免拉取整页数据。
- * S3 将升级为 WebSocket 推送；此处为 30s 轮询兜底。
+ * 未读数校准。只取 IPage.total，避免拉取整页数据；SSE 事件后以此接口校准。
  */
 export async function unreadCount(): Promise<number> {
   const page = await request.get<unknown, Page<NotificationVO>>('/notifications/mine', {

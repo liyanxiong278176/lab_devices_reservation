@@ -3,6 +3,8 @@ from datetime import UTC, date, datetime
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -28,6 +30,7 @@ from app.infrastructure.db.models import (
     RepairReport,
     Reservation,
     ReservationItem,
+    ReservationRule,
 )
 from app.infrastructure.db.session import get_db
 
@@ -84,6 +87,8 @@ async def _manager_can_access(
 ) -> bool:
     if principal.is_system_admin:
         return True
+    if not principal.has_permission("device:manage"):
+        return False
     if not principal.is_lab_admin or lab.college_id != principal.college_id:
         return False
     if lab.manager_id == principal.user_id:
@@ -92,6 +97,77 @@ async def _manager_can_access(
         select(College.manager_id).where(College.id == lab.college_id)
     )
     return manager_id == principal.user_id
+
+
+async def _sync_device_reservation_rule(
+    session: AsyncSession,
+    device: Device,
+    user_id: int,
+) -> None:
+    if session.get_bind().dialect.name == "mysql":
+        # The device rule may not exist yet. An atomic upsert avoids both the
+        # missing-row gap-lock race and duplicate-key 500s between managers.
+        statement = mysql_insert(ReservationRule).values(
+            scope_type="DEVICE",
+            scope_id=device.id,
+            user_category="ALL",
+            max_booking_days=device.max_reservation_days,
+            max_advance_days=device.max_advance_days,
+            approval_required=device.need_approval,
+            created_by=user_id,
+            updated_by=user_id,
+        )
+        await session.execute(
+            statement.on_duplicate_key_update(
+                max_booking_days=statement.inserted.max_booking_days,
+                max_advance_days=statement.inserted.max_advance_days,
+                approval_required=statement.inserted.approval_required,
+                updated_by=user_id,
+                updated_at=func.now(),
+            )
+        )
+        return
+
+    rule = await session.scalar(
+        select(ReservationRule)
+        .where(
+            ReservationRule.scope_type == "DEVICE",
+            ReservationRule.scope_id == device.id,
+            ReservationRule.user_category == "ALL",
+        )
+        .with_for_update()
+    )
+    if rule is None:
+        new_rule = ReservationRule(
+            scope_type="DEVICE",
+            scope_id=device.id,
+            user_category="ALL",
+            created_by=user_id,
+            updated_by=user_id,
+        )
+        try:
+            async with session.begin_nested():
+                session.add(new_rule)
+                await session.flush()
+            rule = new_rule
+        except IntegrityError:
+            # A concurrent reservation-rule upsert may have inserted this row.
+            # Roll back only the savepoint so the device update can still commit.
+            rule = await session.scalar(
+                select(ReservationRule)
+                .where(
+                    ReservationRule.scope_type == "DEVICE",
+                    ReservationRule.scope_id == device.id,
+                    ReservationRule.user_category == "ALL",
+                )
+                .with_for_update()
+            )
+            if rule is None:
+                raise
+    rule.max_booking_days = device.max_reservation_days
+    rule.max_advance_days = device.max_advance_days
+    rule.approval_required = device.need_approval
+    rule.updated_by = user_id
 
 
 @router.get("/devices", response_model=ApiResponse[dict[str, object]])
@@ -105,6 +181,8 @@ async def list_devices(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, object]]:
+    if not principal.has_permission("device:read"):
+        raise ApiError("FORBIDDEN", "当前账号没有查看设备的权限", 403)
     cache = CacheService(
         get_redis(request),
         request.app.state.settings,
@@ -138,6 +216,8 @@ async def get_device(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DeviceDetail]:
+    if not principal.has_permission("device:read"):
+        raise ApiError("FORBIDDEN", "当前账号没有查看设备的权限", 403)
     return ApiResponse.ok(await ReservationService(session, principal).get_device(device_id))
 
 
@@ -149,6 +229,8 @@ async def device_availability(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[list[AvailabilityDay]]:
+    if not principal.has_permission("device:read"):
+        raise ApiError("FORBIDDEN", "当前账号没有查看设备的权限", 403)
     from datetime import date
 
     try:
@@ -201,6 +283,7 @@ async def create_device(
     )
     session.add(device)
     await session.flush()
+    await _sync_device_reservation_rule(session, device, principal.user_id)
     append_audit(
         session,
         user_id=principal.user_id,
@@ -254,6 +337,8 @@ async def update_device(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DeviceDetail]:
+    if not principal.has_permission("device:manage"):
+        raise ApiError("FORBIDDEN", "当前账号没有管理设备的权限", 403)
     service = ReservationService(session, principal)
     device = await service._load_device(device_id)
     if not await service._can_manage_device(device):
@@ -279,6 +364,11 @@ async def update_device(
         )
         if category is None:
             raise ApiError("CATEGORY_NOT_FOUND", "设备分类不存在", 422)
+    reservation_policy_changed = (
+        device.need_approval != payload.need_approval
+        or device.max_reservation_days != payload.max_reservation_days
+        or device.max_advance_days != payload.max_advance_days
+    )
     device.name = payload.name.strip()
     device.lab_id = lab.id
     device.category_id = payload.category_id
@@ -300,6 +390,8 @@ async def update_device(
     device.requires_safety_ack = payload.requires_safety_ack
     device.requires_qualification = payload.requires_qualification
     device.max_advance_days = payload.max_advance_days
+    if reservation_policy_changed:
+        await _sync_device_reservation_rule(session, device, principal.user_id)
     append_audit(
         session,
         user_id=principal.user_id,
@@ -322,6 +414,8 @@ async def delete_device(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
+    if not principal.has_permission("device:manage"):
+        raise ApiError("FORBIDDEN", "当前账号没有管理设备的权限", 403)
     service = ReservationService(session, principal)
     device = await service._load_device(device_id)
     if not await service._can_manage_device(device):
@@ -366,6 +460,8 @@ async def update_device_status(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[DeviceSummary]:
+    if not principal.has_permission("device:manage"):
+        raise ApiError("FORBIDDEN", "当前账号没有管理设备的权限", 403)
     service = ReservationService(session, principal)
     device = await service._load_device(device_id)
     if not await service._can_manage_device(device):

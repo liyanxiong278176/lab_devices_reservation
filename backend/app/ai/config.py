@@ -96,6 +96,15 @@ def validate_provider_config(
         if parsed.scheme != "https" or normalized != settings.ai_mineru_base_url.rstrip("/"):
             raise ApiError("AI_BASE_URL_NOT_ALLOWED", "MinerU 服务地址不可自定义", 422)
         return
+    if (
+        component == "embedding"
+        and settings.ai_embedding_provider.lower() == "ollama"
+        and parsed.scheme == "http"
+        and parsed.hostname in {"127.0.0.1", "localhost", "::1", "host.docker.internal"}
+        and parsed.port == 11434
+        and normalized == settings.ai_embedding_base_url.rstrip("/")
+    ):
+        return
     allowed = {item.rstrip("/") for item in settings.ai_allowed_base_urls}
     if parsed.scheme != "https" or normalized not in allowed:
         raise ApiError("AI_BASE_URL_NOT_ALLOWED", "AI 服务地址不在系统白名单中", 422)
