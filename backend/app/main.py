@@ -33,6 +33,7 @@ async def lifespan(app: FastAPI):
     notification_relay = None
     upload_cleanup_task = None
     ai_retention_task = None
+    reservation_quota_task = None
     if app.state.settings.environment != "test":
         from app.infrastructure.db.bootstrap import ensure_bootstrap_admin
         from app.infrastructure.db.operational_bootstrap import ensure_operational_metadata
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
     if app.state.settings.enable_workers and app.state.settings.environment != "test":
         from app.ai.retention import ai_retention_loop
         from app.core.uploads import upload_cleanup_loop
+        from app.infrastructure.tasks.reservation_quota import reservation_quota_reconciliation_loop
         from app.infrastructure.tasks.worker import OutboxWorker
 
         worker = OutboxWorker(app)
@@ -72,6 +74,10 @@ async def lifespan(app: FastAPI):
             ai_retention_loop(app),
             name="ai-conversation-retention",
         )
+        reservation_quota_task = asyncio.create_task(
+            reservation_quota_reconciliation_loop(app),
+            name="reservation-quota-reconciliation",
+        )
     try:
         yield
     finally:
@@ -81,6 +87,9 @@ async def lifespan(app: FastAPI):
         if ai_retention_task is not None:
             ai_retention_task.cancel()
             await asyncio.gather(ai_retention_task, return_exceptions=True)
+        if reservation_quota_task is not None:
+            reservation_quota_task.cancel()
+            await asyncio.gather(reservation_quota_task, return_exceptions=True)
         if worker is not None:
             await worker.stop()
         if notification_relay is not None:

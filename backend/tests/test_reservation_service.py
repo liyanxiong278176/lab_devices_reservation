@@ -10,6 +10,7 @@ from app.infrastructure.db.models import (
     Device,
     DeviceCategory,
     DeviceHandover,
+    DevicePool,
     DeviceQualification,
     OutboxTask,
     RepairReport,
@@ -159,6 +160,131 @@ async def test_college_isolation_and_idempotent_reservation(seeded) -> None:
             )
         )
         assert reopened.created[0].status == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_resource_pool_allocates_each_physical_unit_once_per_day(seeded) -> None:
+    factory, _, _, student, _, manager, original, _ = seeded
+    original_id = original.id
+    target = date.today() + timedelta(days=3)
+
+    async with factory() as session:
+        original = await session.get(Device, original_id)
+        assert original is not None
+        pool = DevicePool(
+            name=original.name,
+            college_id=original.college_id,
+            lab_id=original.lab_id,
+        )
+        session.add(pool)
+        await session.flush()
+        original.pool_id = pool.id
+        second = Device(
+            pool_id=pool.id,
+            college_id=original.college_id,
+            lab_id=original.lab_id,
+            category_id=original.category_id,
+            name=original.name,
+            brand=original.brand,
+            model=original.model,
+            specs=original.specs,
+            image_url=original.image_url,
+            status="IDLE",
+            need_approval=original.need_approval,
+            max_reservation_days=original.max_reservation_days,
+            tags=original.tags,
+            accessory_checklist=original.accessory_checklist,
+            allow_external_loan=original.allow_external_loan,
+            risk_level=original.risk_level,
+            requires_safety_ack=original.requires_safety_ack,
+            requires_qualification=original.requires_qualification,
+            max_advance_days=original.max_advance_days,
+            asset_code="POOL-SECOND-UNIT",
+        )
+        session.add(second)
+        await session.flush()
+        await session.commit()
+        pool_id = pool.id
+        physical_ids = {original.id, second.id}
+
+        service = ReservationService(session, principal(student, "STUDENT"))
+        grouped, total, _, _ = await service.list_devices(
+            grouped=True,
+            include_meta=True,
+        )
+        pool_summary = next(item for item in grouped if item.pool_id == pool_id)
+        assert total >= 1
+        assert pool_summary.pool_quantity == 2
+        assert pool_summary.pool_idle_quantity == 2
+        assert (await service.pool_availability(pool_id, target, target))[0].available_units == 2
+
+        plan = ReservationPlanRequest(
+            pool_id=pool_id,
+            start_date=target,
+            end_date=target,
+            purpose="同型号实物设备池预约",
+        )
+        first = await service.create(plan)
+        assert (await service.pool_availability(pool_id, target, target))[0].available_units == 1
+
+        two_unit_plan = plan.model_copy(update={"quantity": 2})
+        with pytest.raises(ApiError) as insufficient:
+            await service.create(two_unit_plan)
+        assert insufficient.value.status_code == 409
+        assert (await service.pool_availability(pool_id, target, target))[0].available_units == 1
+
+        second_service = ReservationService(session, principal(manager, "STUDENT"))
+        second_booking = await second_service.create(plan)
+        assert (await service.pool_availability(pool_id, target, target))[0].available_units == 0
+        assert first.created[0].device_id != second_booking.created[0].device_id
+        assert {first.created[0].device_id, second_booking.created[0].device_id} == physical_ids
+
+        two_unit_day = target + timedelta(days=1)
+        two_unit_booking = await service.create(
+            two_unit_plan.model_copy(
+                update={"start_date": two_unit_day, "end_date": two_unit_day}
+            )
+        )
+        assert len(two_unit_booking.created) == 2
+        assert {item.device_id for item in two_unit_booking.created} == physical_ids
+        assert two_unit_booking.batch_id is not None
+
+        with pytest.raises(ApiError) as exhausted:
+            await service.create(plan)
+        assert exhausted.value.status_code == 409
+
+        occupied_rows = int(
+            await session.scalar(
+                select(func.count(ReservationItem.id)).where(
+                    ReservationItem.device_id.in_(physical_ids),
+                    ReservationItem.reservation_date == target,
+                )
+            )
+            or 0
+        )
+        assert occupied_rows == 2
+
+
+@pytest.mark.asyncio
+async def test_unpooled_imported_device_behaves_as_a_single_unit_pool(seeded) -> None:
+    factory, _, _, student, _, _, device, _ = seeded
+    target = date.today() + timedelta(days=5)
+    async with factory() as session:
+        service = ReservationService(session, principal(student, "STUDENT"))
+        detail = await service.get_device_pool(device.id)
+        assert detail.id == device.id
+        assert detail.pool_id == device.id
+        assert detail.pool_quantity == 1
+
+        created = await service.create(
+            ReservationPlanRequest(
+                pool_id=device.id,
+                start_date=target,
+                end_date=target,
+                purpose="兼容尚未分组的存量设备",
+            )
+        )
+        assert created.created[0].device_id == device.id
 
 
 @pytest.mark.asyncio
@@ -624,9 +750,7 @@ async def test_system_admin_can_attach_tenant_neutral_upload_to_college_handover
     factory, _, _, student, _, _, device, _ = seeded
     day = date.today()
     async with factory() as session:
-        sys_admin_role = await session.scalar(
-            select(Role).where(Role.role_code == "SYS_ADMIN")
-        )
+        sys_admin_role = await session.scalar(select(Role).where(Role.role_code == "SYS_ADMIN"))
         assert sys_admin_role is not None
         admin = User(
             username="global-admin",

@@ -994,17 +994,23 @@ async def test_create_permission_idempotency_user_and_policy_guards(seeded) -> N
         _assert_api_error(error, "IDEMPOTENCY_KEY_INVALID")
 
         service.session.scalar = AsyncMock(
-            return_value=SimpleNamespace(request_hash="different", response_body=None)
+            side_effect=[
+                student,
+                SimpleNamespace(request_hash="different", response_body=None),
+            ]
         )
         with pytest.raises(ApiError) as error:
             await service.create(plan, idempotency_key="already-used")
         _assert_api_error(error, "IDEMPOTENCY_REUSED")
 
         service.session.scalar = AsyncMock(
-            return_value=SimpleNamespace(
-                request_hash=request_hash(plan),
-                response_body=None,
-            )
+            side_effect=[
+                student,
+                SimpleNamespace(
+                    request_hash=request_hash(plan),
+                    response_body=None,
+                ),
+            ]
         )
         with pytest.raises(ApiError) as error:
             await service.create(plan, idempotency_key="in-progress")
@@ -1054,7 +1060,7 @@ async def test_create_permission_idempotency_user_and_policy_guards(seeded) -> N
                 permissions=("reservation:create",),
             )
             local._load_device = AsyncMock(return_value=device)
-            local.session.scalar = AsyncMock(return_value=device)
+            local.session.scalar = AsyncMock(side_effect=[student, device])
             local.preflight = AsyncMock(return_value=SimpleNamespace(**preflight_values))
             with pytest.raises(ApiError) as captured:
                 await local.create(request)
@@ -1120,7 +1126,7 @@ async def test_create_integrity_conflict_and_idempotency_race_recovery(seeded, m
             monkeypatch.setattr(service, "_load_device", AsyncMock(return_value=device))
             scalar_results = [student, device]
             if key:
-                scalar_results.insert(0, None)
+                scalar_results.insert(1, None)
                 scalar_results.append(committed)
             service.session.scalar = AsyncMock(side_effect=scalar_results)
             service.preflight = AsyncMock(return_value=base_preflight)

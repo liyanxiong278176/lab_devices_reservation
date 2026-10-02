@@ -6,6 +6,10 @@ export type DeviceStatus = 'IDLE' | 'IN_USE' | 'MAINTENANCE' | 'DISABLED' | 'OFF
 /** 后端设备视图。 */
 export interface DeviceVO {
   id: number
+  /** Logical resource pool; id remains the representative physical device id. */
+  poolId?: number
+  poolQuantity?: number
+  poolIdleQuantity?: number
   name: string
   categoryId: number | null
   categoryName?: string
@@ -111,14 +115,25 @@ export interface DeviceQuery {
   needApproval?: number
   minPrice?: number | string
   maxPrice?: number | string
+  grouped?: boolean
 }
 
 export interface DeviceAvailabilityVO {
   date: string
   available: boolean
+  availableUnits?: number
   reservationId?: number | null
   status?: string | null
   reason?: string | null
+}
+
+export interface DevicePoolOptionVO {
+  id: number
+  name: string
+  collegeId?: number | null
+  labId?: number | null
+  labName?: string | null
+  unitCount: number
 }
 
 export type { Page }

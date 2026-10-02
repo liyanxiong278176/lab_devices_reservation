@@ -61,7 +61,13 @@ export interface ReservationVO {
 
 /** 创建自然日预约参数。 */
 export interface ReservationCreatePayload {
-  deviceId: number
+  /** Exact legacy physical device, or a resource pool for automatic allocation. */
+  deviceId?: number
+  poolId?: number
+  /** Physical unit selected by the preflight; prevents access checks switching units. */
+  preferredDeviceId?: number
+  /** Number of concrete devices to bind in one all-or-nothing request. */
+  quantity?: number
   startDate: string
   endDate: string
   purpose: string
@@ -84,6 +90,15 @@ export interface ReservationPreflightVO {
   available_dates: string[]
   conflicts: ReservationConflictVO[]
   all_available: boolean
+  requested_quantity?: number
+  available_units?: number
+  available_units_by_date?: {
+    date: string
+    available: boolean
+    available_units?: number
+    status?: string | null
+    reason?: string | null
+  }[]
   safety_required?: boolean
   safety_acknowledged?: boolean
   qualification_required?: boolean

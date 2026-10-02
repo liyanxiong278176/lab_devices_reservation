@@ -30,7 +30,10 @@ class DateWindow(BaseModel):
 
 
 class ReservationPlanRequest(BaseModel):
-    device_id: int = Field(gt=0)
+    device_id: int | None = Field(default=None, gt=0)
+    pool_id: int | None = Field(default=None, gt=0)
+    preferred_device_id: int | None = Field(default=None, gt=0)
+    quantity: int = Field(default=1, ge=1)
     purpose: str = Field(min_length=2, max_length=500)
     purpose_category: Literal["TEACHING", "RESEARCH", "COMPETITION_GRADUATION", "OTHER"] = "OTHER"
     project_reference: str | None = Field(default=None, max_length=160)
@@ -42,6 +45,14 @@ class ReservationPlanRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_shape(self) -> ReservationPlanRequest:
+        if (self.device_id is None) == (self.pool_id is None):
+            raise ValueError("必须且只能指定一个设备或设备资源池")
+        if self.preferred_device_id is not None and self.pool_id is None:
+            raise ValueError("指定预分配设备时必须同时指定设备资源池")
+        if self.quantity > 1 and self.pool_id is None:
+            raise ValueError("一次预约多台设备时必须指定设备资源池")
+        if self.quantity > 1 and self.preferred_device_id is not None:
+            raise ValueError("一次预约多台设备时不能指定单个预分配设备")
         has_range = self.start_date is not None or self.end_date is not None
         has_dates = bool(self.dates)
         has_windows = bool(self.windows)
@@ -106,6 +117,9 @@ class DeviceSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    pool_id: int | None = None
+    pool_quantity: int = 1
+    pool_idle_quantity: int = 1
     name: str
     status: str
     brand: str | None = None
@@ -132,6 +146,15 @@ class DeviceSummary(BaseModel):
     requires_qualification: bool = False
     max_advance_days: int | None = None
     maintenance_warning: str | None = None
+
+
+class DevicePoolOption(BaseModel):
+    id: int
+    name: str
+    college_id: int | None = None
+    lab_id: int | None = None
+    lab_name: str | None = None
+    unit_count: int
 
 
 class DeviceDetail(DeviceSummary):
@@ -172,6 +195,7 @@ class RecommendationData(BaseModel):
 class AvailabilityDay(BaseModel):
     date: date
     available: bool
+    available_units: int | None = None
     reservation_id: int | None = None
     status: str | None = None
     reason: str | None = None
@@ -239,6 +263,9 @@ class ReservationPreflightData(BaseModel):
     available_dates: list[date]
     conflicts: list[ReservationConflict]
     all_available: bool
+    requested_quantity: int = 1
+    available_units: int = 0
+    available_units_by_date: list[AvailabilityDay] = Field(default_factory=list)
     effective_policy: ReservationPolicySnapshot
     safety_required: bool = False
     safety_acknowledged: bool = False

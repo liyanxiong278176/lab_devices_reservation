@@ -5,7 +5,7 @@
 - `backend/`：Python 3.13 + FastAPI + SQLAlchemy Async + Alembic，统一 API 前缀为 `/api/v2`。
 - `frontend/`：Vue 3 + Vite + TypeScript，桌面 Web 优先；AI 入口位于左侧“AI 工作台”。
 - MySQL 8：业务数据、学院租户、自然日预约占用、幂等键与 durable outbox。
-- Redis 7：登录会话、版本化权限快照、预约锁、租户目录/推荐缓存、Lua 限流和实时分发。Redis 会话服务不可用时认证失败关闭；对预约正确性而言，锁仍只是优化，数据库唯一约束是最终防线。
+- Redis 7：登录会话、版本化权限快照、预约锁、设备日级名额 Hash 预占、租户目录/推荐缓存、Lua 限流和实时分发。预约名额 Hash 以资源池和日期为 key、实物设备 ID 为 field；MySQL 设备日期唯一约束仍是防超约最终防线，Redis 名额缓存未命中或不可用时回退到 MySQL。Redis 会话服务不可用时认证失败关闭。
 
 浏览器登录使用 HttpOnly Cookie：JWT 只含 256 位随机 SID 和签发校验字段，不携带用户/权限数据；Redis 保存 SID 会话与 Refresh Token 哈希，MySQL 保存授权版本。角色权限快照按 SID 和版本缓存，角色或权限变更递增版本；账号禁用和学院归属每次请求从 MySQL 重新校验。写接口校验可信 Origin 与 CSRF 双提交令牌。升级后端时执行 Alembic 迁移并让所有用户重新登录，旧 Refresh Session 会被撤销；新登录使用 `/login`，普通用户自助注册使用 `/register`。
 - Qdrant：学院/全局知识库向量检索；MySQL 保存文档元数据、版本和权限事实。

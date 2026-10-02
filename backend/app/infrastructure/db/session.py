@@ -18,6 +18,11 @@ def build_engine(settings: Settings) -> AsyncEngine:
     }
     if not settings.mysql_dsn.startswith("sqlite"):
         options.update(
+            # Booking rechecks availability after locking the selected Device
+            # row. READ COMMITTED gives that non-locking recheck a fresh view
+            # without taking InnoDB next-key locks on empty device/date ranges.
+            # The unique (device_id, date) index remains the final guard.
+            isolation_level="READ COMMITTED",
             pool_size=settings.db_pool_size,
             max_overflow=settings.db_max_overflow,
             pool_recycle=settings.db_pool_recycle_seconds,

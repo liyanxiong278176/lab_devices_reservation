@@ -24,9 +24,7 @@ def test_date_window_rejects_reverse_and_oversized_ranges() -> None:
         DateWindow(start_date=date(2026, 1, 1), end_date=date(2026, 2, 1))
 
     # Exercise the defensive invariant for internally constructed models too.
-    oversized = DateWindow.model_construct(
-        start_date=date(2026, 1, 1), end_date=date(2026, 2, 1)
-    )
+    oversized = DateWindow.model_construct(start_date=date(2026, 1, 1), end_date=date(2026, 2, 1))
     with pytest.raises(ValueError, match="单次预约最多支持 31 个自然日"):
         oversized.dates()
 
@@ -79,6 +77,20 @@ def test_date_window_rejects_reverse_and_oversized_ranges() -> None:
 def test_reservation_plan_rejects_invalid_shapes(values: dict[str, object], message: str) -> None:
     with pytest.raises(ValidationError, match=message):
         _reservation_plan(**values)
+
+
+def test_reservation_plan_requires_one_resource_target_and_valid_pool_preference() -> None:
+    target = {"start_date": date(2026, 1, 1), "end_date": date(2026, 1, 1), "purpose": "实验预约"}
+    with pytest.raises(ValidationError, match="必须且只能指定一个设备或设备资源池"):
+        ReservationPlanRequest(**target)
+    with pytest.raises(ValidationError, match="必须且只能指定一个设备或设备资源池"):
+        ReservationPlanRequest(device_id=1, pool_id=2, **target)
+    with pytest.raises(ValidationError, match="指定预分配设备时必须同时指定设备资源池"):
+        ReservationPlanRequest(device_id=1, preferred_device_id=3, **target)
+
+    pool_plan = ReservationPlanRequest(pool_id=2, preferred_device_id=3, **target)
+    assert pool_plan.pool_id == 2
+    assert pool_plan.preferred_device_id == 3
 
 
 def test_reservation_plan_normalizes_and_expands_each_supported_shape() -> None:

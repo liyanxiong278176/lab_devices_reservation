@@ -186,6 +186,20 @@ class DeviceCategory(Base):
     devices: Mapped[list["Device"]] = relationship(back_populates="category")
 
 
+class DevicePool(TimestampMixin, Base):
+    """A user-facing group of interchangeable physical device records."""
+
+    __tablename__ = "v2_device_pool"
+    __table_args__ = (Index("idx_v2_device_pool_college_lab_id", "college_id", "lab_id", "id"),)
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100))
+    college_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("college.id"), index=True)
+    lab_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("lab.id"), index=True)
+
+    devices: Mapped[list["Device"]] = relationship(back_populates="pool")
+
+
 class Device(TimestampMixin, Base):
     __tablename__ = "device"
     __table_args__ = (
@@ -194,6 +208,11 @@ class Device(TimestampMixin, Base):
     )
 
     id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    pool_id: Mapped[int | None] = mapped_column(
+        BIGINT,
+        ForeignKey("v2_device_pool.id"),
+        index=True,
+    )
     college_id: Mapped[int | None] = mapped_column(
         BIGINT,
         ForeignKey("college.id"),
@@ -225,6 +244,7 @@ class Device(TimestampMixin, Base):
     lab: Mapped[Lab | None] = relationship(back_populates="devices")
     college: Mapped[College | None] = relationship(back_populates="devices")
     category: Mapped[DeviceCategory | None] = relationship(back_populates="devices")
+    pool: Mapped[DevicePool | None] = relationship(back_populates="devices")
     reservations: Mapped[list["Reservation"]] = relationship(back_populates="device")
     reservation_days: Mapped[list["ReservationItem"]] = relationship(back_populates="device")
     status_history: Mapped[list["DeviceStatusHistory"]] = relationship(

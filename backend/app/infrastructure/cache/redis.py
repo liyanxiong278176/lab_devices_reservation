@@ -154,12 +154,19 @@ def get_redis(request: Request) -> Redis:
     return get_redis_for_app(request.app)
 
 
-def _reservation_keys(device_id: int, dates: Iterable[date] | None) -> list[str]:
+def _reservation_keys(
+    device_id: int,
+    dates: Iterable[date] | None,
+    *,
+    resource_type: str = "device",
+) -> list[str]:
     if dates is None:
         # Backward-compatible device lock for callers that do not yet have a
         # parsed date set. The v2 HTTP create path always supplies dates.
         return [f"lab:v2:reservation:device:{device_id}"]
     unique_dates = sorted(set(dates))
+    if resource_type == "pool":
+        return [f"lab:v2:reservation:pool:{device_id}:{item.isoformat()}" for item in unique_dates]
     return [f"lab:v2:reservation:{device_id}:{item.isoformat()}" for item in unique_dates]
 
 
@@ -272,6 +279,8 @@ async def reservation_lock(
     request: Request,
     device_id: int,
     dates: Iterable[date] | None = None,
+    *,
+    resource_type: str = "device",
 ):
     """Best-effort date-level lock with a database uniqueness fallback.
 
@@ -283,7 +292,7 @@ async def reservation_lock(
     settings = request.app.state.settings
     client = get_redis(request)
     circuit = get_redis_circuit(request.app)
-    keys = _reservation_keys(device_id, dates)
+    keys = _reservation_keys(device_id, dates, resource_type=resource_type)
     owner = _reservation_lock_owner(request)
     lease_ttl_ms = max(1, int(settings.reservation_lock_ttl_seconds)) * 1000
     acquired: list[str] = []

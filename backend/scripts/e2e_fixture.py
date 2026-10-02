@@ -39,6 +39,7 @@ from app.infrastructure.db.models import (
     DeviceHandover,
     DeviceMaintenancePlan,
     DeviceMaintenanceRecord,
+    DevicePool,
     DeviceStatusHistory,
     ExportTask,
     IdempotencyKey,
@@ -71,7 +72,9 @@ def validate_prefix(value: str) -> str:
     return value
 
 
-async def seed(prefix: str) -> None:
+async def seed(prefix: str, pool_units: int = 1) -> None:
+    if not 1 <= pool_units <= 20:
+        raise ValueError("pool_units must be between 1 and 20")
     settings = Settings()
     engine = build_engine(settings)
     factory = build_session_factory(engine)
@@ -164,6 +167,26 @@ async def seed(prefix: str) -> None:
                 lab=lab,
                 category=category,
             )
+            pool_members = [device]
+            for unit_number in range(2, pool_units + 1):
+                pool_members.append(
+                    Device(
+                        name=device.name,
+                        brand=device.brand,
+                        model=device.model,
+                        specs=device.specs,
+                        status="IDLE",
+                        need_approval=device.need_approval,
+                        max_reservation_days=device.max_reservation_days,
+                        accessory_checklist=device.accessory_checklist,
+                        description=device.description,
+                        college=college,
+                        lab=lab,
+                        category=category,
+                        asset_code=f"{prefix}-pool-unit-{unit_number}",
+                        serial_number=f"{prefix}-pool-serial-{unit_number}",
+                    )
+                )
             session.add_all(
                 [
                     college,
@@ -175,9 +198,25 @@ async def seed(prefix: str) -> None:
                     category,
                     device,
                     second_device,
+                    *pool_members[1:],
                 ]
             )
             await session.flush()
+            device_pool = DevicePool(
+                name=device.name,
+                college_id=college.id,
+                lab_id=lab.id,
+            )
+            second_device_pool = DevicePool(
+                name=second_device.name,
+                college_id=college.id,
+                lab_id=lab.id,
+            )
+            session.add_all([device_pool, second_device_pool])
+            await session.flush()
+            for member in pool_members:
+                member.pool_id = device_pool.id
+            second_device.pool_id = second_device_pool.id
             college.manager_id = manager.id
             await session.commit()
             print(
@@ -185,12 +224,15 @@ async def seed(prefix: str) -> None:
                     {
                         "prefix": prefix,
                         "username": username,
+                        "user_id": student.id,
                         "password": password,
                         "alternate_username": f"{prefix}-user2",
                         "manager_username": manager_username,
                         "admin_username": admin_username,
                         "device_id": device.id,
                         "device_name": device_name,
+                        "pool_id": device_pool.id,
+                        "pool_units": pool_units,
                         "second_device_id": second_device.id,
                         "second_device_name": second_device.name,
                         "college_id": college.id,
@@ -211,9 +253,7 @@ async def add_notification(prefix: str, title: str) -> None:
     factory = build_session_factory(engine)
     try:
         async with factory() as session:
-            student = await session.scalar(
-                select(User).where(User.username == f"{prefix}-user")
-            )
+            student = await session.scalar(select(User).where(User.username == f"{prefix}-user"))
             if student is None:
                 raise RuntimeError("E2E student fixture does not exist")
             delivery_sequence = await next_delivery_sequence(session, student.id)
@@ -346,9 +386,7 @@ async def cleanup(prefix: str) -> None:
                     )
                 )
                 await session.execute(
-                    delete(AiCheckpoint).where(
-                        AiCheckpoint.thread_id.in_(conversation_thread_ids)
-                    )
+                    delete(AiCheckpoint).where(AiCheckpoint.thread_id.in_(conversation_thread_ids))
                 )
             if ai_run_ids:
                 await session.execute(delete(AiRunEvent).where(AiRunEvent.run_id.in_(ai_run_ids)))
@@ -402,17 +440,13 @@ async def cleanup(prefix: str) -> None:
                     )
                 )
                 await session.execute(
-                    delete(ReservationWaitlist).where(
-                        ReservationWaitlist.device_id.in_(device_ids)
-                    )
+                    delete(ReservationWaitlist).where(ReservationWaitlist.device_id.in_(device_ids))
                 )
                 await session.execute(
                     delete(DeviceDocument).where(DeviceDocument.device_id.in_(device_ids))
                 )
                 await session.execute(
-                    delete(DeviceStatusHistory).where(
-                        DeviceStatusHistory.device_id.in_(device_ids)
-                    )
+                    delete(DeviceStatusHistory).where(DeviceStatusHistory.device_id.in_(device_ids))
                 )
             await session.execute(
                 delete(DeviceHandover).where(
@@ -463,6 +497,7 @@ async def cleanup(prefix: str) -> None:
                     )
                 )
             await session.execute(delete(Device).where(Device.college_id == college.id))
+            await session.execute(delete(DevicePool).where(DevicePool.college_id == college.id))
             await session.execute(delete(Lab).where(Lab.college_id == college.id))
             if user_ids:
                 await session.execute(
@@ -493,9 +528,10 @@ def main() -> None:
     parser.add_argument("action", choices=("seed", "notification", "cleanup"))
     parser.add_argument("--prefix", required=True, type=validate_prefix)
     parser.add_argument("--title")
+    parser.add_argument("--pool-units", type=int, default=1)
     args = parser.parse_args()
     if args.action == "seed":
-        asyncio.run(seed(args.prefix))
+        asyncio.run(seed(args.prefix, args.pool_units))
     elif args.action == "notification":
         asyncio.run(add_notification(args.prefix, args.title or ""))
     else:

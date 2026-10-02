@@ -96,6 +96,52 @@ describe('device and maintenance API contracts', () => {
     expect(paging.fetchAllPages).not.toHaveBeenCalled()
   })
 
+  it('requests grouped device resources and maps pool counts and availability', async () => {
+    http.get.mockResolvedValueOnce({
+      items: [{
+        id: 4,
+        pool_id: 17,
+        pool_quantity: 3,
+        pool_idle_quantity: 2,
+        name: 'centrifuge',
+        status: 'IDLE',
+        need_approval: false,
+        max_reservation_days: 4,
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+      truncated: false,
+    })
+    await expect(deviceApi.searchDevices({ grouped: true })).resolves.toMatchObject({
+      records: [expect.objectContaining({ id: 4, poolId: 17, poolQuantity: 3, poolIdleQuantity: 2 })],
+    })
+    expect(http.get).toHaveBeenCalledWith('/devices', {
+      params: {
+        page: undefined,
+        page_size: undefined,
+        search: undefined,
+        lab_id: undefined,
+        status: undefined,
+        grouped: true,
+      },
+    })
+
+    http.get.mockResolvedValueOnce([
+      { date: '2026-10-01', available: true, available_units: 2 },
+      { date: '2026-10-02', available: false, available_units: 0, status: 'POOL_FULL' },
+    ])
+    await expect(deviceApi.devicePoolAvailability(17, '2026-10-01', '2026-10-02'))
+      .resolves.toMatchObject([
+        { date: '2026-10-01', available: true, availableUnits: 2 },
+        { date: '2026-10-02', available: false, availableUnits: 0, status: 'POOL_FULL' },
+      ])
+    expect(http.get).toHaveBeenLastCalledWith('/device-pools/17/availability', {
+      params: { start_date: '2026-10-01', end_date: '2026-10-02' },
+    })
+  })
+
   it('maps device detail and availability, and filters available calendar days', async () => {
     const device = {
       id: 4, name: 'scope', status: 'IDLE', need_approval: false, max_reservation_days: 2,
@@ -135,6 +181,7 @@ describe('device and maintenance API contracts', () => {
     const populated = {
       name: 'scope', labId: 1, categoryId: 2, brand: 'b', model: 'm', specs: 's',
       imageUrl: '/a.png', description: 'd', needApproval: true, maxReservationDays: 4,
+      poolId: 17,
       tags: ['laser'], accessoryChecklist: ['power'], assetCode: 'A1', serialNumber: 'S1',
       purchaseDate: '2024-01-01', warrantyUntil: '2027-01-01', allowExternalLoan: true,
       riskLevel: 'HIGH', requiresSafetyAck: true, requiresQualification: true, maxAdvanceDays: 30,
@@ -143,7 +190,7 @@ describe('device and maintenance API contracts', () => {
     await deviceApi.createDevice({ name: 'minimal', maxReservationDays: 0, riskLevel: '' })
     await deviceApi.updateDevice(9, {
       name: 'blank', needApproval: 0, maxReservationDays: 0, allowExternalLoan: false,
-      riskLevel: '', requiresSafetyAck: false, requiresQualification: false,
+      riskLevel: '', requiresSafetyAck: false, requiresQualification: false, poolId: null,
     })
     await deviceApi.deleteDevice(9)
     await deviceApi.patchDeviceStatus(9, 'MAINTENANCE')
@@ -153,6 +200,7 @@ describe('device and maintenance API contracts', () => {
       tags: ['laser'], accessory_checklist: ['power'], asset_code: 'A1', serial_number: 'S1',
       purchase_date: '2024-01-01', warranty_until: '2027-01-01', allow_external_loan: true,
       risk_level: 'HIGH', requires_safety_ack: true, requires_qualification: true, max_advance_days: 30,
+      pool_id: 17,
     })
     expect(http.post).toHaveBeenNthCalledWith(2, '/devices', {
       name: 'minimal', lab_id: undefined, category_id: undefined, brand: undefined, model: undefined,
@@ -168,7 +216,7 @@ describe('device and maintenance API contracts', () => {
       max_reservation_days: 8, tags: undefined, accessory_checklist: undefined, asset_code: undefined,
       serial_number: undefined, purchase_date: undefined, warranty_until: undefined,
       allow_external_loan: false, risk_level: 'STANDARD', requires_safety_ack: false,
-      requires_qualification: false, max_advance_days: undefined,
+      requires_qualification: false, max_advance_days: undefined, pool_id: null,
     })
     expect(http.delete).toHaveBeenCalledWith('/devices/9')
     expect(http.patch).toHaveBeenCalledWith('/devices/9/status', { status: 'MAINTENANCE' })

@@ -167,6 +167,10 @@ async def test_lock_key_owner_and_optional_metrics_paths(monkeypatch: pytest.Mon
         "lab:v2:reservation:8:2026-09-28",
         "lab:v2:reservation:8:2026-09-29",
     ]
+    assert _reservation_keys(8, dates, resource_type="pool") == [
+        "lab:v2:reservation:pool:8:2026-09-28",
+        "lab:v2:reservation:pool:8:2026-09-29",
+    ]
 
     request = fake_request()
     first_owner = _reservation_lock_owner(request)
@@ -300,7 +304,7 @@ async def test_reservation_lock_falls_back_when_wait_expires_or_contention_persi
     monkeypatch.setattr(
         redis_module,
         "_reservation_keys",
-        lambda _device_id, _dates: RedisFailureDuringKeyIteration(),
+        lambda _device_id, _dates, **_kwargs: RedisFailureDuringKeyIteration(),
     )
     outer_failure_request = fake_request(ScriptedRedis(), reservation_lock_wait_seconds=0.1)
     async with reservation_lock(outer_failure_request, 16, [date(2026, 9, 28)]) as acquired:

@@ -4,14 +4,14 @@ import type { DeviceVO } from '@/types/device'
 
 const mocks = vi.hoisted(() => ({
   searchDevices: vi.fn(),
-  getDevice: vi.fn(),
+  getDevicePool: vi.fn(),
   push: vi.fn(),
   reveal: vi.fn(),
 }))
 
 vi.mock('@/api/device', () => ({
   searchDevices: mocks.searchDevices,
-  getDevice: mocks.getDevice,
+  getDevicePool: mocks.getDevicePool,
 }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 vi.mock('@/composables/useStagger', () => ({ useStagger: () => ({ reveal: mocks.reveal }) }))
@@ -23,6 +23,9 @@ import DeviceIndex from '../Index.vue'
 
 const firstDevice = {
   id: 1,
+  poolId: 17,
+  poolQuantity: 2,
+  poolIdleQuantity: 2,
   name: '工作站 A',
   categoryId: 10,
   brand: 'Maker',
@@ -41,6 +44,9 @@ const firstDevice = {
 
 const secondDevice = {
   id: 2,
+  poolId: 18,
+  poolQuantity: 1,
+  poolIdleQuantity: 0,
   name: '显微镜 B',
   categoryId: null,
   brand: '',
@@ -123,7 +129,7 @@ describe('device browse page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.searchDevices.mockResolvedValue(page())
-    mocks.getDevice.mockResolvedValue({ ...firstDevice, description: '详细设备说明' })
+    mocks.getDevicePool.mockResolvedValue({ ...firstDevice, description: '详细设备说明' })
   })
 
   it('loads and renders cards, conditional content, filtering controls, and empty state', async () => {
@@ -135,16 +141,16 @@ describe('device browse page', () => {
     })
     await flushPromises()
 
-    expect(mocks.searchDevices).toHaveBeenCalledWith(expect.objectContaining({ page: 1, size: 24 }))
-    expect(wrapper.text()).toContain('共 2 台设备')
+    expect(mocks.searchDevices).toHaveBeenCalledWith(expect.objectContaining({ page: 1, size: 24, grouped: true }))
+    expect(wrapper.text()).toContain('共 2 类设备资源')
     expect(wrapper.text()).toContain('工作站 A')
-    expect(wrapper.text()).toContain('定期维护中')
+    expect(wrapper.text()).toContain('资源池内暂无可预约设备')
     expect(wrapper.findAll('.device-cell')).toHaveLength(2)
     expect(wrapper.findAll('img')).toHaveLength(1)
 
     await wrapper.find('.device-cell .text-button').trigger('click')
     await flushPromises()
-    expect(mocks.push).toHaveBeenCalledWith({ name: 'reservation-create', query: { deviceId: '1' } })
+    expect(mocks.push).toHaveBeenCalledWith({ name: 'reservation-create', query: { poolId: '17' } })
 
     await wrapper.find('.device-page__filter-right .text-button').trigger('click')
     await flushPromises()
@@ -175,14 +181,16 @@ describe('device browse page', () => {
     await wrapper.find('.glow-card').trigger('click')
     await flushPromises()
 
-    expect(mocks.getDevice).toHaveBeenCalledWith(1)
+    expect(mocks.getDevicePool).toHaveBeenCalledWith(17)
     expect(wrapper.find('aside').text()).toContain('详细设备说明')
     await wrapper.find('aside .text-button').trigger('click')
-    expect(mocks.push).toHaveBeenCalledWith({ name: 'device-detail', params: { id: 1 } })
+    expect(mocks.push).toHaveBeenCalledWith({
+      name: 'device-detail', params: { id: 1 }, query: { poolId: '17' },
+    })
     await wrapper.find('.primary-button').trigger('click')
-    expect(mocks.push).toHaveBeenLastCalledWith({ name: 'reservation-create', query: { deviceId: '1' } })
+    expect(mocks.push).toHaveBeenLastCalledWith({ name: 'reservation-create', query: { poolId: '17' } })
 
-    mocks.getDevice.mockRejectedValueOnce(new Error('network unavailable'))
+    mocks.getDevicePool.mockRejectedValueOnce(new Error('network unavailable'))
     await wrapper.findAll('.glow-card')[1].trigger('click')
     await flushPromises()
     expect(wrapper.find('aside').text()).toContain('显微镜 B')

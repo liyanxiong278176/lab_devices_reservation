@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import uuid4
@@ -35,6 +37,7 @@ from app.core.errors import ApiError
 from app.domain.reservation import ACTIVE_RESERVATION_STATUSES
 from app.infrastructure.cache.cache import CacheService
 from app.infrastructure.cache.invalidation import enqueue_catalog_cache_bump
+from app.infrastructure.cache.reservation_quota import ReservationQuotaCache
 from app.infrastructure.db.models import (
     College,
     CreditEvent,
@@ -44,6 +47,7 @@ from app.infrastructure.db.models import (
     DeviceHandover,
     DeviceMaintenancePlan,
     DeviceMaintenanceRecord,
+    DevicePool,
     DeviceQualification,
     IdempotencyKey,
     Lab,
@@ -123,6 +127,7 @@ async def _failed_maintenance_plan_ids(
 def _device_summary(device: Device, maintenance_warning: str | None = None) -> DeviceSummary:
     return DeviceSummary(
         id=device.id,
+        pool_id=device.pool_id or device.id,
         name=device.name,
         status=device.status,
         brand=device.brand,
@@ -226,6 +231,7 @@ class ReservationService:
         advance_days: int = 30,
         manager_advance_days: int = 90,
         cache: CacheService | None = None,
+        reservation_quota: ReservationQuotaCache | None = None,
     ) -> None:
         self.session = session
         self.principal = principal
@@ -235,6 +241,23 @@ class ReservationService:
         self.advance_days = advance_days
         self.manager_advance_days = manager_advance_days
         self.cache = cache
+        self.reservation_quota = reservation_quota
+
+    async def _release_reservation_quota_cache(
+        self,
+        reservation: Reservation,
+        dates: list[date],
+        *,
+        event_id: str,
+    ) -> None:
+        if self.reservation_quota is None or not dates:
+            return
+        await self.reservation_quota.release(
+            int(reservation.device.pool_id or reservation.device_id),
+            [reservation.device_id],
+            dates,
+            event_id,
+        )
 
     def _college_id(self) -> int | None:
         return college_scope(self.principal)
@@ -320,6 +343,352 @@ class ReservationService:
             raise ApiError("TENANT_DATA_INVALID", "设备所属实验室与学院不一致", 409)
         return device
 
+    async def _load_pool_members(
+        self,
+        pool_id: int,
+        *,
+        for_update: bool = False,
+        enforce_manager_scope: bool = False,
+    ) -> list[Device]:
+        pool_stmt = select(DevicePool).where(DevicePool.id == pool_id)
+        if (
+            enforce_manager_scope
+            and self.principal.is_lab_admin
+            and not self.principal.is_system_admin
+        ):
+            pool_stmt = (
+                select(DevicePool)
+                .outerjoin(Lab, Lab.id == DevicePool.lab_id)
+                .outerjoin(College, College.id == DevicePool.college_id)
+                .where(
+                    DevicePool.id == pool_id,
+                    or_(
+                        Lab.manager_id == self.principal.user_id,
+                        College.manager_id == self.principal.user_id,
+                    ),
+                )
+            )
+        if for_update:
+            pool_stmt = pool_stmt.with_for_update()
+        pool = await self.session.scalar(pool_stmt)
+        if pool is None:
+            # A few supported fixture/import paths still create Device rows
+            # directly. Until they are normalized into v2_device_pool, expose
+            # an ungrouped physical row as a one-unit virtual pool.
+            legacy_stmt = (
+                select(Device)
+                .options(
+                    selectinload(Device.lab),
+                    selectinload(Device.college),
+                    selectinload(Device.category),
+                )
+                .where(
+                    Device.id == pool_id,
+                    Device.pool_id.is_(None),
+                    Device.status != "DELETED",
+                )
+            )
+            scope = self._college_id()
+            if scope is not None:
+                legacy_stmt = legacy_stmt.where(Device.college_id == scope)
+            if for_update:
+                legacy_stmt = legacy_stmt.with_for_update()
+            legacy_device = await self.session.scalar(legacy_stmt)
+            if legacy_device is None:
+                raise ApiError("DEVICE_POOL_NOT_FOUND", "设备资源池不存在", 404)
+            if (
+                enforce_manager_scope
+                and self.principal.is_lab_admin
+                and not self.principal.is_system_admin
+                and not await self._can_manage_device(legacy_device)
+            ):
+                raise ApiError("DEVICE_POOL_NOT_FOUND", "设备资源池不存在", 404)
+            return [legacy_device]
+        stmt = (
+            select(Device)
+            .options(
+                selectinload(Device.lab),
+                selectinload(Device.college),
+                selectinload(Device.category),
+            )
+            .where(Device.pool_id == pool_id, Device.status != "DELETED")
+            .order_by(Device.id)
+        )
+        scope = self._college_id()
+        if scope is not None:
+            stmt = stmt.where(Device.college_id == scope)
+        if for_update:
+            stmt = stmt.with_for_update()
+        devices = list((await self.session.scalars(stmt)).all())
+        if not devices:
+            raise ApiError("DEVICE_POOL_NOT_FOUND", "设备资源池不存在", 404)
+        if any(
+            device.lab_id != pool.lab_id or device.college_id != pool.college_id
+            for device in devices
+        ):
+            raise ApiError("DEVICE_POOL_SCOPE_INVALID", "资源池内设备的学院或实验室范围不一致", 409)
+        return devices
+
+    async def _preflight_pool(
+        self,
+        plan: ReservationPlanRequest,
+    ) -> ReservationPreflightData:
+        assert plan.pool_id is not None
+        members = await self._load_pool_members(plan.pool_id)
+        if plan.preferred_device_id is not None:
+            selected = next(
+                (device for device in members if device.id == plan.preferred_device_id),
+                None,
+            )
+            if selected is None:
+                raise ApiError("DEVICE_POOL_MEMBER_INVALID", "预分配设备不属于所选资源池", 409)
+            result = await self.preflight(
+                plan.model_copy(
+                    update={
+                        "device_id": selected.id,
+                        "pool_id": None,
+                        "preferred_device_id": None,
+                        "quantity": 1,
+                    }
+                )
+            )
+            by_date = [
+                AvailabilityDay(
+                    date=day,
+                    available=day in result.available_dates,
+                    available_units=int(day in result.available_dates),
+                    status="AVAILABLE" if day in result.available_dates else "FULL",
+                )
+                for day in result.requested_dates
+            ]
+            return result.model_copy(
+                update={
+                    "device": result.device.model_copy(
+                        update={
+                            "pool_id": plan.pool_id,
+                            "pool_quantity": len(members),
+                            "pool_idle_quantity": sum(
+                                member.status == "IDLE" for member in members
+                            ),
+                        }
+                    ),
+                    "requested_quantity": plan.quantity,
+                    "available_units": int(result.all_available),
+                    "available_units_by_date": by_date,
+                }
+            )
+
+        candidates: list[ReservationPreflightData] = []
+        for member in members:
+            candidate = await self.preflight(
+                plan.model_copy(
+                    update={
+                        "device_id": member.id,
+                        "pool_id": None,
+                        "preferred_device_id": None,
+                        "quantity": 1,
+                    }
+                )
+            )
+            candidates.append(candidate)
+
+        fully_available = [candidate for candidate in candidates if candidate.all_available]
+        requested_dates = plan.requested_dates()
+        available_by_date = {
+            requested_date: sum(
+                requested_date in candidate.available_dates for candidate in candidates
+            )
+            for requested_date in requested_dates
+        }
+        eligible_count = len(fully_available)
+        access_ready = [
+            candidate
+            for candidate in fully_available
+            if (not candidate.safety_required or candidate.safety_acknowledged)
+            and (not candidate.qualification_required or candidate.qualification_approved)
+        ]
+        if len(access_ready) >= plan.quantity:
+            selected = min(access_ready, key=lambda candidate: candidate.device.id)
+        elif fully_available:
+            access_incomplete = [
+                candidate for candidate in fully_available if candidate not in access_ready
+            ]
+            selected = min(
+                access_incomplete or fully_available,
+                key=lambda candidate: (
+                    int(candidate.safety_required and not candidate.safety_acknowledged)
+                    + int(
+                        candidate.qualification_required and not candidate.qualification_approved
+                    ),
+                    candidate.device.id,
+                ),
+            )
+        else:
+            selected = max(candidates, key=lambda candidate: len(candidate.available_dates))
+        conflicts = [
+            ReservationConflict(
+                date=requested_date,
+                reason=(
+                    f"该日期仅剩 {available_by_date[requested_date]} 台可用，"
+                    f"少于申请的 {plan.quantity} 台"
+                ),
+            )
+            for requested_date in requested_dates
+            if available_by_date[requested_date] < plan.quantity
+        ]
+        if not conflicts and eligible_count < plan.quantity and requested_dates:
+            conflicts = [
+                ReservationConflict(
+                    date=requested_dates[0],
+                    reason=(
+                        "所选日期每天都有可用设备，但没有足够数量的同一实物设备"
+                        "覆盖全部日期"
+                    ),
+                )
+            ]
+        by_date = [
+            AvailabilityDay(
+                date=requested_date,
+                available=available_by_date[requested_date] >= plan.quantity,
+                available_units=available_by_date[requested_date],
+                status=(
+                    "POOL_AVAILABLE"
+                    if available_by_date[requested_date] >= plan.quantity
+                    else "POOL_FULL"
+                ),
+                reason=(
+                    None
+                    if available_by_date[requested_date] >= plan.quantity
+                    else f"申请 {plan.quantity} 台，当前可用 {available_by_date[requested_date]} 台"
+                ),
+            )
+            for requested_date in requested_dates
+        ]
+        if self.reservation_quota is not None:
+            redis_availability = {
+                requested_date: {
+                    candidate.device.id: requested_date in candidate.available_dates
+                    for candidate in candidates
+                }
+                for requested_date in requested_dates
+            }
+            await self.reservation_quota.prime(plan.pool_id, redis_availability)
+        return selected.model_copy(
+            update={
+                "device": selected.device.model_copy(
+                    update={
+                        "pool_id": plan.pool_id,
+                        "pool_quantity": len(members),
+                        "pool_idle_quantity": sum(member.status == "IDLE" for member in members),
+                    }
+                ),
+                "available_dates": requested_dates if eligible_count >= plan.quantity else [],
+                "conflicts": conflicts,
+                "all_available": (
+                    eligible_count >= plan.quantity and len(access_ready) >= plan.quantity
+                ),
+                "requested_quantity": plan.quantity,
+                "available_units": eligible_count,
+                "available_units_by_date": by_date,
+            }
+        )
+
+    async def _preflight_and_lock_pool_member(
+        self,
+        plan: ReservationPlanRequest,
+    ) -> ReservationPreflightData:
+        selected = await self._preflight_and_lock_pool_members(plan, 1)
+        if selected:
+            return selected[0]
+        return await self._preflight_pool(plan)
+
+    async def _preflight_and_lock_pool_members(
+        self,
+        plan: ReservationPlanRequest,
+        quantity: int,
+        *,
+        allowed_device_ids: list[int] | None = None,
+    ) -> list[ReservationPreflightData]:
+        """Lock and recheck N distinct pool members for the full requested range."""
+        assert plan.pool_id is not None
+        pool_members = await self._load_pool_members(plan.pool_id)
+        if plan.preferred_device_id is not None:
+            pool_members = [
+                item for item in pool_members if item.id == plan.preferred_device_id
+            ]
+            if not pool_members:
+                raise ApiError("DEVICE_POOL_MEMBER_INVALID", "预分配设备不属于所选资源池", 409)
+        if allowed_device_ids is not None:
+            allowed_ids = set(allowed_device_ids)
+            pool_members = [item for item in pool_members if item.id in allowed_ids]
+
+        candidate_pairs: list[tuple[ReservationPlanRequest, ReservationPreflightData]] = []
+        for member in pool_members:
+            member_plan = plan.model_copy(
+                update={
+                    "device_id": member.id,
+                    "pool_id": None,
+                    "preferred_device_id": None,
+                    "quantity": 1,
+                }
+            )
+            candidate = await self.preflight(member_plan)
+            if candidate.all_available:
+                candidate_pairs.append((member_plan, candidate))
+        ordered = sorted(
+            candidate_pairs,
+            key=lambda pair: (
+                not pair[1].safety_acknowledged,
+                not pair[1].qualification_approved,
+                pair[1].device.id,
+            ),
+        )
+        if len(ordered) < quantity:
+            return []
+
+        selected: list[ReservationPreflightData] = []
+        selected_ids: set[int] = set()
+        tried_ids: set[int] = set()
+        for attempt in range(25):
+            saw_locked_candidate = False
+            for member_plan, candidate in ordered:
+                device_id = candidate.device.id
+                if device_id in selected_ids or device_id in tried_ids:
+                    continue
+                locked_id = await self.session.scalar(
+                    select(Device.id)
+                    .where(Device.id == device_id, Device.status != "DELETED")
+                    .with_for_update(skip_locked=True)
+                )
+                if locked_id is None:
+                    saw_locked_candidate = True
+                    continue
+                current = await self.preflight(member_plan)
+                if current.all_available:
+                    current = current.model_copy(
+                        update={
+                            "device": current.device.model_copy(
+                                update={
+                                    "pool_id": plan.pool_id,
+                                    "pool_quantity": len(pool_members),
+                                    "pool_idle_quantity": sum(
+                                        item.status == "IDLE" for item in pool_members
+                                    ),
+                                }
+                            )
+                        }
+                    )
+                    selected.append(current)
+                    selected_ids.add(device_id)
+                    if len(selected) == quantity:
+                        return selected
+                else:
+                    tried_ids.add(device_id)
+            if not saw_locked_candidate or attempt == 24:
+                break
+            await asyncio.sleep(0.01)
+        return selected
+
     async def list_devices(
         self,
         *,
@@ -329,6 +698,7 @@ class ReservationService:
         page: int = 1,
         page_size: int = 20,
         include_meta: bool = False,
+        grouped: bool = False,
     ) -> tuple[list[DeviceSummary], int] | tuple[list[DeviceSummary], int, int, bool]:
         if not self.principal.has_permission("device:read"):
             raise ApiError("FORBIDDEN", "当前账号没有查看设备的权限", 403)
@@ -349,6 +719,7 @@ class ReservationService:
                         "status": status,
                         "page": page,
                         "page_size": page_size,
+                        "grouped": grouped,
                         "viewer": viewer_key,
                     },
                     ensure_ascii=False,
@@ -360,7 +731,10 @@ class ReservationService:
                 key = f"lab:v2:catalog:devices:{scope_key}:v{version}:{fingerprint}"
 
                 async def load() -> dict[str, object]:
-                    items, total, pages, truncated = await self._list_devices_from_db(
+                    query = (
+                        self._list_device_pools_from_db if grouped else self._list_devices_from_db
+                    )
+                    items, total, pages, truncated = await query(
                         search=search,
                         lab_id=lab_id,
                         status=status,
@@ -386,7 +760,8 @@ class ReservationService:
                 # Cache is an optimization. Any serialization or Redis issue
                 # falls back to the authoritative query.
                 pass
-        result = await self._list_devices_from_db(
+        query = self._list_device_pools_from_db if grouped else self._list_devices_from_db
+        result = await query(
             search=search,
             lab_id=lab_id,
             status=status,
@@ -394,6 +769,117 @@ class ReservationService:
             page_size=page_size,
         )
         return result if include_meta else result[:2]
+
+    async def _list_device_pools_from_db(
+        self,
+        *,
+        search: str | None,
+        lab_id: int | None,
+        status: str | None,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[DeviceSummary], int, int, bool]:
+        """Page logical pools while keeping tenant filters inside the ID query."""
+
+        page_offset(page, page_size)
+        scope = self._college_id()
+        pool_key = func.coalesce(Device.pool_id, Device.id)
+        conditions = [Device.status != "DELETED"]
+        if scope is not None:
+            conditions.append(Device.college_id == scope)
+        if search:
+            like = f"%{search.strip()}%"
+            conditions.append(
+                or_(Device.name.like(like), Device.model.like(like), Device.asset_code.like(like))
+            )
+        if lab_id is not None:
+            conditions.append(Device.lab_id == lab_id)
+        if status:
+            conditions.append(Device.status == status)
+        if self.principal.is_lab_admin and not self.principal.is_system_admin:
+            conditions.append(
+                or_(
+                    Lab.manager_id == self.principal.user_id,
+                    College.manager_id == self.principal.user_id,
+                )
+            )
+
+        group_ids_stmt = select(pool_key.label("pool_id")).select_from(Device)
+        if self.principal.is_lab_admin and not self.principal.is_system_admin:
+            group_ids_stmt = group_ids_stmt.outerjoin(Lab, Lab.id == Device.lab_id).join(
+                College,
+                College.id == Device.college_id,
+            )
+        group_ids_stmt = group_ids_stmt.where(*conditions).group_by(pool_key)
+        total = int(
+            await self.session.scalar(select(func.count()).select_from(group_ids_stmt.subquery()))
+            or 0
+        )
+        page_ids = delayed_page_ids(
+            group_ids_stmt,
+            pool_key,
+            page=page,
+            page_size=page_size,
+            name="pool_page_ids",
+        )
+        pool_ids = list(
+            (
+                await self.session.scalars(
+                    select(page_ids.c.pool_id).order_by(page_ids.c.pool_id.desc())
+                )
+            ).all()
+        )
+        if not pool_ids:
+            pages, truncated = page_metadata(total, page_size)
+            return [], total, pages, truncated
+
+        member_conditions = [Device.status != "DELETED", pool_key.in_(pool_ids)]
+        if scope is not None:
+            member_conditions.append(Device.college_id == scope)
+        if lab_id is not None:
+            member_conditions.append(Device.lab_id == lab_id)
+        members_stmt = select(Device).where(*member_conditions)
+        if self.principal.is_lab_admin and not self.principal.is_system_admin:
+            members_stmt = members_stmt.outerjoin(Lab, Lab.id == Device.lab_id).join(
+                College,
+                College.id == Device.college_id,
+            )
+            members_stmt = members_stmt.where(
+                or_(
+                    Lab.manager_id == self.principal.user_id,
+                    College.manager_id == self.principal.user_id,
+                )
+            )
+        members_stmt = members_stmt.options(
+            selectinload(Device.lab),
+            selectinload(Device.college),
+            selectinload(Device.category),
+        ).order_by(Device.id)
+        members = list((await self.session.scalars(members_stmt)).all())
+        members_by_pool: dict[int, list[Device]] = defaultdict(list)
+        for device in members:
+            members_by_pool[int(device.pool_id or device.id)].append(device)
+        warnings = await self._maintenance_warnings([device.id for device in members])
+
+        result: list[DeviceSummary] = []
+        for pool_id in pool_ids:
+            pool_members = members_by_pool.get(int(pool_id), [])
+            if not pool_members:
+                continue
+            idle_members = [member for member in pool_members if member.status == "IDLE"]
+            representative = (idle_members or pool_members)[0]
+            summary = _device_summary(representative, warnings.get(representative.id))
+            result.append(
+                summary.model_copy(
+                    update={
+                        "pool_id": int(pool_id),
+                        "pool_quantity": len(pool_members),
+                        "pool_idle_quantity": len(idle_members),
+                    }
+                )
+            )
+        pages, truncated = page_metadata(total, page_size)
+        return result, total, pages, truncated
 
     async def _list_devices_from_db(
         self,
@@ -458,9 +944,46 @@ class ReservationService:
         )
         devices = list((await self.session.scalars(stmt)).all())
         maintenance_warnings = await self._maintenance_warnings([device.id for device in devices])
+        pool_ids = {int(device.pool_id or device.id) for device in devices}
+        pool_members = (
+            list(
+                (
+                    await self.session.scalars(
+                        select(Device).where(
+                            Device.status != "DELETED",
+                            or_(
+                                Device.pool_id.in_(pool_ids),
+                                and_(Device.pool_id.is_(None), Device.id.in_(pool_ids)),
+                            ),
+                        )
+                    )
+                ).all()
+            )
+            if pool_ids
+            else []
+        )
+        pool_counts: dict[int, tuple[int, int]] = {}
+        statuses_by_pool: dict[int, list[str]] = defaultdict(list)
+        for member in pool_members:
+            statuses_by_pool[int(member.pool_id or member.id)].append(member.status)
+        for pool_id, statuses in statuses_by_pool.items():
+            pool_counts[pool_id] = (len(statuses), sum(status == "IDLE" for status in statuses))
         pages, truncated = page_metadata(total, page_size)
         return (
-            [_device_summary(device, maintenance_warnings.get(device.id)) for device in devices],
+            [
+                _device_summary(device, maintenance_warnings.get(device.id)).model_copy(
+                    update={
+                        "pool_id": int(device.pool_id or device.id),
+                        "pool_quantity": pool_counts.get(int(device.pool_id or device.id), (1, 1))[
+                            0
+                        ],
+                        "pool_idle_quantity": pool_counts.get(
+                            int(device.pool_id or device.id), (1, 1)
+                        )[1],
+                    }
+                )
+                for device in devices
+            ],
             total,
             pages,
             truncated,
@@ -470,12 +993,79 @@ class ReservationService:
         if not self.principal.has_permission("device:read"):
             raise ApiError("FORBIDDEN", "当前账号没有查看设备的权限", 403)
         device = await self._load_device(device_id)
-        warnings = await self._maintenance_warnings([device.id])
+        members = (
+            await self._load_pool_members(device.pool_id)
+            if device.pool_id is not None
+            else [device]
+        )
+        warnings = await self._maintenance_warnings([member.id for member in members])
         return DeviceDetail(
-            **_device_summary(device, warnings.get(device.id)).model_dump(),
+            **_device_summary(device, warnings.get(device.id))
+            .model_copy(
+                update={
+                    "pool_id": int(device.pool_id or device.id),
+                    "pool_quantity": len(members),
+                    "pool_idle_quantity": sum(member.status == "IDLE" for member in members),
+                }
+            )
+            .model_dump(),
             description=device.description,
             location=device.lab.location if device.lab else None,
         )
+
+    async def get_device_pool(self, pool_id: int) -> DeviceDetail:
+        if not self.principal.has_permission("device:read"):
+            raise ApiError("FORBIDDEN", "当前账号没有查看设备的权限", 403)
+        members = await self._load_pool_members(pool_id, enforce_manager_scope=True)
+        idle_members = [member for member in members if member.status == "IDLE"]
+        representative = (idle_members or members)[0]
+        warnings = await self._maintenance_warnings([member.id for member in members])
+        return DeviceDetail(
+            **_device_summary(representative, warnings.get(representative.id))
+            .model_copy(
+                update={
+                    "pool_id": pool_id,
+                    "pool_quantity": len(members),
+                    "pool_idle_quantity": len(idle_members),
+                }
+            )
+            .model_dump(),
+            description=representative.description,
+            location=representative.lab.location if representative.lab else None,
+        )
+
+    async def pool_availability(
+        self,
+        pool_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[AvailabilityDay]:
+        if not self.principal.has_permission("device:read"):
+            raise ApiError("FORBIDDEN", "当前账号没有查看设备的权限", 403)
+        if end_date < start_date:
+            raise ApiError("DATE_RANGE_INVALID", "结束日期不能早于开始日期", 422)
+        if (end_date - start_date).days + 1 > self.max_days:
+            raise ApiError("DATE_RANGE_TOO_LARGE", f"单次最多查询 {self.max_days} 天", 422)
+        members = await self._load_pool_members(pool_id, enforce_manager_scope=True)
+        counts = {
+            date.fromordinal(value): 0
+            for value in range(start_date.toordinal(), end_date.toordinal() + 1)
+        }
+        for member in members:
+            device_days = await self.availability(member.id, start_date, end_date)
+            for item in device_days:
+                if item.available:
+                    counts[item.date] += 1
+        return [
+            AvailabilityDay(
+                date=day,
+                available=count > 0,
+                available_units=count,
+                status="POOL_AVAILABLE" if count else "POOL_FULL",
+                reason=None if count else "资源池当前没有可预约的实物设备",
+            )
+            for day, count in counts.items()
+        ]
 
     async def availability(
         self,
@@ -541,6 +1131,10 @@ class ReservationService:
     async def preflight(self, plan: ReservationPlanRequest) -> ReservationPreflightData:
         if not self.principal.has_permission("reservation:create"):
             raise ApiError("FORBIDDEN", "当前账号没有创建预约的权限", 403)
+        if plan.pool_id is not None:
+            return await self._preflight_pool(plan)
+        if plan.device_id is None:
+            raise ApiError("DEVICE_NOT_FOUND", "预约设备不存在", 404)
         device = await self._load_device(plan.device_id)
         dates = plan.requested_dates()
         policy = await resolve_reservation_policy(
@@ -593,7 +1187,7 @@ class ReservationService:
                 dates,
                 max_advance_days=policy.max_advance_days,
             )
-        return ReservationPreflightData(
+        result = ReservationPreflightData(
             device=_device_summary(
                 device,
                 (await self._maintenance_warnings([device.id])).get(device.id),
@@ -602,6 +1196,17 @@ class ReservationService:
             available_dates=[current for current in dates if current not in conflict_dates],
             conflicts=conflicts,
             all_available=not conflicts,
+            requested_quantity=1,
+            available_units=int(not conflicts),
+            available_units_by_date=[
+                AvailabilityDay(
+                    date=current,
+                    available=current not in conflict_dates,
+                    available_units=int(current not in conflict_dates),
+                    status="AVAILABLE" if current not in conflict_dates else "FULL",
+                )
+                for current in dates
+            ],
             effective_policy=ReservationPolicySnapshot(
                 user_category=policy.user_category,  # type: ignore[arg-type]
                 max_booking_days=policy.max_booking_days,
@@ -617,6 +1222,15 @@ class ReservationService:
             same_device_suggestions=same_device_suggestions,
             similar_device_suggestions=similar_device_suggestions,
         )
+        if self.reservation_quota is not None:
+            await self.reservation_quota.prime(
+                int(device.pool_id or device.id),
+                {
+                    requested_date: {device.id: requested_date not in conflict_dates}
+                    for requested_date in dates
+                },
+            )
+        return result
 
     def _validate_dates(
         self,
@@ -724,7 +1338,11 @@ class ReservationService:
     async def access_snapshot(self, device_id: int) -> dict[str, object]:
         return await self._access_snapshot(await self._load_device(device_id))
 
-    async def _occupied(self, device_id: int, dates: list[date]) -> dict[date, tuple[int, str]]:
+    async def _occupied(
+        self,
+        device_id: int,
+        dates: list[date],
+    ) -> dict[date, tuple[int, str]]:
         if not dates:
             return {}
         conditions = [
@@ -741,17 +1359,15 @@ class ReservationService:
             .where(*conditions)
         )
         occupied = {
-            row[0]: (int(row[1]), str(row[2])) for row in (await self.session.execute(stmt)).all()
+            row[0]: (int(row[1]), str(row[2]))
+            for row in (await self.session.execute(stmt)).all()
         }
-        held_dates = (
-            await self.session.scalars(
-                select(ReservationWaitlistOffer.reservation_date).where(
-                    ReservationWaitlistOffer.device_id == device_id,
-                    ReservationWaitlistOffer.reservation_date.in_(dates),
-                    ReservationWaitlistOffer.expires_at > utcnow_naive(),
-                )
-            )
-        ).all()
+        held_stmt = select(ReservationWaitlistOffer.reservation_date).where(
+            ReservationWaitlistOffer.device_id == device_id,
+            ReservationWaitlistOffer.reservation_date.in_(dates),
+            ReservationWaitlistOffer.expires_at > utcnow_naive(),
+        )
+        held_dates = (await self.session.scalars(held_stmt)).all()
         for held_date in held_dates:
             occupied.setdefault(held_date, (0, "WAITLIST_HOLD"))
         return occupied
@@ -866,9 +1482,7 @@ class ReservationService:
         all_dates = set().union(*(dates_by_device[device_id] for device_id in requested_devices))
         device_ids = set(requested_devices)
         lab_ids = {
-            device.lab_id
-            for device in requested_devices.values()
-            if device.lab_id is not None
+            device.lab_id for device in requested_devices.values() if device.lab_id is not None
         }
         college_ids = {device.college_id for device in requested_devices.values()}
         scope_filters = [
@@ -935,9 +1549,7 @@ class ReservationService:
                 ):
                     if scope_id is None:
                         continue
-                    reason = blackout_by_scope_date.get(
-                        (scope_type, scope_id, requested_date)
-                    )
+                    reason = blackout_by_scope_date.get((scope_type, scope_id, requested_date))
                     if reason is not None:
                         blocked[requested_date] = reason
                         break
@@ -1388,7 +2000,11 @@ class ReservationService:
             project_reference=entry.project_reference,
         )
         try:
-            created = await self.create(plan, idempotency_key=f"waitlist-confirm:{entry.id}")
+            created = await self.create(
+                plan,
+                idempotency_key=f"waitlist-confirm:{entry.id}",
+                quota_already_held=True,
+            )
         except Exception:
             await self.session.rollback()
             raise
@@ -1401,31 +2017,23 @@ class ReservationService:
         plan: ReservationPlanRequest,
         *,
         idempotency_key: str | None = None,
+        quota_already_held: bool = False,
     ) -> ReservationCreateData:
+        """Use Redis as an early quota gate, then let MySQL bind every unit."""
         if not self.principal.has_permission("reservation:create"):
             raise ApiError("FORBIDDEN", "当前账号没有创建预约的权限", 403)
-        if idempotency_key:
-            if len(idempotency_key) > 128:
-                raise ApiError("IDEMPOTENCY_KEY_INVALID", "幂等键长度不能超过 128", 422)
-            key_hash = request_hash(plan)
-            existing = await self.session.scalar(
-                select(IdempotencyKey).where(
-                    IdempotencyKey.user_id == self.principal.user_id,
-                    IdempotencyKey.key == idempotency_key,
-                )
-            )
-            if existing is not None:
-                if existing.request_hash != key_hash:
-                    raise ApiError("IDEMPOTENCY_REUSED", "幂等键已用于另一份请求", 409)
-                if existing.response_body:
-                    return ReservationCreateData.model_validate(existing.response_body)
-                raise ApiError("REQUEST_IN_PROGRESS", "相同请求正在处理中，请稍后重试", 409)
+        if idempotency_key and len(idempotency_key) > 128:
+            raise ApiError("IDEMPOTENCY_KEY_INVALID", "幂等键长度不能超过 128", 422)
 
+        user = await self.session.scalar(
+            select(User)
+            .where(User.id == self.principal.user_id)
+            .with_for_update()
+        )
+        if user is None or user.status != 1:
+            raise ApiError("USER_NOT_FOUND", "用户不存在或已禁用", 401)
         if not self.principal.is_system_admin:
-            user = await self.session.scalar(select(User).where(User.id == self.principal.user_id))
             now = utcnow_naive()
-            if user is None or user.status != 1:
-                raise ApiError("USER_NOT_FOUND", "用户不存在或已禁用", 401)
             if user.booking_blocked_until and user.booking_blocked_until > now:
                 raise ApiError(
                     "BOOKING_RESTRICTED",
@@ -1434,28 +2042,251 @@ class ReservationService:
                     data={"blocked_until": user.booking_blocked_until},
                 )
 
-        # Serialize policy/blackout checks against a maintenance-plan write for
-        # the same device. The DB unique constraint on reservation day remains
-        # the final conflict guard.
-        device = await self._load_device(plan.device_id)
-        device = await self.session.scalar(
-            select(Device)
-            .options(
-                selectinload(Device.lab),
-                selectinload(Device.college),
-                selectinload(Device.category),
+        if idempotency_key:
+            existing = await self.session.scalar(
+                select(IdempotencyKey).where(
+                    IdempotencyKey.user_id == self.principal.user_id,
+                    IdempotencyKey.key == idempotency_key,
+                )
             )
-            .where(Device.id == device.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if device is None:
-            raise ApiError("DEVICE_NOT_FOUND", "设备不存在或不属于当前学院", 404)
+            if existing is not None:
+                if existing.request_hash != request_hash(plan):
+                    raise ApiError("IDEMPOTENCY_REUSED", "幂等键已用于另一份请求", 409)
+                if existing.response_body:
+                    response_body = existing.response_body
+                    await self.session.rollback()
+                    return ReservationCreateData.model_validate(response_body)
+                raise ApiError("REQUEST_IN_PROGRESS", "相同请求正在处理中，请稍后重试", 409)
 
-        preflight = await self.preflight(plan)
+        if plan.pool_id is not None:
+            members = await self._load_pool_members(plan.pool_id)
+            if plan.quantity > len(members):
+                await self.session.rollback()
+                raise ApiError(
+                    "RESERVATION_QUOTA_INSUFFICIENT",
+                    f"资源池最多有 {len(members)} 台实物设备，不能预约 {plan.quantity} 台",
+                    409,
+                )
+            quota_pool_id = plan.pool_id
+            candidate_device_ids = [member.id for member in members]
+            if plan.preferred_device_id is not None:
+                if plan.preferred_device_id not in candidate_device_ids:
+                    await self.session.rollback()
+                    raise ApiError(
+                        "DEVICE_POOL_MEMBER_INVALID",
+                        "预分配设备不属于所选资源池",
+                        409,
+                    )
+                candidate_device_ids = [plan.preferred_device_id]
+        else:
+            if plan.device_id is None:
+                await self.session.rollback()
+                raise ApiError("DEVICE_NOT_FOUND", "预约设备不存在", 404)
+            requested_device = await self._load_device(plan.device_id)
+            quota_pool_id = int(requested_device.pool_id or requested_device.id)
+            candidate_device_ids = [requested_device.id]
+
+        dates = plan.requested_dates()
+        quota_token = uuid4().hex
+        quota_hold_owned = False
+        quota_bypass = False
+        if self.reservation_quota is not None and not quota_already_held:
+            quota_result = await self.reservation_quota.reserve(
+                quota_pool_id,
+                candidate_device_ids,
+                dates,
+                plan.quantity,
+                quota_token,
+            )
+            if quota_result.status == "insufficient":
+                await self.session.rollback()
+                raise ApiError(
+                    "RESERVATION_QUOTA_INSUFFICIENT",
+                    f"所选日期的剩余名额不足，无法一次预约 {plan.quantity} 台",
+                    409,
+                )
+            if quota_result.status == "discontinuous":
+                await self.session.rollback()
+                raise ApiError(
+                    "RESERVATION_DEVICE_NOT_CONTINUOUS",
+                    "所选日期每天都有可用设备，但没有足够数量的同一实物设备覆盖全部日期",
+                    409,
+                    data={
+                        "requested_dates": [current.isoformat() for current in dates],
+                        "requested_quantity": plan.quantity,
+                        "reason": "NO_COMMON_PHYSICAL_DEVICE",
+                    },
+                )
+            quota_hold_owned = quota_result.status == "reserved"
+            quota_device_ids = (
+                list(quota_result.device_ids) if quota_hold_owned else None
+            )
+            quota_bypass = quota_result.status in {
+                "cache_miss",
+                "unavailable",
+                "already_reserved",
+            }
+        else:
+            quota_device_ids = None
+
+        failure: ApiError | None = None
+        integrity_error: IntegrityError | None = None
+        replayed: ReservationCreateData | None = None
+        try:
+            response = await self._create_transaction(
+                plan,
+                idempotency_key=idempotency_key,
+                quota_device_ids=quota_device_ids,
+            )
+        except IntegrityError as exc:
+            integrity_error = exc
+            await self.session.rollback()
+            if idempotency_key:
+                committed = await self.session.scalar(
+                    select(IdempotencyKey).where(
+                        IdempotencyKey.user_id == self.principal.user_id,
+                        IdempotencyKey.key == idempotency_key,
+                    )
+                )
+                if committed is not None and committed.request_hash == request_hash(plan):
+                    if committed.response_body:
+                        response_body = committed.response_body
+                        replayed = ReservationCreateData.model_validate(response_body)
+                    else:
+                        failure = ApiError(
+                            "REQUEST_IN_PROGRESS",
+                            "相同请求正在处理中，请稍后重试",
+                            409,
+                        )
+            if replayed is None and failure is None:
+                fresh = await self.preflight(plan)
+                failure = ApiError(
+                    "RESERVATION_CONFLICT",
+                    "提交过程中该日期已被其他用户占用，请重新选择可用日期",
+                    409,
+                    data=fresh.model_dump(mode="json"),
+                )
+        except ApiError as exc:
+            await self.session.rollback()
+            failure = exc
+        except Exception:
+            await self.session.rollback()
+            if (
+                self.reservation_quota is not None
+                and not quota_already_held
+                and (quota_hold_owned or quota_bypass)
+            ):
+                # The commit outcome may be unknown. Removing the hint forces
+                # the next create to consult MySQL before using Redis again.
+                await self.reservation_quota.invalidate(quota_pool_id, dates)
+            raise
+
+        if self.reservation_quota is not None and not quota_already_held:
+            if quota_hold_owned and (failure is not None or replayed is not None):
+                await self.reservation_quota.refund(
+                    quota_pool_id,
+                    quota_device_ids or [],
+                    dates,
+                    quota_token,
+                )
+            elif quota_bypass and (failure is not None or replayed is not None):
+                await self.reservation_quota.invalidate(quota_pool_id, dates)
+
+        if failure is not None:
+            if integrity_error is not None:
+                raise failure from integrity_error
+            raise failure
+        if replayed is not None:
+            return replayed
+        if self.reservation_quota is not None and not quota_already_held:
+            if quota_hold_owned:
+                await self.reservation_quota.finalize(quota_pool_id, quota_token)
+            elif quota_bypass:
+                await self.reservation_quota.invalidate(quota_pool_id, dates)
+        return response
+
+    async def _create_transaction(
+        self,
+        plan: ReservationPlanRequest,
+        *,
+        idempotency_key: str | None = None,
+        quota_device_ids: list[int] | None = None,
+    ) -> ReservationCreateData:
+        if plan.pool_id is not None:
+            preflight = await self._preflight_pool(plan)
+            selected_preflights: list[ReservationPreflightData] = []
+            enough_physical_units = (
+                preflight.available_units >= plan.quantity
+                and len(preflight.available_dates) == len(plan.requested_dates())
+            )
+            if enough_physical_units:
+                selected_preflights = await self._preflight_and_lock_pool_members(
+                    plan,
+                    plan.quantity,
+                    allowed_device_ids=quota_device_ids,
+                )
+            if len(selected_preflights) != plan.quantity:
+                current = await self._preflight_pool(plan)
+                if current.all_available:
+                    current = current.model_copy(
+                        update={
+                            "all_available": False,
+                            "available_dates": [],
+                            "conflicts": [
+                                ReservationConflict(
+                                    date=day,
+                                    reason="設備正在被其他预约请求分配，请稍后重试",
+                                )
+                                for day in plan.requested_dates()
+                            ],
+                        }
+                    )
+                daily_capacity_is_sufficient = bool(current.available_units_by_date) and all(
+                    (day.available_units or 0) >= plan.quantity
+                    for day in current.available_units_by_date
+                )
+                if (
+                    current.available_units < plan.quantity
+                    and daily_capacity_is_sufficient
+                ):
+                    raise ApiError(
+                        "RESERVATION_DEVICE_NOT_CONTINUOUS",
+                        "所选日期每天都有可用设备，但没有足够数量的同一实物设备覆盖全部日期",
+                        409,
+                        data=current.model_dump(mode="json"),
+                    )
+                raise ApiError(
+                    "RESERVATION_CONFLICT",
+                    "资源池当前无法分配足够数量的实物设备",
+                    409,
+                    data=current.model_dump(mode="json"),
+                )
+            device = await self._load_device(preflight.device.id)
+        else:
+            if plan.device_id is None:
+                raise ApiError("DEVICE_NOT_FOUND", "预约设备不存在", 404)
+            device = await self._load_device(plan.device_id)
+            device = await self.session.scalar(
+                select(Device)
+                .options(
+                    selectinload(Device.lab),
+                    selectinload(Device.college),
+                    selectinload(Device.category),
+                )
+                .where(Device.id == device.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if device is None:
+                raise ApiError("DEVICE_NOT_FOUND", "设备不存在或不属于当前学院", 404)
+            preflight = await self.preflight(plan)
+            selected_preflights = [preflight]
         continuous_request = plan.start_date is not None or plan.windows is not None
         if preflight.conflicts and (
-            plan.commit_mode == "all_or_nothing" or continuous_request
+            plan.pool_id is not None
+            or plan.quantity > 1
+            or plan.commit_mode == "all_or_nothing"
+            or continuous_request
         ):
             raise ApiError(
                 "RESERVATION_CONFLICT",
@@ -1463,20 +2294,27 @@ class ReservationService:
                 409,
                 data=preflight.model_dump(mode="json"),
             )
-        if preflight.safety_required and not preflight.safety_acknowledged:
-            raise ApiError(
-                "SAFETY_ACK_REQUIRED",
-                "预约前请先阅读并确认最新版 SOP 和安全须知",
-                409,
-                data={"device_id": plan.device_id, "version": preflight.safety_document_version},
+        for unit_preflight in selected_preflights:
+            unit_device_id = (
+                unit_preflight.device.id if plan.pool_id is not None else plan.device_id
             )
-        if preflight.qualification_required and not preflight.qualification_approved:
-            raise ApiError(
-                "QUALIFICATION_REQUIRED",
-                "当前设备需要通过使用资质审核后才能预约",
-                403,
-                data={"device_id": plan.device_id},
-            )
+            if unit_preflight.safety_required and not unit_preflight.safety_acknowledged:
+                raise ApiError(
+                    "SAFETY_ACK_REQUIRED",
+                    "预约前请先阅读并确认所有分配设备的最新版 SOP 和安全须知",
+                    409,
+                    data={
+                        "device_id": unit_device_id,
+                        "version": unit_preflight.safety_document_version,
+                    },
+                )
+            if unit_preflight.qualification_required and not unit_preflight.qualification_approved:
+                raise ApiError(
+                    "QUALIFICATION_REQUIRED",
+                    "所有分配设备均须通过使用资质审核后才能预约",
+                    403,
+                    data={"device_id": unit_device_id},
+                )
         selected = preflight.available_dates
         if not selected:
             raise ApiError(
@@ -1493,60 +2331,64 @@ class ReservationService:
             for requested in plan.reservation_segments()
         ]
         segments = [segment for segment in segments if segment]
-        batch_id = uuid4().hex if explicit_batch or len(segments) > 1 else None
+        batch_id = uuid4().hex if explicit_batch or len(segments) > 1 or plan.quantity > 1 else None
         created: list[ReservationData] = []
-        status = "PENDING" if preflight.effective_policy.approval_required else "APPROVED"
         try:
-            for segment in segments:
-                reservation_now = utcnow_naive()
-                reservation = Reservation(
-                    college_id=device.college_id,
-                    user_id=self.principal.user_id,
-                    device_id=device.id,
-                    purpose=plan.purpose.strip(),
-                    purpose_category=plan.purpose_category,
-                    project_reference=(
-                        plan.project_reference.strip() if plan.project_reference else None
-                    ),
-                    start_date=segment[0],
-                    end_date=segment[-1],
-                    # Legacy MySQL installations still require these time
-                    # columns to be non-null.  Natural-day reservations use
-                    # the full-day boundaries so old readers remain
-                    # compatible while the v2 conflict unit stays date-based.
-                    start_time=datetime.combine(segment[0], time.min),
-                    end_time=datetime.combine(segment[-1], time.max),
-                    slot_count=len(segment),
-                    status=status,
-                    batch_id=batch_id,
-                    handover_status="PENDING",
-                    safety_acknowledged_at=(utcnow_naive() if preflight.safety_required else None),
-                    safety_document_version=preflight.safety_document_version,
-                    # MySQL does not reliably hydrate server defaults before
-                    # the first flush with an async driver.  Set timestamps
-                    # explicitly so response serialization never triggers an
-                    # implicit lazy load (MissingGreenlet).
-                    created_at=reservation_now,
-                    updated_at=reservation_now,
+            for unit_preflight in selected_preflights:
+                unit_device_id = (
+                    unit_preflight.device.id if plan.pool_id is not None else plan.device_id
                 )
-                reservation.device = device
-                reservation.days = [
-                    ReservationItem(device_id=device.id, reservation_date=current)
-                    for current in segment
-                ]
-                self.session.add(reservation)
-                await self.session.flush()
-                if status == "APPROVED":
-                    await self._enqueue_maintenance_impact_notifications(reservation)
-                await self._ensure_handover_record(
-                    reservation,
-                    status="PENDING",
-                    reservation_is_new=True,
-                    now=reservation_now,
+                assert unit_device_id is not None
+                device = await self._load_device(unit_device_id)
+                status = (
+                    "PENDING" if unit_preflight.effective_policy.approval_required else "APPROVED"
                 )
-                created.append(_reservation_data(reservation))
-                self.session.add(
-                    OutboxTask(
+                for segment in segments:
+                    reservation_now = utcnow_naive()
+                    reservation = Reservation(
+                        college_id=device.college_id,
+                        user_id=self.principal.user_id,
+                        device_id=device.id,
+                        purpose=plan.purpose.strip(),
+                        purpose_category=plan.purpose_category,
+                        project_reference=(
+                            plan.project_reference.strip() if plan.project_reference else None
+                        ),
+                        start_date=segment[0],
+                        end_date=segment[-1],
+                        # Natural-day reservations use full-day boundaries for
+                        # compatibility with legacy readers.
+                        start_time=datetime.combine(segment[0], time.min),
+                        end_time=datetime.combine(segment[-1], time.max),
+                        slot_count=len(segment),
+                        status=status,
+                        batch_id=batch_id,
+                        handover_status="PENDING",
+                        safety_acknowledged_at=(
+                            utcnow_naive() if unit_preflight.safety_required else None
+                        ),
+                        safety_document_version=unit_preflight.safety_document_version,
+                        created_at=reservation_now,
+                        updated_at=reservation_now,
+                    )
+                    reservation.device = device
+                    reservation.days = [
+                        ReservationItem(device_id=device.id, reservation_date=current)
+                        for current in segment
+                    ]
+                    self.session.add(reservation)
+                    await self.session.flush()
+                    if status == "APPROVED":
+                        await self._enqueue_maintenance_impact_notifications(reservation)
+                    await self._ensure_handover_record(
+                        reservation,
+                        status="PENDING",
+                        reservation_is_new=True,
+                        now=reservation_now,
+                    )
+                    created.append(_reservation_data(reservation))
+                    self.session.add(
+                        OutboxTask(
                         task_key=f"notification:reservation:{reservation.id}:created",
                         task_type="NOTIFICATION",
                         aggregate_key=f"reservation:{reservation.id}",
@@ -1565,38 +2407,40 @@ class ReservationService:
                             "related_type": "RESERVATION",
                         },
                         execute_at=utcnow_naive(),
-                    )
-                )
-                append_audit(
-                    self.session,
-                    user_id=self.principal.user_id,
-                    college_id=device.college_id,
-                    action="RESERVATION_CREATE",
-                    target_type="RESERVATION",
-                    target_id=reservation.id,
-                    detail={"dates": [item.isoformat() for item in segment]},
-                )
-                if status == "APPROVED":
-                    self.session.add(
-                        OutboxTask(
-                            task_key=f"timeout:reservation:{reservation.id}:no-show",
-                            task_type="RESERVATION_NO_SHOW",
-                            aggregate_key=f"reservation:{reservation.id}",
-                            college_id=device.college_id,
-                            payload={
-                                "reservation_id": reservation.id,
-                                "user_id": self.principal.user_id,
-                                "college_id": device.college_id,
-                            },
-                            execute_at=_date_at_end(segment[0]),
                         )
                     )
-                    self._enqueue_reservation_reminder(reservation, segment[0])
+                    append_audit(
+                        self.session,
+                        user_id=self.principal.user_id,
+                        college_id=device.college_id,
+                        action="RESERVATION_CREATE",
+                        target_type="RESERVATION",
+                        target_id=reservation.id,
+                        detail={"dates": [item.isoformat() for item in segment]},
+                    )
+                    if status == "APPROVED":
+                        self.session.add(
+                            OutboxTask(
+                                task_key=f"timeout:reservation:{reservation.id}:no-show",
+                                task_type="RESERVATION_NO_SHOW",
+                                aggregate_key=f"reservation:{reservation.id}",
+                                college_id=device.college_id,
+                                payload={
+                                    "reservation_id": reservation.id,
+                                    "user_id": self.principal.user_id,
+                                    "college_id": device.college_id,
+                                },
+                                execute_at=_date_at_end(segment[0]),
+                            )
+                        )
+                        self._enqueue_reservation_reminder(reservation, segment[0])
 
             response = ReservationCreateData(
                 created=created,
                 skipped_conflicts=(
-                    preflight.conflicts if plan.commit_mode == "available_only" else []
+                    preflight.conflicts
+                    if plan.quantity == 1 and plan.commit_mode == "available_only"
+                    else []
                 ),
                 batch_id=batch_id,
             )
@@ -1613,30 +2457,8 @@ class ReservationService:
                 )
             await self.session.commit()
             return response
-        except IntegrityError as exc:
-            await self.session.rollback()
-            if idempotency_key:
-                committed = await self.session.scalar(
-                    select(IdempotencyKey).where(
-                        IdempotencyKey.user_id == self.principal.user_id,
-                        IdempotencyKey.key == idempotency_key,
-                    )
-                )
-                if committed is not None and committed.request_hash == request_hash(plan):
-                    if committed.response_body:
-                        return ReservationCreateData.model_validate(committed.response_body)
-                    raise ApiError(
-                        "REQUEST_IN_PROGRESS",
-                        "相同请求正在处理中，请稍后重试",
-                        409,
-                    ) from exc
-            fresh = await self.preflight(plan)
-            raise ApiError(
-                "RESERVATION_CONFLICT",
-                "提交过程中该日期已被其他用户占用，请重新选择可用日期",
-                409,
-                data=fresh.model_dump(mode="json"),
-            ) from exc
+        except IntegrityError:
+            raise
 
     async def list_mine(
         self,
@@ -1790,6 +2612,11 @@ class ReservationService:
             target_id=reservation.id,
         )
         await self.session.commit()
+        await self._release_reservation_quota_cache(
+            reservation,
+            released_dates,
+            event_id=f"cancel:{reservation.id}",
+        )
         reservation.status = "CANCELLED"
         return _reservation_data(reservation)
 
@@ -1861,6 +2688,11 @@ class ReservationService:
             detail={"reason": cleaned_reason},
         )
         await self.session.commit()
+        await self._release_reservation_quota_cache(
+            reservation,
+            released_dates,
+            event_id=f"handover-cancel:{reservation.id}",
+        )
         reservation.status = "CANCELLED"
         reservation.handover_status = "CANCELLED"
         return _reservation_data(reservation)
@@ -1959,6 +2791,12 @@ class ReservationService:
             detail={"reason": reason},
         )
         await self.session.commit()
+        if not approve:
+            await self._release_reservation_quota_cache(
+                reservation,
+                [item.reservation_date for item in reservation.days],
+                event_id=f"reject:{reservation.id}",
+            )
         reservation.status = next_status
         return _reservation_data(reservation)
 
@@ -2125,6 +2963,11 @@ class ReservationService:
             detail={"reason": reason.strip()},
         )
         await self.session.commit()
+        await self._release_reservation_quota_cache(
+            reservation,
+            released_dates,
+            event_id=f"violate:{reservation.id}",
+        )
         reservation.status = "VIOLATED"
         return _reservation_data(reservation)
 
@@ -2192,9 +3035,7 @@ class ReservationService:
                     .where(
                         DeviceMaintenancePlan.device_id.in_(device_ids),
                         DeviceMaintenancePlan.active.is_(True),
-                        DeviceMaintenancePlan.plan_type.in_(
-                            ("CALIBRATION", "SAFETY_CHECK")
-                        ),
+                        DeviceMaintenancePlan.plan_type.in_(("CALIBRATION", "SAFETY_CHECK")),
                         DeviceMaintenancePlan.due_date
                         < max(reservation.end_date for reservation in reservations),
                     )
@@ -2643,6 +3484,7 @@ class ReservationService:
         handover.return_condition = condition
         handover.return_note = note.strip() if note else handover.return_note
         handover.updated_at = now
+        released_dates = [item.reservation_date for item in reservation.days]
         repair = None
         if condition != "NORMAL":
             repair = await self._create_fault_repair(
@@ -2691,6 +3533,11 @@ class ReservationService:
             )
         )
         await self.session.commit()
+        await self._release_reservation_quota_cache(
+            reservation,
+            released_dates,
+            event_id=f"return:{reservation.id}",
+        )
         reservation.status = "COMPLETED"
         reservation.check_out_at = now
         reservation.handover_status = "RETURNED"

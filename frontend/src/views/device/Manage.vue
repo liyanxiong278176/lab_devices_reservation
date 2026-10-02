@@ -8,13 +8,14 @@ import dayjs from 'dayjs'
 import {
   createDevice,
   deleteDevice,
+  listDevicePoolOptions,
   patchDeviceStatus,
   searchDevices,
   updateDevice,
 } from '@/api/device'
 import { categoryTree } from '@/api/category'
 import { listLabs } from '@/api/lab'
-import type { DeviceCategoryNodeVO, DeviceQuery, DeviceStatus, DeviceVO } from '@/types/device'
+import type { DeviceCategoryNodeVO, DevicePoolOptionVO, DeviceQuery, DeviceStatus, DeviceVO } from '@/types/device'
 import type { Lab } from '@/types/lab'
 import type { Page } from '@/types/common'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -30,6 +31,7 @@ const query = ref<DeviceQuery>({ page: 1, size: 10, keyword: '' })
 
 const categories = ref<DeviceCategoryNodeVO[]>([])
 const labs = ref<Lab[]>([])
+const pools = ref<DevicePoolOptionVO[]>([])
 const router = useRouter()
 
 // 编辑对话框
@@ -42,6 +44,7 @@ const form = ref({
   name: '',
   categoryId: undefined as number | undefined,
   labId: undefined as number | undefined,
+  poolId: null as number | null,
   brand: '',
   model: '',
   specs: '',
@@ -99,9 +102,10 @@ async function load() {
 
 async function loadOptions() {
   try {
-    const [c, l] = await Promise.all([categoryTree(), listLabs(1, 100)])
+    const [c, l, p] = await Promise.all([categoryTree(), listLabs(1, 100), listDevicePoolOptions()])
     categories.value = c
     labs.value = l.records
+    pools.value = p
   } catch {
     // 拦截器已提示
   }
@@ -127,6 +131,7 @@ function resetForm() {
     name: '',
     categoryId: undefined,
     labId: undefined,
+    poolId: null,
     brand: '',
     model: '',
     specs: '',
@@ -154,6 +159,7 @@ function openEdit(row: DeviceVO) {
     name: row.name,
     categoryId: row.categoryId ?? undefined,
     labId: row.labId ?? undefined,
+    poolId: row.poolId ?? null,
     brand: row.brand || '',
     model: row.model || '',
     specs: row.specs || '',
@@ -179,6 +185,7 @@ function buildPayload() {
     name: f.name.trim(),
     categoryId: f.categoryId!,
     labId: f.labId!,
+    poolId: f.poolId && f.poolId > 0 ? f.poolId : null,
     brand: f.brand || undefined,
     model: f.model || undefined,
     specs: f.specs || undefined,
@@ -294,6 +301,12 @@ onMounted(() => {
       <el-table v-loading="loading" :data="page.records" stripe row-key="id">
         <el-table-column prop="id" label="编号" width="80" />
         <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+        <el-table-column label="资源池 / 实物数" min-width="150">
+          <template #default="{ row }">
+            <span>池 #{{ row.poolId ?? row.id }}</span>
+            <span class="dmanage__muted"> · {{ row.poolQuantity ?? 1 }} 台</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="categoryName" label="分类" width="110" show-overflow-tooltip />
         <el-table-column prop="labName" label="实验室" width="120" show-overflow-tooltip />
         <el-table-column label="状态" width="140">
@@ -434,6 +447,18 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="标签">
           <el-input v-model="form.tagsText" placeholder="多个标签用英文逗号分隔" />
+        </el-form-item>
+        <el-form-item label="资源池">
+          <el-select v-model="form.poolId" placeholder="新建独立资源池" clearable style="width: 100%">
+            <el-option :value="0" label="新建独立资源池" />
+            <el-option
+              v-for="pool in pools.filter((item) => item.labId === form.labId && item.name === form.name)"
+              :key="pool.id"
+              :value="pool.id"
+              :label="`${pool.name}（${pool.unitCount} 台，${pool.labName || '未分配实验室'}）`"
+            />
+          </el-select>
+          <small class="dmanage__pool-hint">只有名称和预约配置相同、可互相替代的实物设备才能放入同一资源池。</small>
         </el-form-item>
         <el-form-item label="交接配件">
           <el-input

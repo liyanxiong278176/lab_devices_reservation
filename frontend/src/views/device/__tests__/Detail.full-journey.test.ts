@@ -5,22 +5,26 @@ import { cloneVNode, defineComponent, h, nextTick } from 'vue'
 const api = vi.hoisted(() => ({
   archiveDeviceDocument: vi.fn(),
   deviceCalendar: vi.fn(),
+  devicePoolAvailability: vi.fn(),
   downloadDeviceDocument: vi.fn(),
   getDevice: vi.fn(),
+  getDevicePool: vi.fn(),
   joinWaitlist: vi.fn(),
   listDeviceDocuments: vi.fn(),
   uploadDeviceDocument: vi.fn(),
 }))
 const messages = vi.hoisted(() => ({ warning: vi.fn(), success: vi.fn() }))
 const dialogs = vi.hoisted(() => ({ confirm: vi.fn(), prompt: vi.fn() }))
-const route = vi.hoisted(() => ({ params: { id: '42' } }))
+const route = vi.hoisted(() => ({ params: { id: '42' }, query: {} as Record<string, unknown> }))
 const router = vi.hoisted(() => ({ push: vi.fn() }))
 
 vi.mock('@/api/device', () => ({
   archiveDeviceDocument: api.archiveDeviceDocument,
   deviceCalendar: api.deviceCalendar,
+  devicePoolAvailability: api.devicePoolAvailability,
   downloadDeviceDocument: api.downloadDeviceDocument,
   getDevice: api.getDevice,
+  getDevicePool: api.getDevicePool,
   listDeviceDocuments: api.listDeviceDocuments,
   uploadDeviceDocument: api.uploadDeviceDocument,
 }))
@@ -136,9 +140,12 @@ describe('device detail booking, calendar, and document journeys', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     route.params.id = '42'
+    route.query = {}
     router.push.mockResolvedValue(undefined)
     api.getDevice.mockResolvedValue(baseDevice)
+    api.getDevicePool.mockResolvedValue(baseDevice)
     api.deviceCalendar.mockResolvedValue(calendarRows)
+    api.devicePoolAvailability.mockResolvedValue([])
     api.listDeviceDocuments.mockResolvedValue(structuredClone(documents))
     api.archiveDeviceDocument.mockResolvedValue(undefined)
     api.downloadDeviceDocument.mockResolvedValue(undefined)
@@ -166,6 +173,25 @@ describe('device detail booking, calendar, and document journeys', () => {
     expect(router.push).toHaveBeenNthCalledWith(2, { name: 'repair-submit', query: { deviceId: '42' } })
     await wrapper.findAll('.device-document .text-button')[0].trigger('click')
     expect(api.downloadDeviceDocument).toHaveBeenCalledWith(documents[0])
+  })
+
+  it('loads a grouped resource pool and sends booking to the pool allocation flow', async () => {
+    route.query = { poolId: '17' }
+    api.getDevicePool.mockResolvedValue({
+      ...baseDevice,
+      poolId: 17,
+      poolQuantity: 2,
+      poolIdleQuantity: 2,
+    })
+    const wrapper = await settledPage()
+    expect(api.getDevicePool).toHaveBeenCalledWith(17)
+    expect(api.getDevice).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('2 台')
+    await wrapper.get('.device-detail__actionbar .gradient-button').trigger('click')
+    expect(router.push).toHaveBeenCalledWith({
+      name: 'reservation-create',
+      query: { poolId: '17' },
+    })
   })
 
   it('handles missing device fields, unknown status, and a maintenance warning that blocks booking', async () => {

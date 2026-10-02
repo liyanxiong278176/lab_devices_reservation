@@ -5,12 +5,16 @@ import type {
   DeviceAvailabilityVO,
   DeviceCalendarItemVO,
   DeviceDocumentVO,
+  DevicePoolOptionVO,
   DeviceQuery,
   DeviceVO,
 } from '@/types/device'
 
 interface V2Device {
   id: number
+  pool_id?: number | null
+  pool_quantity?: number
+  pool_idle_quantity?: number
   name: string
   status: DeviceVO['status']
   brand?: string
@@ -52,6 +56,7 @@ interface V2DevicePage {
 interface V2DeviceAvailability {
   date: string
   available: boolean
+  available_units?: number | null
   reservation_id?: number | null
   status?: string | null
   reason?: string | null
@@ -60,6 +65,9 @@ interface V2DeviceAvailability {
 function mapDevice(item: V2Device): DeviceVO {
   return {
     id: item.id,
+    poolId: item.pool_id ?? item.id,
+    poolQuantity: item.pool_quantity ?? 1,
+    poolIdleQuantity: item.pool_idle_quantity ?? 1,
     name: item.name,
     categoryId: item.category_id ?? null,
     categoryName: item.category_name || undefined,
@@ -111,6 +119,7 @@ export const searchDevices = async (q: DeviceQuery): Promise<Page<DeviceVO>> => 
       search: q.keyword || q.search,
       lab_id: q.labId,
       status: q.status || undefined,
+      ...(q.grouped ? { grouped: true } : {}),
     },
   })
   return {
@@ -135,6 +144,32 @@ export const searchAllDevices = async (keyword: string, pageSize = 100): Promise
 export const getDevice = async (id: number): Promise<DeviceVO> => {
   const data = await request.get<unknown, V2Device>(`/devices/${id}`)
   return mapDevice(data)
+}
+
+export const getDevicePool = async (poolId: number): Promise<DeviceVO> => {
+  const data = await request.get<unknown, V2Device>(`/device-pools/${poolId}`)
+  return mapDevice(data)
+}
+
+interface V2DevicePoolOption {
+  id: number
+  name: string
+  college_id?: number | null
+  lab_id?: number | null
+  lab_name?: string | null
+  unit_count: number
+}
+
+export const listDevicePoolOptions = async (): Promise<DevicePoolOptionVO[]> => {
+  const rows = await request.get<unknown, V2DevicePoolOption[]>('/device-pools/options')
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    collegeId: row.college_id,
+    labId: row.lab_id,
+    labName: row.lab_name,
+    unitCount: row.unit_count,
+  }))
 }
 
 export const deviceCalendar = async (id: number, from: string, to?: string) => {
@@ -163,6 +198,26 @@ export const deviceAvailability = async (
   return days.map((day) => ({
     date: day.date,
     available: day.available,
+    availableUnits: day.available_units ?? undefined,
+    reservationId: day.reservation_id ?? null,
+    status: day.status ?? null,
+    reason: day.reason ?? null,
+  }))
+}
+
+export const devicePoolAvailability = async (
+  poolId: number,
+  from: string,
+  to?: string,
+): Promise<DeviceAvailabilityVO[]> => {
+  const days = await request.get<unknown, V2DeviceAvailability[]>(
+    `/device-pools/${poolId}/availability`,
+    { params: { start_date: from, end_date: to || from } },
+  )
+  return days.map((day) => ({
+    date: day.date,
+    available: day.available,
+    availableUnits: day.available_units ?? undefined,
     reservationId: day.reservation_id ?? null,
     status: day.status ?? null,
     reason: day.reason ?? null,
@@ -192,6 +247,7 @@ export const createDevice = (data: Record<string, unknown>) =>
     requires_safety_ack: Boolean(data.requiresSafetyAck),
     requires_qualification: Boolean(data.requiresQualification),
     max_advance_days: data.maxAdvanceDays,
+    ...(data.poolId !== undefined ? { pool_id: data.poolId } : {}),
   })
 
 export const updateDevice = (id: number, data: Record<string, unknown>) =>
@@ -217,6 +273,7 @@ export const updateDevice = (id: number, data: Record<string, unknown>) =>
     requires_safety_ack: Boolean(data.requiresSafetyAck),
     requires_qualification: Boolean(data.requiresQualification),
     max_advance_days: data.maxAdvanceDays,
+    ...(data.poolId !== undefined ? { pool_id: data.poolId } : {}),
   })
 
 export const deleteDevice = (id: number) =>

@@ -2,16 +2,16 @@ from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.v2.schemas import AvailabilityDay, DeviceDetail, DeviceSummary
+from app.api.v2.schemas import AvailabilityDay, DeviceDetail, DevicePoolOption, DeviceSummary
 from app.application.lifecycle import append_audit, change_device_status
 from app.application.reservations import ReservationService
-from app.auth.security import Principal, get_current_principal
+from app.auth.security import Principal, college_scope, get_current_principal
 from app.common.response import ApiResponse
 from app.core.errors import ApiError
 from app.infrastructure.cache.cache import CacheService
@@ -25,6 +25,7 @@ from app.infrastructure.db.models import (
     College,
     Device,
     DeviceCategory,
+    DevicePool,
     Lab,
     OutboxTask,
     RepairReport,
@@ -59,6 +60,7 @@ class DeviceCreateRequest(BaseModel):
     requires_safety_ack: bool = False
     requires_qualification: bool = False
     max_advance_days: int | None = Field(default=None, ge=1, le=365)
+    pool_id: int | None = Field(default=None, gt=0)
 
     @field_validator("accessory_checklist")
     @classmethod
@@ -170,6 +172,61 @@ async def _sync_device_reservation_rule(
     rule.updated_by = user_id
 
 
+def _pool_configuration_matches(device: Device, payload: DeviceCreateRequest) -> bool:
+    return all(
+        (
+            device.name == payload.name.strip(),
+            device.category_id == payload.category_id,
+            device.brand == payload.brand,
+            device.model == payload.model,
+            device.specs == payload.specs,
+            device.image_url == payload.image_url,
+            device.description == payload.description,
+            device.need_approval == payload.need_approval,
+            device.max_reservation_days == payload.max_reservation_days,
+            (device.tags or []) == (payload.tags or []),
+            (device.accessory_checklist or []) == payload.accessory_checklist,
+            device.allow_external_loan == payload.allow_external_loan,
+            device.risk_level == payload.risk_level,
+            device.requires_safety_ack == payload.requires_safety_ack,
+            device.requires_qualification == payload.requires_qualification,
+            device.max_advance_days == payload.max_advance_days,
+        )
+    )
+
+
+async def _validate_pool_membership(
+    session: AsyncSession,
+    pool_id: int,
+    *,
+    payload: DeviceCreateRequest,
+    lab: Lab,
+) -> DevicePool:
+    pool = await session.scalar(
+        select(DevicePool).where(DevicePool.id == pool_id).with_for_update()
+    )
+    if pool is None:
+        raise ApiError("DEVICE_POOL_NOT_FOUND", "设备资源池不存在", 404)
+    if pool.lab_id != lab.id or pool.college_id != lab.college_id:
+        raise ApiError("DEVICE_POOL_SCOPE_INVALID", "资源池只能包含同一实验室和学院的设备", 422)
+    if pool.name != payload.name.strip():
+        raise ApiError("DEVICE_POOL_CONFIG_MISMATCH", "设备名称必须与资源池保持一致", 422)
+    existing = await session.scalar(
+        select(Device)
+        .where(Device.pool_id == pool_id, Device.status != "DELETED")
+        .order_by(Device.id)
+        .limit(1)
+        .with_for_update()
+    )
+    if existing is not None and not _pool_configuration_matches(existing, payload):
+        raise ApiError(
+            "DEVICE_POOL_CONFIG_MISMATCH",
+            "资源池只能包含型号、预约规则和安全要求相同的实物设备",
+            422,
+        )
+    return pool
+
+
 @router.get("/devices", response_model=ApiResponse[dict[str, object]])
 async def list_devices(
     request: Request,
@@ -178,6 +235,7 @@ async def list_devices(
     status: str | None = Query(default=None, max_length=20),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    grouped: bool = Query(default=False),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[dict[str, object]]:
@@ -197,6 +255,7 @@ async def list_devices(
         page=page,
         page_size=page_size,
         include_meta=True,
+        grouped=grouped,
     )
     return ApiResponse.ok(
         {
@@ -208,6 +267,87 @@ async def list_devices(
             "truncated": truncated,
         }
     )
+
+
+@router.get("/device-pools/options", response_model=ApiResponse[list[DevicePoolOption]])
+async def list_device_pool_options(
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[DevicePoolOption]]:
+    if not principal.has_permission("device:manage"):
+        raise ApiError("FORBIDDEN", "当前账号没有管理设备的权限", 403)
+    stmt = (
+        select(
+            DevicePool.id,
+            DevicePool.name,
+            DevicePool.college_id,
+            DevicePool.lab_id,
+            Lab.name,
+            func.count(Device.id),
+        )
+        .join(Device, Device.pool_id == DevicePool.id)
+        .outerjoin(Lab, Lab.id == DevicePool.lab_id)
+        .where(Device.status != "DELETED")
+    )
+    scope = college_scope(principal)
+    if scope is not None:
+        stmt = stmt.where(DevicePool.college_id == scope)
+    if principal.is_lab_admin and not principal.is_system_admin:
+        stmt = stmt.join(College, College.id == DevicePool.college_id).where(
+            or_(Lab.manager_id == principal.user_id, College.manager_id == principal.user_id)
+        )
+    rows = (
+        await session.execute(
+            stmt.group_by(
+                DevicePool.id,
+                DevicePool.name,
+                DevicePool.college_id,
+                DevicePool.lab_id,
+                Lab.name,
+            ).order_by(DevicePool.name, DevicePool.id)
+        )
+    ).all()
+    return ApiResponse.ok(
+        [
+            DevicePoolOption(
+                id=int(row[0]),
+                name=str(row[1]),
+                college_id=row[2],
+                lab_id=row[3],
+                lab_name=row[4],
+                unit_count=int(row[5]),
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.get("/device-pools/{pool_id}", response_model=ApiResponse[DeviceDetail])
+async def get_device_pool(
+    pool_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[DeviceDetail]:
+    return ApiResponse.ok(await ReservationService(session, principal).get_device_pool(pool_id))
+
+
+@router.get(
+    "/device-pools/{pool_id}/availability", response_model=ApiResponse[list[AvailabilityDay]]
+)
+async def get_device_pool_availability(
+    pool_id: int,
+    start_date: str = Query(min_length=10, max_length=10),
+    end_date: str = Query(min_length=10, max_length=10),
+    principal: Principal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[AvailabilityDay]]:
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except ValueError as exc:
+        raise ApiError("DATE_INVALID", "日期必须使用 YYYY-MM-DD 格式", 422) from exc
+    data = await ReservationService(session, principal).pool_availability(pool_id, start, end)
+    return ApiResponse.ok(data)
 
 
 @router.get("/devices/{device_id}", response_model=ApiResponse[DeviceDetail])
@@ -256,7 +396,23 @@ async def create_device(
     )
     if lab is None or not await _manager_can_access(session, principal, lab):
         raise ApiError("FORBIDDEN", "只能管理自己负责实验室或学院的设备", 403)
+    if payload.pool_id is None:
+        pool = DevicePool(
+            name=payload.name.strip(),
+            college_id=lab.college_id,
+            lab_id=lab.id,
+        )
+        session.add(pool)
+        await session.flush()
+    else:
+        pool = await _validate_pool_membership(
+            session,
+            payload.pool_id,
+            payload=payload,
+            lab=lab,
+        )
     device = Device(
+        pool_id=pool.id,
         college_id=lab.college_id,
         lab_id=lab.id,
         name=payload.name.strip(),
@@ -301,6 +457,25 @@ async def create_device(
     return ApiResponse.ok(
         DeviceSummary(
             id=device.id,
+            pool_id=pool.id,
+            pool_quantity=int(
+                await session.scalar(
+                    select(func.count(Device.id)).where(
+                        Device.pool_id == pool.id,
+                        Device.status != "DELETED",
+                    )
+                )
+                or 1
+            ),
+            pool_idle_quantity=int(
+                await session.scalar(
+                    select(func.count(Device.id)).where(
+                        Device.pool_id == pool.id,
+                        Device.status == "IDLE",
+                    )
+                )
+                or 0
+            ),
             name=device.name,
             status=device.status,
             brand=device.brand,
@@ -364,34 +539,95 @@ async def update_device(
         )
         if category is None:
             raise ApiError("CATEGORY_NOT_FOUND", "设备分类不存在", 422)
-    reservation_policy_changed = (
-        device.need_approval != payload.need_approval
-        or device.max_reservation_days != payload.max_reservation_days
-        or device.max_advance_days != payload.max_advance_days
+    current_pool_id = device.pool_id
+    target_pool_id = current_pool_id
+    target_pool: DevicePool | None = None
+    if "pool_id" in payload.model_fields_set:
+        target_pool_id = payload.pool_id
+        if target_pool_id is None:
+            target_pool = DevicePool(
+                name=payload.name.strip(),
+                college_id=lab.college_id,
+                lab_id=lab.id,
+            )
+            session.add(target_pool)
+            await session.flush()
+            target_pool_id = target_pool.id
+        elif target_pool_id != current_pool_id:
+            target_pool = await _validate_pool_membership(
+                session,
+                target_pool_id,
+                payload=payload,
+                lab=lab,
+            )
+    if target_pool_id is None:
+        target_pool = DevicePool(
+            name=payload.name.strip(),
+            college_id=lab.college_id,
+            lab_id=lab.id,
+        )
+        session.add(target_pool)
+        await session.flush()
+        target_pool_id = target_pool.id
+    if target_pool is None:
+        target_pool = await session.scalar(
+            select(DevicePool).where(DevicePool.id == target_pool_id).with_for_update()
+        )
+    if target_pool is None:
+        raise ApiError("DEVICE_POOL_NOT_FOUND", "设备资源池不存在", 409)
+
+    target_members = list(
+        (
+            await session.scalars(
+                select(Device)
+                .where(Device.pool_id == target_pool_id, Device.status != "DELETED")
+                .order_by(Device.id)
+                .with_for_update()
+            )
+        ).all()
     )
-    device.name = payload.name.strip()
-    device.lab_id = lab.id
-    device.category_id = payload.category_id
-    device.brand = payload.brand
-    device.model = payload.model
-    device.specs = payload.specs
-    device.image_url = payload.image_url
-    device.description = payload.description
-    device.need_approval = payload.need_approval
-    device.max_reservation_days = payload.max_reservation_days
-    device.tags = payload.tags
-    device.accessory_checklist = payload.accessory_checklist
+    if all(member.id != device.id for member in target_members):
+        target_members.append(device)
+    shared_values = {
+        "name": payload.name.strip(),
+        "lab_id": lab.id,
+        "college_id": lab.college_id,
+        "category_id": payload.category_id,
+        "brand": payload.brand,
+        "model": payload.model,
+        "specs": payload.specs,
+        "image_url": payload.image_url,
+        "description": payload.description,
+        "need_approval": payload.need_approval,
+        "max_reservation_days": payload.max_reservation_days,
+        "tags": payload.tags,
+        "accessory_checklist": payload.accessory_checklist,
+        "allow_external_loan": payload.allow_external_loan,
+        "risk_level": payload.risk_level,
+        "requires_safety_ack": payload.requires_safety_ack,
+        "requires_qualification": payload.requires_qualification,
+        "max_advance_days": payload.max_advance_days,
+    }
+    policy_members = [
+        member
+        for member in target_members
+        if member.need_approval != payload.need_approval
+        or member.max_reservation_days != payload.max_reservation_days
+        or member.max_advance_days != payload.max_advance_days
+    ]
+    for member in target_members:
+        for field, value in shared_values.items():
+            setattr(member, field, value)
+    device.pool_id = target_pool_id
+    target_pool.name = payload.name.strip()
+    target_pool.lab_id = lab.id
+    target_pool.college_id = lab.college_id
     device.asset_code = payload.asset_code.strip() if payload.asset_code else None
     device.serial_number = payload.serial_number.strip() if payload.serial_number else None
     device.purchase_date = payload.purchase_date
     device.warranty_until = payload.warranty_until
-    device.allow_external_loan = payload.allow_external_loan
-    device.risk_level = payload.risk_level
-    device.requires_safety_ack = payload.requires_safety_ack
-    device.requires_qualification = payload.requires_qualification
-    device.max_advance_days = payload.max_advance_days
-    if reservation_policy_changed:
-        await _sync_device_reservation_rule(session, device, principal.user_id)
+    for member in policy_members:
+        await _sync_device_reservation_rule(session, member, principal.user_id)
     append_audit(
         session,
         user_id=principal.user_id,

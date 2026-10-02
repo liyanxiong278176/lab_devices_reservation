@@ -113,9 +113,11 @@ function mapReservation(item: V2Reservation): ReservationVO {
  *  - GET  /reservations/mine        → 我的预约（分页 + 预约状态/交接状态过滤）
  *  - GET  /reservations/{id}        → 详情（本人或管理员）
  */
-export const createReservation = (data: ReservationCreatePayload) =>
-  request.post<unknown, ReservationCreateResultVO>('/reservations', {
-    device_id: data.deviceId,
+export const createReservation = (data: ReservationCreatePayload, idempotencyKey?: string) => {
+  const body = {
+    ...(data.poolId != null ? { pool_id: data.poolId } : { device_id: data.deviceId }),
+    ...(data.preferredDeviceId != null ? { preferred_device_id: data.preferredDeviceId } : {}),
+    quantity: data.quantity ?? 1,
     start_date: data.startDate,
     end_date: data.endDate,
     purpose: data.purpose,
@@ -123,11 +125,19 @@ export const createReservation = (data: ReservationCreatePayload) =>
     project_reference: data.projectReference,
     commit_mode: data.commitMode || 'all_or_nothing',
     ...(data.dates ? { dates: data.dates } : {}),
-  })
+  }
+  return idempotencyKey
+    ? request.post<unknown, ReservationCreateResultVO>('/reservations', body, {
+        headers: { 'Idempotency-Key': idempotencyKey },
+      })
+    : request.post<unknown, ReservationCreateResultVO>('/reservations', body)
+}
 
 export const preflightReservation = (data: ReservationCreatePayload) =>
   request.post<unknown, ReservationPreflightVO>('/reservations/preflight', {
-    device_id: data.deviceId,
+    ...(data.poolId != null ? { pool_id: data.poolId } : { device_id: data.deviceId }),
+    ...(data.preferredDeviceId != null ? { preferred_device_id: data.preferredDeviceId } : {}),
+    quantity: data.quantity ?? 1,
     start_date: data.startDate,
     end_date: data.endDate,
     purpose: data.purpose || '设备使用',

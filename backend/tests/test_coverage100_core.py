@@ -260,6 +260,7 @@ def test_build_engine_configures_sqlite_and_mysql_pools(monkeypatch: pytest.Monk
     assert created[1][1] == {
         "echo": False,
         "pool_pre_ping": True,
+        "isolation_level": "READ COMMITTED",
         "pool_size": 3,
         "max_overflow": 4,
         "pool_recycle": 55,

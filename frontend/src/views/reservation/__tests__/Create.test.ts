@@ -8,12 +8,14 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   back: vi.fn(),
   getDevice: vi.fn(),
+  getDevicePool: vi.fn(),
   listSafetyDocuments: vi.fn(),
   myQualification: vi.fn(),
   submitQualification: vi.fn(),
   uploadQualificationMaterial: vi.fn(),
   acknowledgeSafety: vi.fn(),
   deviceAvailability: vi.fn(),
+  devicePoolAvailability: vi.fn(),
   createReservation: vi.fn(),
   joinWaitlist: vi.fn(),
   preflightReservation: vi.fn(),
@@ -31,12 +33,14 @@ vi.mock('@/router', () => ({ readSpaDepth: () => 0 }))
 vi.mock('element-plus', () => ({ ElMessage: { success: mocks.success, warning: mocks.warning } }))
 vi.mock('@/api/device', () => ({
   getDevice: mocks.getDevice,
+  getDevicePool: mocks.getDevicePool,
   listSafetyDocuments: mocks.listSafetyDocuments,
   myQualification: mocks.myQualification,
   submitQualification: mocks.submitQualification,
   uploadQualificationMaterial: mocks.uploadQualificationMaterial,
   acknowledgeSafety: mocks.acknowledgeSafety,
   deviceAvailability: mocks.deviceAvailability,
+  devicePoolAvailability: mocks.devicePoolAvailability,
 }))
 vi.mock('@/api/reservation', () => ({
   createReservation: mocks.createReservation,
@@ -137,11 +141,13 @@ describe('reservation creation page', () => {
     mocks.validationThrows = false
     mocks.push.mockResolvedValue(undefined)
     mocks.getDevice.mockResolvedValue(device())
+    mocks.getDevicePool.mockResolvedValue(device())
     mocks.deviceAvailability.mockImplementation(async (_id: number, start: string) => [
       { date: start, available: true },
       { date: dayjs(start).add(1, 'day').format('YYYY-MM-DD'), available: false, status: 'IN_USE' },
       { date: dayjs(start).add(2, 'day').format('YYYY-MM-DD'), available: true },
     ])
+    mocks.devicePoolAvailability.mockResolvedValue([])
     mocks.preflightReservation.mockResolvedValue(preflight())
     mocks.listSafetyDocuments.mockResolvedValue([{ id: 5, title: '设备安全规范', version: '2', url: '/safety.pdf' }])
     mocks.myQualification.mockResolvedValue(null)
@@ -435,14 +441,17 @@ describe('reservation creation page', () => {
       purposeCategory: 'TEACHING',
       projectReference: 'LAB-2026',
       commitMode: 'all_or_nothing',
-    })
+    }, expect.any(String))
     expect(mocks.success).toHaveBeenCalledWith('已提交 1 条预约')
     expect(mocks.push).toHaveBeenCalledWith({ name: 'reservation-mine' })
 
     setup.form = { purpose: '再次测试', purposeCategory: 'OTHER', projectReference: '   ' }
     await onSubmit()
     await flushPromises()
-    expect(mocks.createReservation).toHaveBeenLastCalledWith(expect.objectContaining({ projectReference: undefined }))
+    expect(mocks.createReservation).toHaveBeenLastCalledWith(
+      expect.objectContaining({ projectReference: undefined }),
+      expect.any(String),
+    )
 
     mocks.preflightReservation.mockResolvedValueOnce(preflight({ all_available: false, conflicts: [{ date: '2026-10-01' }] }))
     setup.preflight = null
@@ -508,5 +517,40 @@ describe('reservation creation page', () => {
     const noDeviceSetup = setupOf(noDevice)
     await (noDeviceSetup.onJoinWaitlist as (date: string) => Promise<void>)('2026-10-01')
     expect(mocks.warning).toHaveBeenLastCalledWith('请先填写至少 2 个字的使用用途，再加入候补')
+    })
   })
-})
+
+  it('previews a pool and lets the server allocate a currently free physical unit', async () => {
+    mocks.route.query = { poolId: '17', startDate: '2026-10-01', endDate: '2026-10-02' }
+    mocks.getDevicePool.mockResolvedValue(device({ id: 42, poolId: 17, poolQuantity: 2, poolIdleQuantity: 2 }))
+    mocks.devicePoolAvailability.mockResolvedValue([
+      { date: '2026-10-01', available: true, availableUnits: 2 },
+      { date: '2026-10-02', available: true, availableUnits: 1 },
+    ])
+    mocks.preflightReservation.mockResolvedValue(preflight({
+      device: device({ id: 43, poolId: 17 }),
+    }))
+
+    const wrapper = mountPage()
+    await flushPromises()
+    await flushPromises()
+
+    expect(mocks.getDevicePool).toHaveBeenCalledWith(17)
+    expect(mocks.devicePoolAvailability).toHaveBeenCalledOnce()
+    expect(mocks.preflightReservation).toHaveBeenCalledWith(expect.objectContaining({
+      poolId: 17,
+      startDate: '2026-10-01',
+      endDate: '2026-10-02',
+    }))
+
+    const setup = setupOf(wrapper)
+    setup.form = { purpose: '材料拉伸测试', purposeCategory: 'RESEARCH', projectReference: '' }
+    await (setup.onSubmit as () => Promise<void>)()
+    await flushPromises()
+    expect(mocks.createReservation).toHaveBeenCalledWith(expect.objectContaining({
+      poolId: 17,
+      startDate: '2026-10-01',
+      endDate: '2026-10-02',
+    }), expect.any(String))
+    expect(mocks.createReservation.mock.lastCall?.[0]).not.toHaveProperty('preferredDeviceId')
+  })

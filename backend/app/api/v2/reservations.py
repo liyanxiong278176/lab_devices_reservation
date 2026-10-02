@@ -23,7 +23,8 @@ from app.common.response import ApiResponse
 from app.core.errors import ApiError
 from app.core.settings import Settings
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
-from app.infrastructure.cache.redis import reservation_lock
+from app.infrastructure.cache.redis import get_redis, get_redis_circuit
+from app.infrastructure.cache.reservation_quota import ReservationQuotaCache
 from app.infrastructure.db.models import ReservationWaitlist
 from app.infrastructure.db.session import get_db
 
@@ -44,6 +45,10 @@ def _service(request: Request, session: AsyncSession, principal: Principal) -> R
         credit_block_days=settings.credit_block_days,
         advance_days=settings.reservation_advance_days,
         manager_advance_days=settings.reservation_manager_advance_days,
+        reservation_quota=ReservationQuotaCache(
+            get_redis(request),
+            get_redis_circuit(request.app),
+        ),
     )
 
 
@@ -113,8 +118,8 @@ async def confirm_waitlist_offer(
     )
     if entry is None:
         raise ApiError("WAITLIST_OFFER_NOT_FOUND", "候补预约保留已失效", 409)
-    async with reservation_lock(request, entry.device_id, [entry.reservation_date]):
-        data = await _service(request, session, principal).confirm_waitlist_offer(entry_id)
+    service = _service(request, session, principal)
+    data = await service.confirm_waitlist_offer(entry_id)
     return ApiResponse.ok(data)
 
 
@@ -126,11 +131,8 @@ async def create_reservation(
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationCreateData]:
-    async with reservation_lock(request, payload.device_id, payload.requested_dates()):
-        data = await _service(request, session, principal).create(
-            payload,
-            idempotency_key=idempotency_key,
-        )
+    service = _service(request, session, principal)
+    data = await service.create(payload, idempotency_key=idempotency_key)
     return ApiResponse.ok(data)
 
 

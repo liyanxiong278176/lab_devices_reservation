@@ -25,6 +25,28 @@ describe('reservation and user-facing API contracts', () => {
     http.delete.mockResolvedValue(undefined)
   })
 
+  it('sends resource-pool allocation and the retry-safe idempotency key', async () => {
+    await reservationApi.createReservation({
+      poolId: 17,
+      preferredDeviceId: 42,
+      startDate: '2026-10-01',
+      endDate: '2026-10-02',
+      purpose: 'pool booking',
+      purposeCategory: 'RESEARCH',
+    }, 'retry-key-1')
+
+    expect(http.post).toHaveBeenCalledWith('/reservations', {
+      pool_id: 17,
+      preferred_device_id: 42,
+      start_date: '2026-10-01',
+      end_date: '2026-10-02',
+      purpose: 'pool booking',
+      purpose_category: 'RESEARCH',
+      project_reference: undefined,
+      commit_mode: 'all_or_nothing',
+    }, { headers: { 'Idempotency-Key': 'retry-key-1' } })
+  })
+
   it('serializes create/preflight defaults and reservation handover actions', async () => {
     await reservationApi.createReservation({
       deviceId: 8, startDate: '2026-09-30', endDate: '2026-10-01', purpose: 'study',

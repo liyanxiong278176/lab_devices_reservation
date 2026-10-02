@@ -4,7 +4,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Cpu, Search } from '@element-plus/icons-vue'
-import { getDevice, searchDevices } from '@/api/device'
+import { getDevicePool, searchDevices } from '@/api/device'
 import type { DeviceQuery, DeviceStatus, DeviceVO } from '@/types/device'
 import type { Page } from '@/types/common'
 import { useStagger } from '@/composables/useStagger'
@@ -27,6 +27,7 @@ const query = reactive<DeviceQuery>({
   size: 24,
   keyword: '',
   status: '',
+  grouped: true,
 })
 
 const loading = ref(false)
@@ -48,12 +49,12 @@ const statusOptions: { label: string; value: DeviceStatus | '' }[] = [
 const gridRef = ref<HTMLElement | null>(null)
 const { reveal } = useStagger(gridRef, { delay: 60 })
 
-const subtitle = computed(() => `共 ${page.value.total} 台设备`)
+const subtitle = computed(() => `共 ${page.value.total} 类设备资源`)
 
 async function load() {
   loading.value = true
   try {
-    page.value = await searchDevices({ ...query, page: query.page || 1 })
+    page.value = await searchDevices({ ...query, grouped: true, page: query.page || 1 })
   } catch {
     // 拦截器已提示
   } finally {
@@ -98,7 +99,7 @@ async function openDetail(row: DeviceVO) {
   detailVisible.value = true
   detailLoading.value = true
   try {
-    selectedDevice.value = await getDevice(row.id)
+    selectedDevice.value = await getDevicePool(row.poolId ?? row.id)
   } catch {
     // The list record is already enough to keep the drawer useful if detail loading fails.
   } finally {
@@ -108,11 +109,15 @@ async function openDetail(row: DeviceVO) {
 
 function goFullDetail() {
   if (!selectedDevice.value) return
-  router.push({ name: 'device-detail', params: { id: selectedDevice.value.id } })
+  router.push({
+    name: 'device-detail',
+    params: { id: selectedDevice.value.id },
+    query: { poolId: String(selectedDevice.value.poolId ?? selectedDevice.value.id) },
+  })
 }
 
 function goReserve(row: DeviceVO) {
-  router.push({ name: 'reservation-create', query: { deviceId: String(row.id) } })
+  router.push({ name: 'reservation-create', query: { poolId: String(row.poolId ?? row.id) } })
 }
 
 function reserveSelected() {
@@ -169,7 +174,7 @@ onMounted(load)
               <Cpu />
               <span>{{ row.categoryName || 'LAB DEVICE' }}</span>
             </div>
-            <span class="device-card__id">{{ row.assetCode || `设备 ${String(row.id).padStart(2, '0')}` }}</span>
+            <span class="device-card__id">资源池 #{{ row.poolId ?? row.id }}</span>
           </div>
           <div class="device-card__top">
             <StatusDot :status="row.status" :label="true" />
@@ -187,13 +192,14 @@ onMounted(load)
           </h3>
 
           <p class="device-card__specs">{{ row.specs || '暂无规格信息' }}</p>
-          <p v-if="row.maintenanceWarning" class="device-card__maintenance">{{ row.maintenanceWarning }}</p>
+          <p class="device-card__specs">实物 {{ row.poolQuantity ?? 1 }} 台 · 正常状态 {{ row.poolIdleQuantity ?? 1 }} 台</p>
+          <p v-if="row.poolIdleQuantity === 0" class="device-card__maintenance">资源池内暂无可预约设备</p>
 
           <div class="device-card__foot">
             <span class="device-card__meta">
               {{ [row.labName, row.categoryName].filter(Boolean).join(' · ') || '未分配' }}
             </span>
-            <TextButton size="small" :disabled="row.status !== 'IDLE' || Boolean(row.maintenanceWarning)" @click.stop="goReserve(row)">预约</TextButton>
+            <TextButton size="small" :disabled="(row.poolIdleQuantity ?? 1) < 1" @click.stop="goReserve(row)">预约</TextButton>
           </div>
         </GlowCard>
       </div>
@@ -277,7 +283,7 @@ onMounted(load)
 
         <footer class="device-drawer__actions">
           <TextButton @click="goFullDetail">查看完整详情</TextButton>
-          <el-button type="primary" :disabled="selectedDevice?.status !== 'IDLE' || Boolean(selectedDevice?.maintenanceWarning)" @click="reserveSelected">预约设备</el-button>
+          <el-button type="primary" :disabled="(selectedDevice?.poolIdleQuantity ?? 1) < 1" @click="reserveSelected">预约设备</el-button>
         </footer>
       </div>
     </el-drawer>

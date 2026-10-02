@@ -10,8 +10,10 @@ import dayjs from 'dayjs'
 import {
   archiveDeviceDocument,
   deviceCalendar,
+  devicePoolAvailability,
   downloadDeviceDocument,
   getDevice,
+  getDevicePool,
   listDeviceDocuments,
   uploadDeviceDocument,
 } from '@/api/device'
@@ -44,7 +46,11 @@ const statusLabelText = computed(() => {
   const s = device.value?.status
   return s ? STATUS_LABELS[s] ?? s : ''
 })
-const bookingUnavailable = computed(() => device.value?.status !== 'IDLE' || Boolean(device.value?.maintenanceWarning))
+const bookingUnavailable = computed(() => {
+  if (!device.value) return true
+  if (device.value.poolIdleQuantity != null) return device.value.poolIdleQuantity < 1
+  return device.value.status !== 'IDLE' || Boolean(device.value.maintenanceWarning)
+})
 const selectedDate = ref<Date>(new Date())
 const activeTab = ref<'specs' | 'calendar'>('specs')
 
@@ -68,6 +74,10 @@ const documentFile = ref<File | null>(null)
 const documentUploading = ref(false)
 
 const id = computed(() => Number(route.params.id))
+const poolId = computed(() => {
+  const value = Number(route.query.poolId)
+  return Number.isInteger(value) && value > 0 ? value : null
+})
 
 // hero 副标题:品牌 · 型号 · 实验室
 const subtitle = computed(() => {
@@ -83,6 +93,7 @@ const keyChips = computed(() => {
   if (!d) return []
   return [
     { label: '分类', value: d.categoryName || '未分类' },
+    { label: '实物数量', value: `${d.poolQuantity ?? 1} 台` },
     { label: '最长预约', value: d.maxReservationDays != null ? `${d.maxReservationDays} 天` : '—' },
     { label: '审批', value: d.needApproval === 1 ? '需审批' : '免审批' },
   ]
@@ -93,7 +104,8 @@ const specRows = computed(() => {
   const d = device.value
   if (!d) return []
   return [
-    { label: '资产编号', value: d.assetCode || `设备 #${d.id}` },
+    { label: '代表实物资产编号', value: d.assetCode || `设备 #${d.id}` },
+    { label: '资源池实物数量', value: `${d.poolQuantity ?? 1} 台` },
     { label: '序列号', value: d.serialNumber || '—' },
     { label: '品牌', value: d.brand || '—' },
     { label: '型号', value: d.model || '—' },
@@ -125,6 +137,7 @@ const CAL_STATUS_LABELS: Record<string, string> = {
   OFFLINE: '离线',
   RETIRED: '已报废',
   BLOCKED: '不可预约',
+  POOL_FULL: '当前无空闲实物',
 }
 function calStatusLabel(s: string): string {
   return CAL_STATUS_LABELS[s] ?? s
@@ -142,7 +155,9 @@ function calReasonLabel(row: DeviceCalendarItemVO): string {
 async function loadDevice() {
   loading.value = true
   try {
-    device.value = await getDevice(id.value)
+    device.value = poolId.value
+      ? await getDevicePool(poolId.value)
+      : await getDevice(id.value)
   } catch {
     // 拦截器已提示
   } finally {
@@ -153,7 +168,19 @@ async function loadDevice() {
 async function loadCalendar() {
   calendarLoading.value = true
   try {
-    calendar.value = await deviceCalendar(id.value, rangeFrom.value, rangeTo.value)
+    if (poolId.value) {
+      const days = await devicePoolAvailability(poolId.value, rangeFrom.value, rangeTo.value)
+      calendar.value = days
+        .filter((day) => !day.available)
+        .map((day) => ({
+          date: day.date,
+          reservationId: day.reservationId ?? null,
+          status: day.status || 'POOL_FULL',
+          reason: day.reason || undefined,
+        }))
+    } else {
+      calendar.value = await deviceCalendar(id.value, rangeFrom.value, rangeTo.value)
+    }
   } catch {
     calendar.value = []
   } finally {
@@ -172,7 +199,12 @@ async function loadDocuments() {
 watch(selectedDate, loadCalendar)
 
 function goReserve() {
-  router.push({ name: 'reservation-create', query: { deviceId: String(id.value) } })
+  router.push({
+    name: 'reservation-create',
+    query: poolId.value
+      ? { poolId: String(poolId.value) }
+      : { deviceId: String(id.value) },
+  })
 }
 
 function goRepair() {
@@ -308,7 +340,7 @@ onMounted(async () => {
         <GhostButton @click="goRepair">报修</GhostButton>
       </div>
     </div>
-    <el-alert v-if="device?.maintenanceWarning" :title="device.maintenanceWarning" type="warning" :closable="false" show-icon />
+    <el-alert v-if="device?.maintenanceWarning && bookingUnavailable" :title="device.maintenanceWarning" type="warning" :closable="false" show-icon />
 
     <!-- tabs:规格参数 / 预约日历 -->
     <el-tabs v-model="activeTab" class="device-detail__tabs">

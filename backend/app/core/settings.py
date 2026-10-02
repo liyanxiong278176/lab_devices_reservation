@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     reservation_lock_ttl_seconds: int = 8
     reservation_lock_wait_seconds: float = 2.0
     reservation_lock_poll_seconds: float = 0.05
+    reservation_quota_reconcile_interval_seconds: int = Field(default=60, ge=10, le=3600)
     credit_block_threshold: int = 60
     credit_block_days: int = 7
     cache_default_ttl_seconds: int = 300

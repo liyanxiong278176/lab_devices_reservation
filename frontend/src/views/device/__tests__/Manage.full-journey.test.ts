@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   createDevice: vi.fn(),
   deleteDevice: vi.fn(),
   listLabs: vi.fn(),
+  listDevicePoolOptions: vi.fn(),
   patchDeviceStatus: vi.fn(),
   searchDevices: vi.fn(),
   updateDevice: vi.fn(),
@@ -15,7 +16,7 @@ const messages = vi.hoisted(() => ({ success: vi.fn() }))
 const dialogs = vi.hoisted(() => ({ confirm: vi.fn() }))
 const router = vi.hoisted(() => ({ push: vi.fn() }))
 const validation = vi.hoisted(() => vi.fn())
-vi.mock('@/api/device', () => ({ createDevice: api.createDevice, deleteDevice: api.deleteDevice, patchDeviceStatus: api.patchDeviceStatus, searchDevices: api.searchDevices, updateDevice: api.updateDevice }))
+vi.mock('@/api/device', () => ({ createDevice: api.createDevice, deleteDevice: api.deleteDevice, listDevicePoolOptions: api.listDevicePoolOptions, patchDeviceStatus: api.patchDeviceStatus, searchDevices: api.searchDevices, updateDevice: api.updateDevice }))
 vi.mock('@/api/category', () => ({ categoryTree: api.categoryTree }))
 vi.mock('@/api/lab', () => ({ listLabs: api.listLabs }))
 vi.mock('vue-router', () => ({ useRouter: () => router }))
@@ -163,6 +164,7 @@ describe('device management full CRUD journeys', () => {
     dialogs.confirm.mockResolvedValue('confirm')
     api.categoryTree.mockResolvedValue(categories)
     api.listLabs.mockResolvedValue({ records: labs, total: labs.length })
+    api.listDevicePoolOptions.mockResolvedValue([])
     api.searchDevices.mockResolvedValue(page())
     api.createDevice.mockResolvedValue(undefined)
     api.updateDevice.mockResolvedValue(undefined)
@@ -176,6 +178,7 @@ describe('device management full CRUD journeys', () => {
     expect(api.searchDevices).toHaveBeenCalledWith({ page: 1, size: 10, keyword: '' })
     expect(api.categoryTree).toHaveBeenCalledOnce()
     expect(api.listLabs).toHaveBeenCalledWith(1, 100)
+    expect(api.listDevicePoolOptions).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain('使用中')
     expect(wrapper.text()).toContain('维护中')
     expect(wrapper.text()).toContain('空闲')
@@ -248,6 +251,7 @@ describe('device management full CRUD journeys', () => {
       name: '高精度相机', categoryId: 2, labId: 10, brand: undefined, model: 'CAM-X', specs: undefined,
       imageUrl: undefined, needApproval: 1, maxReservationDays: undefined,
       tags: ['optics', '精密', 'optics'], accessoryChecklist: ['电源线', '数据线', '镜头'], description: undefined,
+      poolId: null,
     })
     expect(messages.success).toHaveBeenCalledWith('已新建')
   })
@@ -306,7 +310,7 @@ describe('device management full CRUD journeys', () => {
     await flushPromises()
 
     expect(api.updateDevice).toHaveBeenCalledWith(2, expect.objectContaining({
-      name: '使用中设备', categoryId: 2, labId: 11, tags: ['new'], accessoryChecklist: ['adapter', 'battery'],
+      name: '使用中设备', categoryId: 2, labId: 11, poolId: null, tags: ['new'], accessoryChecklist: ['adapter', 'battery'],
     }))
     expect(messages.success).toHaveBeenCalledWith('已更新')
   })
