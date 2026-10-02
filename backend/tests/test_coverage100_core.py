@@ -96,7 +96,12 @@ def test_platform_loop_factory_selects_each_platform_branch(
     windows_loop = object()
     other_loop = object()
     monkeypatch.setattr(uvicorn_loop.sys, "platform", "win32")
-    monkeypatch.setattr(uvicorn_loop.asyncio, "ProactorEventLoop", lambda: windows_loop)
+    monkeypatch.setattr(
+        uvicorn_loop.asyncio,
+        "ProactorEventLoop",
+        lambda: windows_loop,
+        raising=False,
+    )
     assert uvicorn_loop.platform_loop_factory() is windows_loop
 
     monkeypatch.setattr(uvicorn_loop.sys, "platform", "linux")

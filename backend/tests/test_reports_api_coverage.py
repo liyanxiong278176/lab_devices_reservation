@@ -424,7 +424,7 @@ async def test_async_export_permissions_scope_status_and_safe_download(
             row.file_path = str(tmp_path / "export.csv")
             row.row_count = 1
             await session.commit()
-        (tmp_path / "export.csv").write_text("device-id\n1\n", encoding="utf-8")
+        (tmp_path / "export.csv").write_bytes(b"device-id\r\n1\r\n")
 
         status = await client.get(f"/api/v2/reports/exports/{task_id}")
         assert status.status_code == 200
@@ -433,7 +433,7 @@ async def test_async_export_permissions_scope_status_and_safe_download(
         )
         downloaded = await client.get(f"/api/v2/reports/exports/{task_id}/download")
         assert downloaded.status_code == 200
-        assert downloaded.text == "device-id\r\n1\r\n"
+        assert downloaded.content == b"device-id\r\n1\r\n"
 
         async with factory() as session:
             row = await session.get(ExportTask, task_id)
