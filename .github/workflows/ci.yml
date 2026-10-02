@@ -68,15 +68,12 @@ jobs:
       - name: Upgrade isolated MySQL schema
         working-directory: backend
         run: uv run alembic upgrade head
-      - name: Test backend without external AI connectivity
-        working-directory: backend
-        run: uv run pytest -q --ignore=tests/test_ai_provider_live.py
-      - name: Measure non-AI backend coverage
+      - name: Test backend and measure non-AI coverage
         working-directory: backend
         run: >-
           uv run pytest -q
-          --ignore-glob=tests/test_ai_*.py
-          --deselect=tests/test_upload_quotas.py::test_ai_knowledge_storage_quota_is_cumulative_by_global_and_college_scope
+          --ignore=tests/test_ai_provider_live.py
+          --cov-config=.coveragerc
           --cov=app
           --cov-branch
           --cov-report=term
