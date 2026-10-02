@@ -2169,6 +2169,23 @@ class ReservationService:
         except ApiError as exc:
             await self.session.rollback()
             failure = exc
+        except asyncio.CancelledError:
+            await self.session.rollback()
+            if (
+                self.reservation_quota is not None
+                and not quota_already_held
+                and (quota_hold_owned or quota_bypass)
+            ):
+                # A cancelled commit can have an unknown outcome. Never refund
+                # that hold as if MySQL definitely rolled back.
+                await asyncio.shield(
+                    self.reservation_quota.mark_unknown(
+                        quota_pool_id,
+                        dates,
+                        quota_token,
+                    )
+                )
+            raise
         except Exception:
             await self.session.rollback()
             if (
@@ -2176,9 +2193,13 @@ class ReservationService:
                 and not quota_already_held
                 and (quota_hold_owned or quota_bypass)
             ):
-                # The commit outcome may be unknown. Removing the hint forces
-                # the next create to consult MySQL before using Redis again.
-                await self.reservation_quota.invalidate(quota_pool_id, dates)
+                # The commit outcome may be unknown. Record that state and
+                # remove the hints so the next create consults MySQL.
+                await self.reservation_quota.mark_unknown(
+                    quota_pool_id,
+                    dates,
+                    quota_token,
+                )
             raise
 
         if self.reservation_quota is not None and not quota_already_held:

@@ -21,7 +21,7 @@
 
 提交 `POST /api/v2/reservations` 时，Lua 脚本在所有请求日期对应的 Hash 中寻找同一批满足数量的实物设备，并一次性将这些设备在全部日期标为 `0`；每日总量足够但跨日没有足够的共同设备时，返回 `409 RESERVATION_DEVICE_NOT_CONTINUOUS`，某日名额本身不足时返回 `409 RESERVATION_QUOTA_INSUFFICIENT`。Redis Hash 未命中或 Redis 不可用时走 MySQL 分配路径；缓存命中并判定名额不足时会快速拒绝，因此短暂陈旧的缓存可能暂时低估可用量。
 
-MySQL 事务重新校验并绑定预占的实物设备，`v2_reservation_day(device_id, date)` 唯一约束是并发防超约的最终保障。明确的数据库写入失败会补偿 Redis 预占；提交结果不确定时使相关缓存失效。取消等释放操作归还对应设备日期，后台对账任务按 MySQL 实际占用覆盖重建 Redis Hash。
+MySQL 事务重新校验并绑定预占的实物设备，`v2_reservation_day(device_id, date)` 唯一约束是并发防超约的最终保障。Redis 另用 `reserve:quota:{pool_id}:op:hold:{token}` String 标记跟踪预占：MySQL 提交成功后改为 `COMMITTED`；确认回滚后通过补偿 Lua 归还名额并改为 `REFUNDED`；提交结果不确定时改为 `UNKNOWN` 并删除相关名额 Hash，后续请求回源 MySQL。Redis 补偿不是 MySQL 回滚的一部分；更新失败时由后台对账按 MySQL 实际占用覆盖重建 Hash。取消等释放操作归还对应设备日期。
 
 预约记录只使用 `start_date`、`end_date` 和日期明细。用户不选择时分秒；交接、归还和验收时间只用于履约审计。所有预约均须负责人交接后才能进入使用中，用户在结束日提交归还后由负责人验收；异常设备自动进入维护状态。连续预约首日交接、结束日验收，重复预约的每个日期独立履约。
 

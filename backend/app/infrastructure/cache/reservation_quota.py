@@ -85,6 +85,18 @@ end
 return 0
 """
 
+_MARK_UNKNOWN_QUOTA = """
+local marker = KEYS[#KEYS]
+local state = redis.call('get', marker)
+if state == 'HELD' or not state then
+    redis.call('set', marker, 'UNKNOWN', 'PX', tonumber(ARGV[1]))
+end
+for day = 1, #KEYS - 1 do
+    redis.call('del', KEYS[day])
+end
+return 1
+"""
+
 _REFUND_QUOTA = """
 local marker = KEYS[#KEYS]
 if redis.call('get', marker) ~= 'HELD' then
@@ -236,6 +248,22 @@ class ReservationQuotaCache:
         except (*REDIS_ERRORS, RedisCircuitOpen):
             _logger.warning(
                 "Could not finalize reservation quota prehold; reconciliation will repair it"
+            )
+
+    async def mark_unknown(self, pool_id: int, dates: list[date], token: str) -> None:
+        """Record an uncertain MySQL outcome and force quota reads back to MySQL."""
+        keys = [self._quota_key(pool_id, day) for day in sorted(set(dates))]
+        marker = self._marker_key(pool_id, token, "hold")
+        try:
+            await self._eval(
+                _MARK_UNKNOWN_QUOTA,
+                [*keys, marker],
+                [24 * 60 * 60 * 1000],
+            )
+        except (*REDIS_ERRORS, RedisCircuitOpen):
+            _logger.warning(
+                "Could not mark reservation quota outcome unknown; "
+                "the marker will expire and reconciliation will rebuild quota keys"
             )
 
     async def refund(
