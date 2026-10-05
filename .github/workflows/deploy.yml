@@ -267,17 +267,22 @@ jobs:
             "${compose[@]}" up -d --no-deps --wait --wait-timeout 300 app celery-worker
           fi
 
-          if [[ "$frontend_changed" == true ]]; then
-            "${compose[@]}" build frontend
-          fi
-
-          if [[ "$frontend_changed" == true || "$backend_changed" == true ]]; then
-            if [[ "$frontend_changed" == true ]]; then
-              "${compose[@]}" up -d --no-deps --force-recreate frontend
-            else
-              "${compose[@]}" up -d --no-deps frontend
-            fi
-          fi
+          case "$frontend_changed" in
+            true)
+              echo "Rebuilding frontend service because frontend sources changed."
+              "${compose[@]}" build frontend
+              echo "Recreating frontend service and waiting for it to start."
+              "${compose[@]}" up -d --no-deps --force-recreate --wait --wait-timeout 300 frontend
+              "${compose[@]}" ps frontend
+              ;;
+            false)
+              echo "Frontend sources did not change; leaving the frontend container running."
+              ;;
+            *)
+              echo "::error::Invalid FRONTEND_CHANGED value: $frontend_changed" >&2
+              exit 1
+              ;;
+          esac
 
           if [[ "$prometheus_changed" == true ]]; then
             "${compose[@]}" restart prometheus
