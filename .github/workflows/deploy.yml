@@ -229,8 +229,10 @@ jobs:
           set -euo pipefail
 
           target="${DEPLOY_USER}@${DEPLOY_HOST}"
-          remote_path="$(printf '%q' "$DEPLOY_PATH")"
-          remote_command="bash -s -- $remote_path $BACKEND_CHANGED $FRONTEND_CHANGED $COMPOSE_CHANGED $PROMETHEUS_CHANGED $GRAFANA_CHANGED $MYSQL_EXPORTER_CHANGED"
+          printf -v remote_command \
+            'DEPLOY_PATH=%q BACKEND_CHANGED=%q FRONTEND_CHANGED=%q COMPOSE_CHANGED=%q PROMETHEUS_CHANGED=%q GRAFANA_CHANGED=%q MYSQL_EXPORTER_CHANGED=%q bash -s' \
+            "$DEPLOY_PATH" "$BACKEND_CHANGED" "$FRONTEND_CHANGED" "$COMPOSE_CHANGED" \
+            "$PROMETHEUS_CHANGED" "$GRAFANA_CHANGED" "$MYSQL_EXPORTER_CHANGED"
           ssh_options=(
             -i "$DEPLOY_SSH_KEY_FILE"
             -p "$DEPLOY_PORT"
@@ -244,13 +246,16 @@ jobs:
           ssh "${ssh_options[@]}" "$target" "$remote_command" <<'REMOTE_SCRIPT'
           set -euo pipefail
 
-          deploy_path="$1"
-          backend_changed="$2"
-          frontend_changed="$3"
-          compose_changed="$4"
-          prometheus_changed="$5"
-          grafana_changed="$6"
-          mysql_exporter_changed="$7"
+          deploy_path="${DEPLOY_PATH:?DEPLOY_PATH was not forwarded to the remote script}"
+          backend_changed="${BACKEND_CHANGED:?BACKEND_CHANGED was not forwarded to the remote script}"
+          frontend_changed="${FRONTEND_CHANGED:?FRONTEND_CHANGED was not forwarded to the remote script}"
+          compose_changed="${COMPOSE_CHANGED:?COMPOSE_CHANGED was not forwarded to the remote script}"
+          prometheus_changed="${PROMETHEUS_CHANGED:?PROMETHEUS_CHANGED was not forwarded to the remote script}"
+          grafana_changed="${GRAFANA_CHANGED:?GRAFANA_CHANGED was not forwarded to the remote script}"
+          mysql_exporter_changed="${MYSQL_EXPORTER_CHANGED:?MYSQL_EXPORTER_CHANGED was not forwarded to the remote script}"
+
+          printf 'Deployment flags: backend=%s frontend=%s compose=%s prometheus=%s grafana=%s mysql_exporter=%s\n' \
+            "$backend_changed" "$frontend_changed" "$compose_changed" "$prometheus_changed" "$grafana_changed" "$mysql_exporter_changed"
 
           cd "$deploy_path"
           compose=(docker compose -f docker-compose.prod.yml)
