@@ -220,7 +220,6 @@ jobs:
         shell: bash
         env:
           BACKEND_CHANGED: ${{ steps.changes.outputs.backend }}
-          FRONTEND_CHANGED: ${{ steps.changes.outputs.frontend }}
           COMPOSE_CHANGED: ${{ steps.changes.outputs.compose }}
           PROMETHEUS_CHANGED: ${{ steps.changes.outputs.prometheus }}
           GRAFANA_CHANGED: ${{ steps.changes.outputs.grafana }}
@@ -230,8 +229,8 @@ jobs:
 
           target="${DEPLOY_USER}@${DEPLOY_HOST}"
           printf -v remote_command \
-            'DEPLOY_PATH=%q BACKEND_CHANGED=%q FRONTEND_CHANGED=%q COMPOSE_CHANGED=%q PROMETHEUS_CHANGED=%q GRAFANA_CHANGED=%q MYSQL_EXPORTER_CHANGED=%q bash -s' \
-            "$DEPLOY_PATH" "$BACKEND_CHANGED" "$FRONTEND_CHANGED" "$COMPOSE_CHANGED" \
+            'DEPLOY_PATH=%q BACKEND_CHANGED=%q COMPOSE_CHANGED=%q PROMETHEUS_CHANGED=%q GRAFANA_CHANGED=%q MYSQL_EXPORTER_CHANGED=%q bash -s' \
+            "$DEPLOY_PATH" "$BACKEND_CHANGED" "$COMPOSE_CHANGED" \
             "$PROMETHEUS_CHANGED" "$GRAFANA_CHANGED" "$MYSQL_EXPORTER_CHANGED"
           ssh_options=(
             -i "$DEPLOY_SSH_KEY_FILE"
@@ -248,14 +247,13 @@ jobs:
 
           deploy_path="${DEPLOY_PATH:?DEPLOY_PATH was not forwarded to the remote script}"
           backend_changed="${BACKEND_CHANGED:?BACKEND_CHANGED was not forwarded to the remote script}"
-          frontend_changed="${FRONTEND_CHANGED:?FRONTEND_CHANGED was not forwarded to the remote script}"
           compose_changed="${COMPOSE_CHANGED:?COMPOSE_CHANGED was not forwarded to the remote script}"
           prometheus_changed="${PROMETHEUS_CHANGED:?PROMETHEUS_CHANGED was not forwarded to the remote script}"
           grafana_changed="${GRAFANA_CHANGED:?GRAFANA_CHANGED was not forwarded to the remote script}"
           mysql_exporter_changed="${MYSQL_EXPORTER_CHANGED:?MYSQL_EXPORTER_CHANGED was not forwarded to the remote script}"
 
-          printf 'Deployment flags: backend=%s frontend=%s compose=%s prometheus=%s grafana=%s mysql_exporter=%s\n' \
-            "$backend_changed" "$frontend_changed" "$compose_changed" "$prometheus_changed" "$grafana_changed" "$mysql_exporter_changed"
+          printf 'Deployment flags: backend=%s compose=%s prometheus=%s grafana=%s mysql_exporter=%s\n' \
+            "$backend_changed" "$compose_changed" "$prometheus_changed" "$grafana_changed" "$mysql_exporter_changed"
 
           cd "$deploy_path"
           compose=(docker compose -f docker-compose.prod.yml)
@@ -266,23 +264,6 @@ jobs:
             "${compose[@]}" run --rm --no-deps app uv run --no-dev alembic upgrade head
             "${compose[@]}" up -d --no-deps --wait --wait-timeout 300 app celery-worker
           fi
-
-          case "$frontend_changed" in
-            true)
-              echo "Rebuilding frontend service because frontend sources changed."
-              "${compose[@]}" build frontend
-              echo "Recreating frontend service and waiting for it to start."
-              "${compose[@]}" up -d --no-deps --force-recreate --wait --wait-timeout 300 frontend
-              "${compose[@]}" ps frontend
-              ;;
-            false)
-              echo "Frontend sources did not change; leaving the frontend container running."
-              ;;
-            *)
-              echo "::error::Invalid FRONTEND_CHANGED value: $frontend_changed" >&2
-              exit 1
-              ;;
-          esac
 
           if [[ "$prometheus_changed" == true ]]; then
             "${compose[@]}" restart prometheus
@@ -301,3 +282,26 @@ jobs:
             "${compose[@]}" up -d
           fi
           REMOTE_SCRIPT
+
+      - name: Build and restart frontend service
+        if: steps.changes.outputs.frontend == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target="${DEPLOY_USER}@${DEPLOY_HOST}"
+          printf -v remote_command \
+            'cd %q && docker compose -f docker-compose.prod.yml build frontend && docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate --wait --wait-timeout 300 frontend && docker compose -f docker-compose.prod.yml ps frontend' \
+            "$DEPLOY_PATH"
+          ssh_options=(
+            -i "$DEPLOY_SSH_KEY_FILE"
+            -p "$DEPLOY_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$DEPLOY_KNOWN_HOSTS_FILE"
+            -o ConnectTimeout=20
+          )
+
+          echo "Frontend sources changed; building and replacing the frontend container."
+          ssh "${ssh_options[@]}" "$target" "$remote_command"
