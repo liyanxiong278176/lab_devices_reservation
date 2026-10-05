@@ -1,0 +1,226 @@
+name: Deploy production services
+
+on:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: labprod-production-deploy
+  queue: max
+
+jobs:
+  deploy:
+    name: Sync code and update changed services
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: /www/wwwroot/lab_devices_reservation
+
+    steps:
+      - name: Check out pushed commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed services
+        id: changes
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          backend=false
+          frontend=false
+          compose=false
+          prometheus=false
+          grafana=false
+          mysql_exporter=false
+
+          if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            backend=true
+            frontend=true
+            compose=true
+            prometheus=true
+            grafana=true
+            mysql_exporter=true
+          else
+            while IFS= read -r path; do
+              case "$path" in
+                backend/*|Dockerfile|.dockerignore)
+                  backend=true
+                  ;;
+                frontend/*)
+                  frontend=true
+                  ;;
+                docker-compose.prod.yml)
+                  compose=true
+                  ;;
+                monitoring/prometheus/*)
+                  prometheus=true
+                  ;;
+                monitoring/grafana/*)
+                  grafana=true
+                  ;;
+                monitoring/mysql/*)
+                  mysql_exporter=true
+                  ;;
+              esac
+            done < <(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA")
+          fi
+
+          # Compose changes can affect either app image and the running stack.
+          if [[ "$compose" == true ]]; then
+            backend=true
+            frontend=true
+          fi
+
+          {
+            echo "backend=$backend"
+            echo "frontend=$frontend"
+            echo "compose=$compose"
+            echo "prometheus=$prometheus"
+            echo "grafana=$grafana"
+            echo "mysql_exporter=$mysql_exporter"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare SSH credentials
+        shell: bash
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$DEPLOY_HOST" ]]; then
+            echo "::error::Missing required Actions secret: DEPLOY_HOST"
+            exit 1
+          fi
+          if [[ -z "$DEPLOY_PORT" ]]; then
+            echo "::error::Missing required Actions secret: DEPLOY_PORT"
+            exit 1
+          fi
+          if [[ -z "$DEPLOY_USER" ]]; then
+            echo "::error::Missing required Actions secret: DEPLOY_USER"
+            exit 1
+          fi
+          if [[ -z "$DEPLOY_SSH_KEY" ]]; then
+            echo "::error::Missing required Actions secret: DEPLOY_SSH_KEY"
+            exit 1
+          fi
+          if [[ -z "$DEPLOY_KNOWN_HOSTS" ]]; then
+            echo "::error::Missing required Actions secret: DEPLOY_KNOWN_HOSTS"
+            exit 1
+          fi
+
+          if [[ ! "$DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]] || (( DEPLOY_PORT < 1 || DEPLOY_PORT > 65535 )); then
+            echo "::error::DEPLOY_PORT must be a valid TCP port"
+            exit 1
+          fi
+
+          key_file="$RUNNER_TEMP/labflow_deploy_key"
+          known_hosts_file="$RUNNER_TEMP/labflow_known_hosts"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key_file"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh-keygen -y -f "$key_file" >/dev/null
+
+          {
+            echo "DEPLOY_SSH_KEY_FILE=$key_file"
+            echo "DEPLOY_KNOWN_HOSTS_FILE=$known_hosts_file"
+          } >> "$GITHUB_ENV"
+
+      - name: Upload pushed source to the server
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target="${DEPLOY_USER}@${DEPLOY_HOST}"
+          remote_path="$(printf '%q' "$DEPLOY_PATH")"
+          remote_command="set -eu; test -d $remote_path; test -w $remote_path; test -r $remote_path/.env; test -r $remote_path/backend/.env; docker compose version >/dev/null; tar -xzf - -C $remote_path --no-same-owner"
+          ssh_options=(
+            -i "$DEPLOY_SSH_KEY_FILE"
+            -p "$DEPLOY_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$DEPLOY_KNOWN_HOSTS_FILE"
+            -o ConnectTimeout=20
+          )
+
+          git archive --format=tar "$GITHUB_SHA" | gzip -1 | ssh "${ssh_options[@]}" "$target" "$remote_command"
+
+      - name: Build and restart affected services
+        shell: bash
+        env:
+          BACKEND_CHANGED: ${{ steps.changes.outputs.backend }}
+          FRONTEND_CHANGED: ${{ steps.changes.outputs.frontend }}
+          COMPOSE_CHANGED: ${{ steps.changes.outputs.compose }}
+          PROMETHEUS_CHANGED: ${{ steps.changes.outputs.prometheus }}
+          GRAFANA_CHANGED: ${{ steps.changes.outputs.grafana }}
+          MYSQL_EXPORTER_CHANGED: ${{ steps.changes.outputs.mysql_exporter }}
+        run: |
+          set -euo pipefail
+
+          target="${DEPLOY_USER}@${DEPLOY_HOST}"
+          remote_path="$(printf '%q' "$DEPLOY_PATH")"
+          remote_command="bash -s -- $remote_path $BACKEND_CHANGED $FRONTEND_CHANGED $COMPOSE_CHANGED $PROMETHEUS_CHANGED $GRAFANA_CHANGED $MYSQL_EXPORTER_CHANGED"
+          ssh_options=(
+            -i "$DEPLOY_SSH_KEY_FILE"
+            -p "$DEPLOY_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$DEPLOY_KNOWN_HOSTS_FILE"
+            -o ConnectTimeout=20
+          )
+
+          ssh "${ssh_options[@]}" "$target" "$remote_command" <<'REMOTE_SCRIPT'
+          set -euo pipefail
+
+          deploy_path="$1"
+          backend_changed="$2"
+          frontend_changed="$3"
+          compose_changed="$4"
+          prometheus_changed="$5"
+          grafana_changed="$6"
+          mysql_exporter_changed="$7"
+
+          cd "$deploy_path"
+          compose=(docker compose -f docker-compose.prod.yml)
+
+          if [[ "$backend_changed" == true ]]; then
+            "${compose[@]}" build app celery-worker
+            "${compose[@]}" run --rm --no-deps app uv run --no-dev alembic upgrade head
+            "${compose[@]}" up -d --no-deps app celery-worker
+          fi
+
+          if [[ "$frontend_changed" == true ]]; then
+            "${compose[@]}" build frontend
+            "${compose[@]}" up -d --no-deps frontend
+          fi
+
+          if [[ "$prometheus_changed" == true ]]; then
+            "${compose[@]}" restart prometheus
+          fi
+
+          if [[ "$grafana_changed" == true ]]; then
+            "${compose[@]}" restart grafana
+          fi
+
+          if [[ "$mysql_exporter_changed" == true ]]; then
+            "${compose[@]}" run --rm --no-deps mysql-exporter-setup
+            "${compose[@]}" up -d --no-deps mysqld-exporter
+          fi
+
+          if [[ "$compose_changed" == true ]]; then
+            "${compose[@]}" up -d
+          fi
+          REMOTE_SCRIPT
