@@ -3,6 +3,7 @@ name: Deploy production services
 on:
   push:
     branches: [main, master]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,6 +35,7 @@ jobs:
         env:
           BEFORE_SHA: ${{ github.event.before }}
           CURRENT_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
 
@@ -44,7 +46,9 @@ jobs:
           grafana=false
           mysql_exporter=false
 
-          if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || \
+                -z "$BEFORE_SHA" || "$BEFORE_SHA" == "null" || \
+                "$BEFORE_SHA" =~ ^0+$ ]]; then
             backend=true
             frontend=true
             compose=true
