@@ -16,7 +16,7 @@
 
 首次启动前将根目录 `.env.example` 复制为 `.env`，为 `DB_ROOT_PASSWORD` 和 `DB_APP_PASSWORD` 分别填写独立的 64 位十六进制随机值；在根目录 `.env` 中配置的 `LAB_MYSQL_DSN` 应使用 `lab_runtime` 应用账号。开发 Compose 只将 MySQL/Redis 端口绑定到 `127.0.0.1`，应用账号只获 `lab_reservation` 数据库权限。已有 MySQL 数据卷不会因改 Compose 环境变量而自动创建/轮换账号；迁移已有部署时，保留当前 root 密码作为 `DB_ROOT_PASSWORD`，先在 MySQL 中创建 `lab_runtime` 并授予该数据库权限，再切换后端 DSN。不要删除数据卷。
 
-生产 Compose 还要求根 `.env` 配置真实 HTTPS `APP_PUBLIC_ORIGIN`；应用容器启用 `LAB_COOKIE_SECURE=true`，浏览器 Cookie 与 CSRF Origin 校验必须使用该精确域名。不要把示例域名或 `http://` 用作公网配置。
+生产 Compose 默认要求真实 HTTPS `APP_PUBLIC_ORIGIN` 并启用 `LAB_COOKIE_SECURE=true`。临时公网 HTTP 测试必须同时设置 `APP_PUBLIC_ORIGIN=http://...`、`LAB_COOKIE_SECURE=false` 和 `LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING=true`；HTTP 会让登录凭据和会话 Cookie 缺少传输加密，测试结束后应恢复 HTTPS 和安全 Cookie。
 
 ## 本地验证
 

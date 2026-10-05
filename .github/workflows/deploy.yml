@@ -186,6 +186,13 @@ jobs:
               exit 1
             fi
           done
+          if grep -Eq '^[[:space:]]*APP_PUBLIC_ORIGIN=http://' .env; then
+            if ! grep -Eq '^[[:space:]]*LAB_COOKIE_SECURE=false([[:space:]]|$)' .env || \
+               ! grep -Eq '^[[:space:]]*LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING=true([[:space:]]|$)' .env; then
+              echo "::error::HTTP APP_PUBLIC_ORIGIN requires LAB_COOKIE_SECURE=false and LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING=true" >&2
+              exit 1
+            fi
+          fi
           if ! command -v docker >/dev/null || ! docker compose version; then
             echo "::error::Docker Compose is unavailable to the deployment user" >&2
             exit 1

@@ -34,6 +34,7 @@ x-backend-environment: &backend-environment
   LAB_TRUSTED_PROXY_IPS: "${LAB_TRUSTED_PROXY_IPS:-}"
   LAB_JWT_SECRET: "${LAB_JWT_SECRET:-}"
   LAB_COOKIE_SECURE: "${LAB_COOKIE_SECURE:-}"
+  LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING: "${LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING:-false}"
   LAB_METRICS_TOKEN: "${LAB_METRICS_TOKEN:-}"
   LAB_JWT_ISSUER: "${LAB_JWT_ISSUER:-}"
   LAB_ENABLE_WORKERS: "${LAB_ENABLE_WORKERS:-}"
@@ -160,7 +161,8 @@ services:
       LAB_CELERY_BROKER_URL: redis://redis:6379/1
       LAB_QDRANT_URL: http://qdrant:6333
       LAB_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
-      LAB_COOKIE_SECURE: "true"
+      LAB_COOKIE_SECURE: "${LAB_COOKIE_SECURE:-true}"
+      LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING: "${LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING:-false}"
       LAB_CORS_ORIGINS: "[\"${APP_PUBLIC_ORIGIN:?APP_PUBLIC_ORIGIN must be set}\"]"
       # frontend nginx + Docker host gateway; the host TLS proxy must append the real client IP.
       LAB_TRUSTED_PROXY_IPS: '["172.29.0.1/32","172.29.0.2/32"]'
@@ -192,7 +194,8 @@ services:
       LAB_CELERY_BROKER_URL: redis://redis:6379/1
       LAB_QDRANT_URL: http://qdrant:6333
       LAB_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
-      LAB_COOKIE_SECURE: "true"
+      LAB_COOKIE_SECURE: "${LAB_COOKIE_SECURE:-true}"
+      LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING: "${LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING:-false}"
       LAB_METRICS_TOKEN: ${PROMETHEUS_METRICS_TOKEN:?PROMETHEUS_METRICS_TOKEN must be set}
       LAB_ENABLE_WORKERS: "false"
     command: ["uv", "run", "--no-dev", "celery", "-A", "app.infrastructure.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1", "--hostname=knowledge@%h"]

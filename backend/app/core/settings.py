@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     refresh_cookie_name: str = "lab_refresh"
     csrf_cookie_name: str = "lab_csrf"
     cookie_secure: bool = False
+    allow_insecure_cookie_for_testing: bool = False
     cookie_domain: str | None = None
     enable_workers: bool = True
     bootstrap_admin_username: str = Field(default="admin", min_length=3, max_length=64)
@@ -175,7 +176,7 @@ class Settings(BaseSettings):
         if self.celery_visibility_timeout_seconds <= self.celery_task_time_limit_seconds:
             raise ValueError("Celery Redis visibility timeout must exceed the hard task limit")
         if self.environment == "prod":
-            if not self.cookie_secure:
+            if not self.cookie_secure and not self.allow_insecure_cookie_for_testing:
                 raise ValueError("生产环境必须启用 LAB_COOKIE_SECURE")
             secret = self.jwt_secret.strip().lower()
             if (
