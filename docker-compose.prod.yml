@@ -218,8 +218,8 @@ services:
       lab-internal:
         ipv4_address: 172.29.0.2
     restart: unless-stopped
-    # 由宿主机上的 TLS 反向代理转发到本地端口；不要直接将明文 HTTP 暴露公网。
-    ports: ["127.0.0.1:8080:80"]
+    # 临时 HTTP 测试：由前端容器直接监听公网 80 端口。
+    ports: ["80:80"]
     depends_on:
       app: { condition: service_healthy }
     mem_limit: 64m
