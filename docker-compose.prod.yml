@@ -171,7 +171,7 @@ services:
       LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING: "${LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING:-false}"
       LAB_CORS_ORIGINS: "[\"${APP_PUBLIC_ORIGIN:?APP_PUBLIC_ORIGIN must be set}\"]"
       # frontend nginx + Docker host gateway; the host TLS proxy must append the real client IP.
-      LAB_TRUSTED_PROXY_IPS: '["172.29.0.1/32","172.29.0.2/32"]'
+      LAB_TRUSTED_PROXY_IPS: '["172.29.0.1/32","172.29.0.7/32"]'
       LAB_ENABLE_WORKERS: "true"
       LAB_METRICS_TOKEN: ${PROMETHEUS_METRICS_TOKEN:?PROMETHEUS_METRICS_TOKEN must be set}
     volumes:
@@ -216,7 +216,7 @@ services:
         VITE_WS_BASE: ${VITE_WS_BASE:-}
     networks:
       lab-internal:
-        ipv4_address: 172.29.0.2
+        ipv4_address: 172.29.0.7
     restart: unless-stopped
     # 临时 HTTP 测试：由前端容器直接监听公网 80 端口。
     ports: ["80:80"]
