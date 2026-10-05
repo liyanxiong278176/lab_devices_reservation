@@ -145,7 +145,6 @@ jobs:
 
           target="${DEPLOY_USER}@${DEPLOY_HOST}"
           remote_path="$(printf '%q' "$DEPLOY_PATH")"
-          remote_command="set -eu; test -d $remote_path; test -w $remote_path; test -r $remote_path/.env; test -r $remote_path/backend/.env; docker compose version >/dev/null; tar -xzf - -C $remote_path --no-same-owner"
           ssh_options=(
             -i "$DEPLOY_SSH_KEY_FILE"
             -p "$DEPLOY_PORT"
@@ -156,7 +155,38 @@ jobs:
             -o ConnectTimeout=20
           )
 
-          git archive --format=tar "$GITHUB_SHA" | gzip -1 | ssh "${ssh_options[@]}" "$target" "$remote_command"
+          ssh "${ssh_options[@]}" "$target" "bash -s -- $remote_path" <<'REMOTE_PREFLIGHT'
+          set -euo pipefail
+
+          deploy_path="$1"
+          if [[ ! -d "$deploy_path" ]]; then
+            echo "::error::Deployment directory does not exist: $deploy_path" >&2
+            exit 1
+          fi
+          cd "$deploy_path"
+
+          if [[ ! -w . ]]; then
+            echo "::error::Deployment user cannot write to $deploy_path" >&2
+            exit 1
+          fi
+          for required_file in .env backend/.env; do
+            if [[ ! -r "$required_file" ]]; then
+              echo "::error::Deployment user cannot read $deploy_path/$required_file" >&2
+              exit 1
+            fi
+          done
+          if ! command -v docker >/dev/null || ! docker compose version; then
+            echo "::error::Docker Compose is unavailable to the deployment user" >&2
+            exit 1
+          fi
+          if ! command -v tar >/dev/null; then
+            echo "::error::tar is unavailable on the server" >&2
+            exit 1
+          fi
+          echo "Remote deployment preflight passed."
+          REMOTE_PREFLIGHT
+
+          git archive --format=tar "$GITHUB_SHA" | gzip -1 | ssh "${ssh_options[@]}" "$target" "tar -xzf - -C $remote_path --no-same-owner"
 
       - name: Build and restart affected services
         shell: bash
