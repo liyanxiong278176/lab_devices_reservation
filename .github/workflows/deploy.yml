@@ -72,6 +72,11 @@ jobs:
                 monitoring/mysql/*)
                   mysql_exporter=true
                   ;;
+                .github/workflows/deploy.yml)
+                  # Workflow updates also reconcile frontend/backend Compose networking.
+                  backend=true
+                  frontend=true
+                  ;;
               esac
             done < <(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA")
           fi
@@ -248,12 +253,16 @@ jobs:
 
           if [[ "$backend_changed" == true ]]; then
             "${compose[@]}" build app celery-worker
+            "${compose[@]}" up -d --wait --wait-timeout 300 mysql redis qdrant
             "${compose[@]}" run --rm --no-deps app uv run --no-dev alembic upgrade head
-            "${compose[@]}" up -d --no-deps app celery-worker
+            "${compose[@]}" up -d --no-deps --wait --wait-timeout 300 app celery-worker
           fi
 
           if [[ "$frontend_changed" == true ]]; then
             "${compose[@]}" build frontend
+          fi
+
+          if [[ "$frontend_changed" == true || "$backend_changed" == true ]]; then
             "${compose[@]}" up -d --no-deps frontend
           fi
 
