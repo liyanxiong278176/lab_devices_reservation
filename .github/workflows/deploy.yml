@@ -267,7 +267,11 @@ jobs:
           fi
 
           if [[ "$frontend_changed" == true || "$backend_changed" == true ]]; then
-            "${compose[@]}" up -d --no-deps frontend
+            if [[ "$frontend_changed" == true ]]; then
+              "${compose[@]}" up -d --no-deps --force-recreate frontend
+            else
+              "${compose[@]}" up -d --no-deps frontend
+            fi
           fi
 
           if [[ "$prometheus_changed" == true ]]; then
