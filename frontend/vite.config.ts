@@ -1,9 +1,15 @@
 import { defineConfig } from 'vitest/config'
+import { loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 
+const rootEnvDirectory = path.resolve(__dirname, '..')
+const rootViteEnv = loadEnv('development', rootEnvDirectory, 'VITE_')
+
 // https://vite.dev/config/  (vitest/config extends UserConfig with the `test` key)
 export default defineConfig({
+  // Keep frontend build-time settings in the repository root .env.
+  envDir: rootEnvDirectory,
   plugins: [vue()],
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   server: {
@@ -11,7 +17,10 @@ export default defineConfig({
     // FastAPI 本地开发端口默认是 8000；可用 VITE_API_PROXY_TARGET 覆盖。
     proxy: {
       '/api': {
-        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000',
+        target:
+          rootViteEnv.VITE_API_PROXY_TARGET ||
+          process.env.VITE_API_PROXY_TARGET ||
+          'http://localhost:8000',
         changeOrigin: true,
       },
     },

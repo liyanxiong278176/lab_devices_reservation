@@ -1,7 +1,8 @@
 """Create local-only credentials required by the development monitoring stack.
 
 Existing values are preserved. The Prometheus scrape token is shared between
-the root Compose .env file and backend/.env, while all other secrets are unique.
+the PROMETHEUS_METRICS_TOKEN and LAB_METRICS_TOKEN keys in the root .env file,
+while all other secrets are unique.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ROOT_ENV = ROOT / ".env"
-BACKEND_ENV = ROOT / "backend" / ".env"
 
 
 def find_available_grafana_port() -> str:
@@ -91,16 +91,15 @@ def write_env(path: Path, lines: list[str]) -> None:
 
 def main() -> None:
     root_lines, root_values = read_env(ROOT_ENV)
-    backend_lines, backend_values = read_env(BACKEND_ENV)
 
     compose_token = root_values.get("PROMETHEUS_METRICS_TOKEN", "")
-    backend_token = backend_values.get("LAB_METRICS_TOKEN", "")
-    if compose_token and backend_token and compose_token != backend_token:
+    runtime_token = root_values.get("LAB_METRICS_TOKEN", "")
+    if compose_token and runtime_token and compose_token != runtime_token:
         raise ValueError(
             "PROMETHEUS_METRICS_TOKEN and LAB_METRICS_TOKEN already differ; "
             "resolve the local values manually instead of overwriting either one."
         )
-    metrics_token = compose_token or backend_token or secrets.token_hex(32)
+    metrics_token = compose_token or runtime_token or secrets.token_hex(32)
     if len(metrics_token) < 32:
         raise ValueError("The existing metrics token must contain at least 32 characters")
 
@@ -117,9 +116,9 @@ def main() -> None:
         raise ValueError("GRAFANA_PORT must be a valid TCP port number")
 
     changed_root: list[str] = []
-    changed_backend: list[str] = []
     for key, value in (
         ("PROMETHEUS_METRICS_TOKEN", metrics_token),
+        ("LAB_METRICS_TOKEN", metrics_token),
         ("GRAFANA_ADMIN_USER", "admin"),
         ("GRAFANA_ADMIN_PASSWORD", grafana_password),
         ("GRAFANA_PORT", grafana_port),
@@ -128,20 +127,11 @@ def main() -> None:
         if set_value(root_lines, root_values, key, value):
             changed_root.append(key)
 
-    if set_value(backend_lines, backend_values, "LAB_METRICS_TOKEN", metrics_token):
-        changed_backend.append("LAB_METRICS_TOKEN")
-
     if changed_root:
         write_env(ROOT_ENV, root_lines)
-    if changed_backend:
-        write_env(BACKEND_ENV, backend_lines)
 
     print("Local monitoring credentials are ready; secret values were not displayed.")
     print(f"Updated root .env keys: {', '.join(changed_root) or 'none (already configured)'}")
-    print(
-        "Updated backend/.env keys: "
-        f"{', '.join(changed_backend) or 'none (already configured)'}"
-    )
     print("Grafana username: admin")
     print(f"Grafana localhost port: {root_values['GRAFANA_PORT']}")
     print("Grafana password: generated locally; retrieve it from root .env when needed.")

@@ -169,9 +169,20 @@ jobs:
             echo "::error::Deployment user cannot write to $deploy_path" >&2
             exit 1
           fi
-          for required_file in .env backend/.env; do
+          for required_file in .env; do
             if [[ ! -r "$required_file" ]]; then
               echo "::error::Deployment user cannot read $deploy_path/$required_file" >&2
+              exit 1
+            fi
+          done
+          required_env_keys=(
+            DB_ROOT_PASSWORD DB_APP_USER DB_APP_PASSWORD JWT_SECRET APP_PUBLIC_ORIGIN
+            PROMETHEUS_METRICS_TOKEN GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD
+            MYSQL_EXPORTER_PASSWORD LAB_AI_API_KEY LAB_AI_EMBEDDING_API_KEY LAB_AI_MINERU_API_KEY
+          )
+          for key in "${required_env_keys[@]}"; do
+            if ! grep -Eq "^[[:space:]]*${key}=[^[:space:]]" .env; then
+              echo "::error::Server root .env must contain a non-empty $key entry" >&2
               exit 1
             fi
           done
@@ -187,6 +198,7 @@ jobs:
           REMOTE_PREFLIGHT
 
           git archive --format=tar "$GITHUB_SHA" | gzip -1 | ssh "${ssh_options[@]}" "$target" "tar -xzf - -C $remote_path --no-same-owner"
+          ssh "${ssh_options[@]}" "$target" "cd $remote_path && find backend frontend -maxdepth 1 -type f -name '.env*' -delete"
 
       - name: Build and restart affected services
         shell: bash

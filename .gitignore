@@ -1,7 +1,12 @@
 target/
 backend/.venv/
-backend/.env
-backend/.env.local
+# The repository root .env is the only active configuration file; ignore any
+# local nested variants so credentials are not accidentally tracked.
+.env
+.env.*
+!/.env.example
+**/.env
+**/.env.*
 backend/__pycache__/
 backend/**/__pycache__/
 backend/.pytest_cache/
@@ -46,8 +51,7 @@ build/
 ### Mac OS ###
 .DS_Store
 
-# 部署环境变量(含 AI_MASTER_KEY / embedding key 等密钥,勿提交;.env.example 是 tracked 模板)
-.env
+# The root .env is the deployment environment file and must never be committed.
 .gstack/
 
 # Local reservation E2E scenarios and evidence runs

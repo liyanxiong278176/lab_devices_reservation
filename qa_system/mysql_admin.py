@@ -35,7 +35,7 @@ def _secret_candidates() -> list[str]:
                     break
     if os.environ.get("DB_ROOT_PASSWORD"):
         candidates.append(os.environ["DB_ROOT_PASSWORD"])
-    for path in (ROOT / ".env", ROOT / "backend" / ".env"):
+    for path in (ROOT / ".env",):
         if path.exists():
             value = dotenv_values(path).get("DB_ROOT_PASSWORD")
             if value:

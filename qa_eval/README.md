@@ -8,7 +8,7 @@ fixtures. It never drops a schema or truncates a table.
 ## Environment
 
 Run from the repository root in PowerShell. Use a local development/test database only. The
-backend's `.env` remains untouched; set QA variables in the current PowerShell process. The fixture
+the project root `.env` remains untouched; set QA variables in the current PowerShell process. The fixture
 factory generates a random disposable password for its accounts and stores it only in the ignored
 fixture manifest. The DSN and credentials are consumed only by the process and are redacted from
 reports.

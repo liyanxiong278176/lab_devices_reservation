@@ -24,7 +24,7 @@ async def test_provider(
     settings: Settings,
 ) -> ProviderTestResult:
     if not runtime.api_key:
-        raise ApiError("AI_KEY_REQUIRED", "请先在后端 .env 配置对应服务的 API Key 并重启", 422)
+        raise ApiError("AI_KEY_REQUIRED", "请先在根目录 .env 配置对应服务的 API Key 并重启", 422)
     started = time.perf_counter()
     try:
         if component == "chat":

@@ -21,6 +21,7 @@ frontend/e2e             Playwright 浏览器链路测试
 # 启动开发依赖
 # 首次运行前复制 .env.example 为 .env，并填写 DB_ROOT_PASSWORD、DB_APP_PASSWORD。
 # Copy-Item .env.example .env
+# FastAPI and Celery also read LAB_* settings from this same root .env.
 docker compose up -d mysql redis qdrant
 
 # 后端

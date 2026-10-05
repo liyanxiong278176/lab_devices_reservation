@@ -56,7 +56,7 @@ from app.infrastructure.db.models import (
 
 AI_NOT_CONFIGURED_MESSAGE = (
     "当前 AI 模型尚未配置，暂时无法进行通用对话。"
-    "请系统管理员检查后端 .env 中的聊天与 Embedding 配置并重启服务。"
+    "请系统管理员检查根目录 .env 中的聊天与 Embedding 配置并重启服务。"
 )
 # LangGraph's default (25) would impose an accidental per-run tool cap. The
 # actual stop conditions are no-progress detection and the daily token ledger.

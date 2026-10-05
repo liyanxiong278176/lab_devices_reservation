@@ -678,13 +678,13 @@ async def stream_message(
     if runtime is None or not runtime.enabled or not runtime.api_key:
         raise ApiError(
             "AI_NOT_CONFIGURED",
-            "聊天模型尚未配置，请联系系统管理员检查后端 .env 并重启服务",
+            "聊天模型尚未配置，请联系系统管理员检查根目录 .env 并重启服务",
             503,
         )
     if embedding is None or not embedding.enabled or not embedding.api_key:
         raise ApiError(
             "AI_RAG_NOT_CONFIGURED",
-            "知识检索模型尚未配置，请联系系统管理员检查后端 .env 中的 Embedding Key",
+            "知识检索模型尚未配置，请联系系统管理员检查根目录 .env 中的 Embedding Key",
             503,
         )
     run = AiRun(
@@ -1372,7 +1372,7 @@ async def create_embedding_rebuild(
     settings = request.app.state.settings
     runtime = await get_component_config(session, settings, "embedding")
     if not runtime.enabled or not runtime.api_key:
-        raise ApiError("AI_EMBEDDING_NOT_CONFIGURED", "请先在后端 .env 配置 Embedding Key", 409)
+        raise ApiError("AI_EMBEDDING_NOT_CONFIGURED", "请先在根目录 .env 配置 Embedding Key", 409)
     active = await session.scalar(
         select(AiEmbeddingRebuildJob.id)
         .where(AiEmbeddingRebuildJob.status.in_(["QUEUED", "RUNNING"]))

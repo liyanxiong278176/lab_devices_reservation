@@ -14,7 +14,7 @@
 
 ## 本地数据库凭据
 
-首次启动前将根目录 `.env.example` 复制为 `.env`，为 `DB_ROOT_PASSWORD` 和 `DB_APP_PASSWORD` 分别填写独立的 64 位十六进制随机值；后端 `.env` 中的 `LAB_MYSQL_DSN` 应使用 `lab_runtime` 应用账号。开发 Compose 只将 MySQL/Redis 端口绑定到 `127.0.0.1`，应用账号只获 `lab_reservation` 数据库权限。已有 MySQL 数据卷不会因改 Compose 环境变量而自动创建/轮换账号；迁移已有部署时，保留当前 root 密码作为 `DB_ROOT_PASSWORD`，先在 MySQL 中创建 `lab_runtime` 并授予该数据库权限，再切换后端 DSN。不要删除数据卷。
+首次启动前将根目录 `.env.example` 复制为 `.env`，为 `DB_ROOT_PASSWORD` 和 `DB_APP_PASSWORD` 分别填写独立的 64 位十六进制随机值；在根目录 `.env` 中配置的 `LAB_MYSQL_DSN` 应使用 `lab_runtime` 应用账号。开发 Compose 只将 MySQL/Redis 端口绑定到 `127.0.0.1`，应用账号只获 `lab_reservation` 数据库权限。已有 MySQL 数据卷不会因改 Compose 环境变量而自动创建/轮换账号；迁移已有部署时，保留当前 root 密码作为 `DB_ROOT_PASSWORD`，先在 MySQL 中创建 `lab_runtime` 并授予该数据库权限，再切换后端 DSN。不要删除数据卷。
 
 生产 Compose 还要求根 `.env` 配置真实 HTTPS `APP_PUBLIC_ORIGIN`；应用容器启用 `LAB_COOKIE_SECURE=true`，浏览器 Cookie 与 CSRF Origin 校验必须使用该精确域名。不要把示例域名或 `http://` 用作公网配置。
 
@@ -36,11 +36,11 @@ pnpm dev
 
 ## 运行指标与 Grafana
 
-开发和生产 Compose 都包含 Prometheus、Grafana、MySQL/Redis exporter 与 cAdvisor。Prometheus 保留 30 天数据且不发布宿主机端口；开发 Grafana 仅绑定 `127.0.0.1:${GRAFANA_PORT}`，默认端口为 3000，生产远程访问应通过 SSH 本地端口转发。监控账号密码不写入仓库：在根 `.env` 配置 `PROMETHEUS_METRICS_TOKEN`、`GRAFANA_ADMIN_USER`、`GRAFANA_ADMIN_PASSWORD` 和 `MYSQL_EXPORTER_PASSWORD`；后端 `backend/.env` 的 `LAB_METRICS_TOKEN` 必须与前者相同。所有 token/password 建议使用互相独立的 32 字节随机十六进制值。MySQL exporter 使用独立、限连接数的只读账号；启动时会通过共享 Unix socket 完成账号初始化，不开放远程 root 登录，不会删除或重建现有数据库卷。
+开发和生产 Compose 都包含 Prometheus、Grafana、MySQL/Redis exporter 与 cAdvisor。Prometheus 保留 30 天数据且不发布宿主机端口；开发 Grafana 仅绑定 `127.0.0.1:${GRAFANA_PORT}`，默认端口为 3000，生产远程访问应通过 SSH 本地端口转发。监控账号密码不写入仓库：统一在根 `.env` 配置；`PROMETHEUS_METRICS_TOKEN` 与 `LAB_METRICS_TOKEN` 应相同。所有 token/password 建议使用互相独立的 32 字节随机十六进制值。MySQL exporter 使用独立、限连接数的只读账号；启动时会通过共享 Unix socket 完成账号初始化，不开放远程 root 登录，不会删除或重建现有数据库卷。
 
 配置完成后执行 `docker compose up -d` 启动完整开发依赖和监控服务。Grafana 地址为 <http://127.0.0.1:3000>（若端口被占用，按根 `.env` 的 `GRAFANA_PORT` 访问），使用根 `.env` 中配置的账号登录，`LabFlow Runtime Overview` 仪表盘会自动加载。Prometheus 只可从 Compose 内部访问。
 
-开发环境可在创建根 `.env` 和 `backend/.env` 后运行以下脚本，自动为本机监控生成缺失的独立密钥，并选择一个可用的 Grafana localhost 端口；已有值会保留，Prometheus 与后端指标令牌会自动保持一致。脚本不会打印密钥，也不修改生产配置：
+开发环境可在创建根 `.env` 后运行以下脚本，自动为本机监控生成缺失的独立密钥，并选择一个可用的 Grafana localhost 端口；已有值会保留，Prometheus 与后端指标令牌会自动保持一致。脚本不会打印密钥，也不修改生产配置：
 
 ```powershell
 uv run --project backend python backend/scripts/setup_local_monitoring_env.py
@@ -75,7 +75,7 @@ uv run python benchmarks/reservation_concurrency.py --base-url http://127.0.0.1:
 
 首次初始化时可在 `.env` 设置 `LAB_BOOTSTRAP_ADMIN_PASSWORD`，服务只会在账号不存在时创建全局 `admin` 管理员，不会覆盖已有账号。
 
-AI 服务配置从 `backend/.env` 读取，不保存在数据库；复制 [`backend/.env.example`](backend/.env.example) 为 `backend/.env`，填写 `LAB_AI_API_KEY`、`LAB_AI_EMBEDDING_API_KEY` 和 `LAB_AI_MINERU_API_KEY` 后重启后端。生产 compose 也会将该文件注入后端容器。不要提交 `backend/.env`。
+AI 服务配置从根目录 `.env` 读取，不保存在数据库；复制 [`.env.example`](.env.example) 为 `.env`，填写 `LAB_AI_API_KEY`、`LAB_AI_EMBEDDING_API_KEY` 和 `LAB_AI_MINERU_API_KEY` 后重启后端。生产 Compose 从同一文件读取配置，只将 `LAB_*` 应用配置传入后端容器。不要提交 `.env`。
 
 本地空库恢复开发演示数据（先执行迁移；仅限非生产环境）：
 
@@ -90,3 +90,21 @@ uv run python scripts/seed_demo_data.py
 脚本会补齐三个学院、各自的负责人/实验室/示例设备、`zhangsan` 普通用户和设备 SOP/安全须知；已存在记录不会重复创建。不要在生产环境运行演示数据脚本。
 
 项目只保留 FastAPI/Python 后端实现，容器、开发文档和实际运行入口均以 `backend/` 为准。设计决策与迁移说明见 [`CONTEXT.md`](CONTEXT.md) 和 [`docs/superpowers/specs/2026-08-26-fastapi-langchain-rebuild-design.md`](docs/superpowers/specs/2026-08-26-fastapi-langchain-rebuild-design.md)。
+
+## GitHub Actions 自动部署
+
+`.github/workflows/deploy.yml` 只在推送到 `main` 或 `master` 时运行部署，不运行测试、lint 或覆盖率检查。它将该次推送中的已跟踪文件经 SSH 传到 `/www/wwwroot/lab_devices_reservation`，并保留服务器上的根目录 `.env`。前端改动只重建 `frontend`；后端改动会先构建镜像并执行 `alembic upgrade head`，再重启 `app` 和 `celery-worker`；Prometheus、Grafana 或 MySQL exporter 配置改动只重启相应监控服务；生产 Compose 文件改动会重建前后端并应用 Compose 配置。
+
+首次部署前，请把服务器实际使用的数据库、JWT、监控值，以及 `LAB_AI_API_KEY`、`LAB_AI_EMBEDDING_API_KEY` 和 `LAB_AI_MINERU_API_KEY` 写入服务器根目录 `.env`。工作流会检查这些键是否存在且非空；它不会上传或覆盖本机 `.env`。
+
+仓库 **Settings → Secrets and variables → Actions** 需添加以下 Secrets：
+
+| Secret | 内容 |
+| --- | --- |
+| `DEPLOY_HOST` | 服务器公网 IP 或主机名 |
+| `DEPLOY_PORT` | SSH 端口，例如 `22` |
+| `DEPLOY_USER` | 专用部署账号 |
+| `DEPLOY_SSH_KEY` | 部署账号的 SSH 私钥，不要提交到仓库或发到聊天 |
+| `DEPLOY_KNOWN_HOSTS` | 服务器 SSH host key 记录，需先核对指纹 |
+
+部署账号需要能写入 `/www/wwwroot/lab_devices_reservation`、读取该目录下的根 `.env` 并执行 `docker compose`。在服务器创建专用 SSH 账号，为其配置 SSH 公钥并授予项目目录和 Docker Compose 所需权限；将对应私钥内容存入 `DEPLOY_SSH_KEY`。`DEPLOY_KNOWN_HOSTS` 可由 `ssh-keyscan -p <端口> -H <主机名或 IP>` 生成；添加前应通过服务器控制台核对 host key 指纹。服务器云安全组和系统防火墙也需允许 GitHub Actions 到该 SSH 端口的连接。

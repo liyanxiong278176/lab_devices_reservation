@@ -442,7 +442,7 @@ async function confirm() {
               <p>模型未完成配置和连通性测试前，AI 对话与知识检索不可用。</p>
             </div>
             <el-button v-if="isSystemAdmin" type="primary" plain @click="openModelConfig">查看配置状态</el-button>
-            <span v-else>请联系系统管理员检查后端 .env 配置并重启服务</span>
+            <span v-else>请联系系统管理员检查根目录 .env 配置并重启服务</span>
           </div>
           <div v-if="bootError || store.error" class="workbench-alert">
             <span>{{ bootError || store.error }}</span>
@@ -609,7 +609,7 @@ async function confirm() {
           <Setting />
           <div>
             <strong>管理员全局配置</strong>
-            <p>模型参数和密钥由后端 `.env` 提供；修改后重启后端生效，数据库不保存服务密钥。</p>
+            <p>模型参数和密钥由项目根目录 `.env` 提供；修改后重启后端生效，数据库不保存服务密钥。</p>
           </div>
         </div>
         <el-alert
@@ -671,7 +671,7 @@ async function confirm() {
             <div v-else class="embedding-rebuild__empty">重建前会先测试模型连通性，不会影响当前在线检索。</div>
           </section>
         <el-alert v-if="modelTestMessage" :title="modelTestMessage" :type="modelTestSuccess ? 'success' : 'error'" :closable="false" show-icon />
-        <p class="model-config__hint">此页面仅展示服务状态和环境变量名称，不会读取或回显密钥。修改 backend/.env 后需重启后端。</p>
+        <p class="model-config__hint">此页面仅展示服务状态和环境变量名称，不会读取或回显密钥。修改项目根目录 .env 后需重启后端。</p>
       </div>
       <template #footer>
         <el-button @click="modelConfigVisible = false">关闭</el-button>

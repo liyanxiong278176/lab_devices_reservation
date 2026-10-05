@@ -1,6 +1,8 @@
 # stage1: build
 FROM node:20-alpine AS builder
 WORKDIR /build
+ARG VITE_WS_BASE=
+ENV VITE_WS_BASE=${VITE_WS_BASE}
 RUN corepack enable && corepack prepare pnpm@10 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile

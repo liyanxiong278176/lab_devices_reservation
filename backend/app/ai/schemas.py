@@ -167,7 +167,7 @@ class AiDomainTermData(BaseModel):
 
 
 class AiEmbeddingRebuildRequest(BaseModel):
-    """Rebuild using the active Embedding configuration loaded from backend .env."""
+    """Rebuild using the active Embedding configuration loaded from the root .env."""
 
 
 class AiEmbeddingRebuildData(BaseModel):

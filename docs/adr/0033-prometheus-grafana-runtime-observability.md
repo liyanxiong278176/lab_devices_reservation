@@ -19,6 +19,6 @@ Application labels use route templates, bounded HTTP methods, and status classes
 
 - Operators can inspect runtime trends across the API, dependencies, worker, and containers without exposing Prometheus to the host network.
 - Metrics storage is bounded by a 30-day retention policy; the Prometheus data volume must be sized for local workload.
-- Developers configure the same scrape token in root `.env` and `backend/.env`; production Compose supplies it to both containers.
+- Developers configure both `PROMETHEUS_METRICS_TOKEN` and `LAB_METRICS_TOKEN` in the root `.env` with the same value; production Compose passes the token only to the API and Prometheus services that need it.
 - cAdvisor requires read-only access to host/container filesystem and cgroup paths. It is not privileged and its metrics endpoint is not published.
 - The dashboard contains technical telemetry only. Alerting and business analytics remain future work.

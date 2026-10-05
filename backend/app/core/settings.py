@@ -1,15 +1,19 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LAB_",
-        env_file=(".env", ".env.local"),
+        env_file=PROJECT_ROOT / ".env",
+        env_ignore_empty=True,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -19,7 +23,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v2"
     environment: Literal["local", "test", "dev", "prod"] = "local"
     debug: bool = False
-    # Local runtime uses a schema-scoped account; credentials belong in .env.
+    # Local runtime uses a schema-scoped account; credentials belong in the root .env.
     mysql_dsn: str = "mysql+asyncmy://lab_runtime@127.0.0.1:3306/lab_reservation?charset=utf8mb4"
     redis_url: str = "redis://127.0.0.1:6379/0"
     celery_broker_url: str = "redis://127.0.0.1:6379/1"

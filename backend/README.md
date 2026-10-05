@@ -4,19 +4,13 @@ This is the project's only backend runtime: FastAPI, async SQLAlchemy, MySQL, Re
 
 ## Local services and processes
 
-1. Configure the two environment files. From the repository root, copy the Compose secrets template and set the MySQL passwords:
+1. Configure the single environment file from the repository root. Copy the template and set the MySQL passwords, backend settings, and any AI provider credentials you use:
 
    ```powershell
    Copy-Item .env.example .env
    ```
 
-   Then copy the backend runtime template and set `LAB_MYSQL_DSN` to use the same application password, plus the AI provider credentials needed by the workflows you use:
-
-   ```powershell
-   Copy-Item backend/.env.example backend/.env
-   ```
-
-   The root `.env` is read by Compose; when API and Worker commands run from `backend`, the backend `.env` is read by FastAPI/Celery.
+   FastAPI and Celery load `LAB_*` settings from this root `.env`, even when commands run from `backend`; Docker Compose also reads this same file.
 2. Start the dependencies from the repository root:
 
    ```powershell
