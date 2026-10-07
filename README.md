@@ -1,110 +1,80 @@
 # LabFlow 实验室设备预约系统
 
-当前运行时采用单体异步架构：
+## 项目背景
 
-- `backend/`：Python 3.13 + FastAPI + SQLAlchemy Async + Alembic，统一 API 前缀为 `/api/v2`。
-- `frontend/`：Vue 3 + Vite + TypeScript，桌面 Web 优先；AI 入口位于左侧“AI 工作台”。
-- MySQL 8：业务数据、学院租户、自然日预约占用、幂等键与 durable outbox。
-- Redis 7：登录会话、版本化权限快照、预约锁、设备日级名额 Hash 预占、租户目录/推荐缓存、Lua 限流和实时分发。预约名额 Hash 以资源池和日期为 key、实物设备 ID 为 field；MySQL 设备日期唯一约束仍是防超约最终防线，Redis 名额缓存未命中或不可用时回退到 MySQL。Redis 会话服务不可用时认证失败关闭。
+LabFlow 面向高校实验室的设备共享与管理，支持普通用户按自然日预约设备，以及管理员审批、现场交接、归还验收、报修处理、违约处罚和申诉。系统按学院隔离数据，并提供消息通知和 AI 知识库助手。
 
-浏览器登录使用 HttpOnly Cookie：JWT 只含 256 位随机 SID 和签发校验字段，不携带用户/权限数据；Redis 保存 SID 会话与 Refresh Token 哈希，MySQL 保存授权版本。角色权限快照按 SID 和版本缓存，角色或权限变更递增版本；账号禁用和学院归属每次请求从 MySQL 重新校验。写接口校验可信 Origin 与 CSRF 双提交令牌。升级后端时执行 Alembic 迁移并让所有用户重新登录，旧 Refresh Session 会被撤销；新登录使用 `/login`，普通用户自助注册使用 `/register`。
-- Qdrant：学院/全局知识库向量检索；MySQL 保存文档元数据、版本和权限事实。
+后端使用 Python 3.13 / FastAPI，前端使用 Vue 3 / TypeScript / Element Plus，依赖 MySQL 8、Redis 7 和 Qdrant。
 
-本轮非 AI 可靠性改造还包括：按“设备 + 自然日”排序加锁与数据库唯一约束双重防超约；设备目录使用学院租户隔离的 Cache-Aside、TTL 抖动和热点保护；Redis Lua 令牌桶限流并在 Redis 故障时降级到进程内限流；MySQL Outbox 采用租约领取、聚合键串行、指数退避、死信和管理员重试；预约、审批、报修、通知、设备、用户和实验室列表使用 ID 子查询延迟关联，支持页码直跳并限制最多跳过 100,000 条匹配记录；履约采用预约记录、照片和现场交接，不使用二维码；归还验收、信用事件、候补、不可预约日和完成后评价形成业务闭环。运维端点默认不向匿名用户暴露诊断信息：`/ready` 需系统管理员，`/metrics` 默认关闭并支持独立抓取密钥。
+## 安装使用
 
-## 本地数据库凭据
+准备 Python 3.13、uv、Node.js、pnpm 和 Docker Desktop。以下命令在 PowerShell 中执行。
 
-首次启动前将根目录 `.env.example` 复制为 `.env`，为 `DB_ROOT_PASSWORD` 和 `DB_APP_PASSWORD` 分别填写独立的 64 位十六进制随机值；在根目录 `.env` 中配置的 `LAB_MYSQL_DSN` 应使用 `lab_runtime` 应用账号。开发 Compose 只将 MySQL/Redis 端口绑定到 `127.0.0.1`，应用账号只获 `lab_reservation` 数据库权限。已有 MySQL 数据卷不会因改 Compose 环境变量而自动创建/轮换账号；迁移已有部署时，保留当前 root 密码作为 `DB_ROOT_PASSWORD`，先在 MySQL 中创建 `lab_runtime` 并授予该数据库权限，再切换后端 DSN。不要删除数据卷。
+### 1. 配置环境并启动依赖
 
-生产 Compose 默认要求真实 HTTPS `APP_PUBLIC_ORIGIN` 并启用 `LAB_COOKIE_SECURE=true`。临时公网 HTTP 测试必须同时设置 `APP_PUBLIC_ORIGIN=http://...`、`LAB_COOKIE_SECURE=false` 和 `LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING=true`；HTTP 会让登录凭据和会话 Cookie 缺少传输加密，测试结束后应恢复 HTTPS 和安全 Cookie。
-
-## 本地验证
+在项目根目录执行（已有 `.env` 时保留原文件）：
 
 ```powershell
-# 初次运行前复制根目录凭据模板并填写随机密钥与监控凭据。
-# Copy-Item .env.example .env
-docker compose up -d
+Copy-Item .env.example .env
+```
+
+按模板填写 `.env` 中的数据库密码、JWT 密钥及 Compose 必填项。`LAB_MYSQL_DSN` 中的账号、密码应与 `DB_APP_USER`、`DB_APP_PASSWORD` 一致；设置 `LAB_BOOTSTRAP_ADMIN_PASSWORD` 作为首次创建 `admin` 的密码。
+
+```powershell
+docker compose up -d mysql redis qdrant
+```
+
+若本机使用独立版 Compose，将 `docker compose` 替换为 `docker-compose`。
+
+### 2. 安装并启动后端
+
+从项目根目录执行：
+
+```powershell
 cd backend
 uv sync
 uv run alembic upgrade head
-uv run uvicorn app.main:app --host 0.0.0.0 --reload --port 8000
+uv run uvicorn app.main:app --loop app.core.uvicorn_loop:platform_loop_factory --host 127.0.0.1 --reload --port 8000
+```
 
-cd ..\frontend
+后端接口文档：[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)。
+
+### 3. 安装并启动前端
+
+另开终端，从项目根目录执行：
+
+```powershell
+cd frontend
 pnpm install
 pnpm dev
 ```
 
-## 运行指标与 Grafana
+浏览器访问 [http://localhost:5173](http://localhost:5173)。普通用户可在登录页注册；管理员使用 `admin` 和配置的初始化密码登录，已有账号的密码不会被覆盖。
 
-开发和生产 Compose 都包含 Prometheus、Grafana、MySQL/Redis exporter 与 cAdvisor。Prometheus 保留 30 天数据且不发布宿主机端口；开发 Grafana 仅绑定 `127.0.0.1:${GRAFANA_PORT}`，默认端口为 3000，生产远程访问应通过 SSH 本地端口转发。监控账号密码不写入仓库：统一在根 `.env` 配置；`PROMETHEUS_METRICS_TOKEN` 与 `LAB_METRICS_TOKEN` 应相同。所有 token/password 建议使用互相独立的 32 字节随机十六进制值。MySQL exporter 使用独立、限连接数的只读账号；启动时会通过共享 Unix socket 完成账号初始化，不开放远程 root 登录，不会删除或重建现有数据库卷。
+当前工作区的本地测试账号：普通用户 `zhangsan / 123456`，系统管理员 `admin / admin123`。
 
-配置完成后执行 `docker compose up -d` 启动完整开发依赖和监控服务。Grafana 地址为 <http://127.0.0.1:3000>（若端口被占用，按根 `.env` 的 `GRAFANA_PORT` 访问），使用根 `.env` 中配置的账号登录，`LabFlow Runtime Overview` 仪表盘会自动加载。Prometheus 只可从 Compose 内部访问。
+推送到 `main` 或 `master` 后，自动部署会在数据库迁移完成后为三个预置学院补齐示例设备和维护计划（空库共 18 台设备、18 个计划）。重复部署不覆盖已有设备、维护计划或账号密码；示例数据可在管理页面编辑。
 
-开发环境可在创建根 `.env` 后运行以下脚本，自动为本机监控生成缺失的独立密钥，并选择一个可用的 Grafana localhost 端口；已有值会保留，Prometheus 与后端指标令牌会自动保持一致。脚本不会打印密钥，也不修改生产配置：
+### 4. 可选：初始化演示数据与 AI 知识库
 
-```powershell
-uv run --project backend python backend/scripts/setup_local_monitoring_env.py
-```
-
-Docker Desktop 通过 `host.docker.internal:8000` 抓取指标；本机开发后端保持回环地址绑定即可：
+首次使用空库时，可在完成迁移后从 `backend` 目录初始化学院、实验室、设备和 `zhangsan` 普通用户（仅限本地开发）：
 
 ```powershell
-uv run uvicorn app.main:app --loop app.core.uvicorn_loop:platform_loop_factory --host 127.0.0.1 --reload --port 8000
-```
-
-生产 Grafana 不公开到公网。远程维护时从运维机器建立 `ssh -L 3000:127.0.0.1:3000 <server>`，再打开本机 Grafana 地址。仪表盘仅含 API 延迟/错误/吞吐、进程与连接池、MySQL、Redis、容器及 Outbox 技术运行指标，不采集预约业务 KPI；本次不配置告警。
-
-运维端点：`/api/v2/live` 仅返回存活状态；`/api/v2/ready` 仅系统管理员可读；`/api/v2/metrics` 默认关闭，配置 `LAB_METRICS_TOKEN` 后仅接受对应 Bearer 密钥。生产 Nginx 不向浏览器代理 `/ready` 和 `/metrics`。
-
-后端检查：
-
-```powershell
-cd backend
-uv run ruff check .
-uv run pytest -q
-```
-
-预约并发黑盒验证：
-
-```powershell
-cd backend
-uv run python benchmarks/reservation_concurrency.py --base-url http://127.0.0.1:8000/api/v2 --token <ACCESS_TOKEN> --device-id <DEVICE_ID> --date 2099-01-01 --clients 100
-```
-
-同一设备同一天的并发请求应恰好 1 个返回 201，其余返回 409；压测数据请使用专用未来日期并在测试后清理。
-
-首次初始化时可在 `.env` 设置 `LAB_BOOTSTRAP_ADMIN_PASSWORD`，服务只会在账号不存在时创建全局 `admin` 管理员，不会覆盖已有账号。
-
-AI 服务配置从根目录 `.env` 读取，不保存在数据库；复制 [`.env.example`](.env.example) 为 `.env`，填写 `LAB_AI_API_KEY`、`LAB_AI_EMBEDDING_API_KEY` 和 `LAB_AI_MINERU_API_KEY` 后重启后端。生产 Compose 从同一文件读取配置，只将 `LAB_*` 应用配置传入后端容器。不要提交 `.env`。
-
-本地空库恢复开发演示数据（先执行迁移；仅限非生产环境）：
-
-```powershell
-cd backend
-$env:LAB_BOOTSTRAP_ADMIN_PASSWORD = '<管理员密码>'
-$env:LAB_DEMO_USER_PASSWORD = '<普通用户密码>'
+$env:LAB_DEMO_USER_PASSWORD = '123456'
 $env:LAB_DEMO_MANAGER_PASSWORD = '<负责人密码>'
 uv run python scripts/seed_demo_data.py
 ```
 
-脚本会补齐三个学院、各自的负责人/实验室/示例设备、`zhangsan` 普通用户和设备 SOP/安全须知；已存在记录不会重复创建。不要在生产环境运行演示数据脚本。
+脚本还需 `.env` 已配置 `LAB_BOOTSTRAP_ADMIN_PASSWORD`，已有记录不会重复创建。
 
-项目只保留 FastAPI/Python 后端实现，容器、开发文档和实际运行入口均以 `backend/` 为准。设计决策与迁移说明见 [`CONTEXT.md`](CONTEXT.md) 和 [`docs/superpowers/specs/2026-08-26-fastapi-langchain-rebuild-design.md`](docs/superpowers/specs/2026-08-26-fastapi-langchain-rebuild-design.md)。
+使用 AI 功能时，在根目录 `.env` 填写对应的 AI 服务凭据并重启后端；需要构建知识库时，另开终端从 `backend` 目录启动 Worker：
 
-## GitHub Actions 自动部署
+```powershell
+uv run celery -A app.infrastructure.tasks.celery_app:celery_app worker --pool=solo --loglevel=INFO --concurrency=1 --prefetch-multiplier=1 --queues=knowledge-build
+```
 
-`.github/workflows/deploy.yml` 只在推送到 `main` 或 `master` 时运行部署，不运行测试、lint 或覆盖率检查。它将该次推送中的已跟踪文件经 SSH 传到 `/www/wwwroot/lab_devices_reservation`，并保留服务器上的根目录 `.env`。前端改动只重建 `frontend`；后端改动会先构建镜像并执行 `alembic upgrade head`，再重启 `app` 和 `celery-worker`；Prometheus、Grafana 或 MySQL exporter 配置改动只重启相应监控服务；生产 Compose 文件改动会重建前后端并应用 Compose 配置。
+## 前端流程截图册
 
-首次部署前，请把服务器实际使用的数据库、JWT、监控值，以及 `LAB_AI_API_KEY`、`LAB_AI_EMBEDDING_API_KEY` 和 `LAB_AI_MINERU_API_KEY` 写入服务器根目录 `.env`。工作流会检查这些键是否存在且非空；它不会上传或覆盖本机 `.env`。
+[完整截图册，用浏览器打开逐张查看（242 张）](.artifacts/browser-flow-20261007/viewer/gallery.html)
 
-仓库 **Settings → Secrets and variables → Actions** 需添加以下 Secrets：
-
-| Secret | 内容 |
-| --- | --- |
-| `DEPLOY_HOST` | 服务器公网 IP 或主机名 |
-| `DEPLOY_PORT` | SSH 端口，例如 `22` |
-| `DEPLOY_USER` | 专用部署账号 |
-| `DEPLOY_SSH_KEY` | 部署账号的 SSH 私钥，不要提交到仓库或发到聊天 |
-| `DEPLOY_KNOWN_HOSTS` | 服务器 SSH host key 记录，需先核对指纹 |
-
-部署账号需要能写入 `/www/wwwroot/lab_devices_reservation`、读取该目录下的根 `.env` 并执行 `docker compose`。在服务器创建专用 SSH 账号，为其配置 SSH 公钥并授予项目目录和 Docker Compose 所需权限；将对应私钥内容存入 `DEPLOY_SSH_KEY`。`DEPLOY_KNOWN_HOSTS` 可由 `ssh-keyscan -p <端口> -H <主机名或 IP>` 生成；添加前应通过服务器控制台核对 host key 指纹。服务器云安全组和系统防火墙也需允许 GitHub Actions 到该 SSH 端口的连接。
+截图覆盖普通用户与管理员的预约审批、设备交接与归还验收、报修处理、违约处罚和申诉，以及管理员周期保养、仪器校准、安全检查与维修复测流程。入口对应当前工作区的本地测试产物。

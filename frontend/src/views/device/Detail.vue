@@ -48,7 +48,7 @@ const statusLabelText = computed(() => {
 })
 const bookingUnavailable = computed(() => {
   if (!device.value) return true
-  if (device.value.poolIdleQuantity != null) return device.value.poolIdleQuantity < 1
+  if (poolId.value != null && device.value.poolIdleQuantity != null) return device.value.poolIdleQuantity < 1
   return device.value.status !== 'IDLE' || Boolean(device.value.maintenanceWarning)
 })
 const selectedDate = ref<Date>(new Date())

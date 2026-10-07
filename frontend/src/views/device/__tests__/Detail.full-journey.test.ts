@@ -194,6 +194,24 @@ describe('device detail booking, calendar, and document journeys', () => {
     })
   })
 
+  it.each([
+    { status: 'IDLE', maintenanceWarning: '校准逾期' },
+    { status: 'MAINTENANCE', maintenanceWarning: undefined },
+  ])('blocks a restricted physical device even when the API supplies default pool counts: %j', async (restriction) => {
+    api.getDevice.mockResolvedValueOnce({
+      ...baseDevice,
+      ...restriction,
+      poolQuantity: 1,
+      poolIdleQuantity: 1,
+    })
+    const wrapper = await settledPage()
+    const reserve = wrapper.get('.device-detail__actionbar .gradient-button')
+    expect(reserve.attributes('disabled')).toBeDefined()
+    if (restriction.maintenanceWarning) expect(wrapper.text()).toContain(restriction.maintenanceWarning)
+    await reserve.trigger('click')
+    expect(router.push).not.toHaveBeenCalled()
+  })
+
   it('handles missing device fields, unknown status, and a maintenance warning that blocks booking', async () => {
     api.getDevice.mockResolvedValueOnce({ id: 42, name: '无品牌设备', status: 'CALIBRATING', maintenanceWarning: '校准逾期' })
     api.listDeviceDocuments.mockResolvedValueOnce([])

@@ -262,6 +262,7 @@ jobs:
             "${compose[@]}" build app celery-worker
             "${compose[@]}" up -d --wait --wait-timeout 300 mysql redis qdrant
             "${compose[@]}" run --rm --no-deps app uv run --no-dev alembic upgrade head
+            "${compose[@]}" run --rm --no-deps app uv run --no-dev python scripts/seed_production_catalog.py
             "${compose[@]}" up -d --no-deps --wait --wait-timeout 300 app celery-worker
           fi
 

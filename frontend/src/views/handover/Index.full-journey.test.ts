@@ -190,13 +190,32 @@ describe('handover and return acceptance full user journeys', () => {
     expect(wrapper.findAll('.dialog input:not([type="file"])')).toHaveLength(2)
     await wrapper.findAll('.dialog input:not([type="file"])')[0].setValue('接头损坏')
     api.uploadRepairImage.mockRejectedValueOnce(new Error('storage down'))
-    await expect(state.submitAction()).rejects.toThrow('storage down')
+    await expect(state.submitAction()).resolves.toBeUndefined()
     expect(state.saving).toBe(false)
+    expect(state.dialogVisible).toBe(true)
 
     api.uploadRepairImage.mockResolvedValueOnce({ url: '/uploads/valid.jpg' })
     await state.submitAction()
     await flushPromises()
     expect(messages.warning).toHaveBeenCalledWith('已记录交接异常，设备已转维修并生成关联工单')
+  })
+
+  it('keeps the handover form and evidence after a maintenance restriction rejects the request', async () => {
+    const wrapper = await settledPage()
+    const state = setup(wrapper)
+    state.openAction(reservation(), 'handover')
+    await nextTick()
+    const evidence = new File(['x'], 'handover.png', { type: 'image/png' })
+    await chooseFiles(uploadInput(wrapper), [evidence])
+    api.handoverReservation.mockRejectedValueOnce(Object.assign(new Error('校准逾期，不能交接'), {
+      response: { status: 409, data: { code: 'DEVICE_MAINTENANCE_RESTRICTION' } },
+    }))
+    await expect(state.submitAction()).resolves.toBeUndefined()
+    expect(state.dialogVisible).toBe(true)
+    expect(state.saving).toBe(false)
+    expect(state.evidenceFiles).toEqual([evidence])
+    expect(messages.success).not.toHaveBeenCalled()
+    expect(api.pendingHandovers).toHaveBeenCalledOnce()
   })
 
   it('accepts a returned device with damage notes and preserves the users return photos', async () => {

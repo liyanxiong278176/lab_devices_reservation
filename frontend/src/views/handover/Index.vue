@@ -121,6 +121,8 @@ async function submitAction() {
     }
     dialogVisible.value = false
     await load()
+  } catch {
+    // The shared request interceptor displays the error; keep the form for retry.
   } finally {
     saving.value = false
   }
