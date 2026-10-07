@@ -38,23 +38,24 @@ describe('reservation and user-facing API contracts', () => {
     expect(http.post).toHaveBeenCalledWith('/reservations', {
       pool_id: 17,
       preferred_device_id: 42,
+      quantity: 1,
       start_date: '2026-10-01',
       end_date: '2026-10-02',
       purpose: 'pool booking',
       purpose_category: 'RESEARCH',
       project_reference: undefined,
       commit_mode: 'all_or_nothing',
-    }, { headers: { 'Idempotency-Key': 'retry-key-1' } })
+    }, { headers: { 'Idempotency-Key': 'retry-key-1' }, suppressErrorToast: true })
   })
 
   it('serializes create/preflight defaults and reservation handover actions', async () => {
     await reservationApi.createReservation({
       deviceId: 8, startDate: '2026-09-30', endDate: '2026-10-01', purpose: 'study',
       purposeCategory: 'RESEARCH', projectReference: 'P-1', commitMode: 'available_only', dates: ['2026-09-30'],
-    })
+    }, 'retry-key-2')
     await reservationApi.createReservation({
       deviceId: 9, startDate: '2026-10-02', endDate: '2026-10-02', purpose: 'class', purposeCategory: 'OTHER',
-    })
+    }, 'retry-key-3')
     await reservationApi.preflightReservation({
       deviceId: 9, startDate: '2026-10-02', endDate: '2026-10-02', purpose: '', purposeCategory: '' as never,
     })
@@ -65,19 +66,19 @@ describe('reservation and user-facing API contracts', () => {
     expect(http.post.mock.calls.slice(0, 4)).toEqual([
       ['/reservations', {
         device_id: 8, start_date: '2026-09-30', end_date: '2026-10-01', purpose: 'study',
-        purpose_category: 'RESEARCH', project_reference: 'P-1', commit_mode: 'available_only', dates: ['2026-09-30'],
-      }],
+        purpose_category: 'RESEARCH', project_reference: 'P-1', quantity: 1, commit_mode: 'available_only', dates: ['2026-09-30'],
+      }, { headers: { 'Idempotency-Key': 'retry-key-2' }, suppressErrorToast: true }],
       ['/reservations', {
         device_id: 9, start_date: '2026-10-02', end_date: '2026-10-02', purpose: 'class',
-        purpose_category: 'OTHER', project_reference: undefined, commit_mode: 'all_or_nothing',
-      }],
+        purpose_category: 'OTHER', project_reference: undefined, quantity: 1, commit_mode: 'all_or_nothing',
+      }, { headers: { 'Idempotency-Key': 'retry-key-3' }, suppressErrorToast: true }],
       ['/reservations/preflight', {
         device_id: 9, start_date: '2026-10-02', end_date: '2026-10-02',
-        purpose: '设备使用', purpose_category: 'OTHER', project_reference: undefined,
+        purpose: '设备使用', purpose_category: 'OTHER', quantity: 1, project_reference: undefined,
       }],
       ['/reservations/preflight', {
         device_id: 8, start_date: '2026-10-03', end_date: '2026-10-03',
-        purpose: 'experiment', purpose_category: 'RESEARCH', project_reference: 'P-2',
+        purpose: 'experiment', purpose_category: 'RESEARCH', quantity: 1, project_reference: 'P-2',
       }],
     ])
 
@@ -107,6 +108,36 @@ describe('reservation and user-facing API contracts', () => {
       }],
       ['/reservations/6/accept-return', { condition: 'NORMAL', note: 'ok', checklist }],
     ])
+  })
+
+  it('retries only transient reservation failures with the exact same body and token', async () => {
+    vi.useFakeTimers()
+    try {
+      http.post
+        .mockRejectedValueOnce({ response: { status: 503 } })
+        .mockRejectedValueOnce({ response: { status: 502 } })
+        .mockResolvedValueOnce({ created: [{ id: 44 }], skipped_conflicts: [] })
+      const payload = {
+        deviceId: 42,
+        startDate: '2026-10-01',
+        endDate: '2026-10-02',
+        purpose: 'booking retry',
+        purposeCategory: 'RESEARCH' as const,
+      }
+      const resultPromise = reservationApi.createReservation(payload, 'same-token')
+      await vi.runAllTimersAsync()
+      await expect(resultPromise).resolves.toMatchObject({ created: [{ id: 44 }] })
+      expect(http.post).toHaveBeenCalledTimes(3)
+      expect(http.post.mock.calls.map((call) => call[2]?.headers)).toEqual([
+        { 'Idempotency-Key': 'same-token' },
+        { 'Idempotency-Key': 'same-token' },
+        { 'Idempotency-Key': 'same-token' },
+      ])
+      expect(http.post.mock.calls[0]?.[1]).toEqual(http.post.mock.calls[1]?.[1])
+      expect(http.post.mock.calls[1]?.[1]).toEqual(http.post.mock.calls[2]?.[1])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('maps reservation optionals for both present and empty server values', async () => {

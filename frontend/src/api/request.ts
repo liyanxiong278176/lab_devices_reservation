@@ -1,12 +1,23 @@
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import router from '@/router'
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    suppressErrorToast?: boolean
+  }
+  interface InternalAxiosRequestConfig {
+    suppressErrorToast?: boolean
+  }
+}
 
 const API_BASE = '/api/v2'
 const CSRF_HEADER = 'X-CSRF-Token'
 const LAST_REFRESH_KEY = 'lab-auth-refreshed-at'
 const CSRF_TOKEN_KEY = 'lab-auth-csrf-token'
+const SESSION_UNAVAILABLE_CODE = 'AUTH_SESSION_UNAVAILABLE'
+const SESSION_UNAVAILABLE_MESSAGE = '登录服务暂时不可用，请稍后重试'
 const service: AxiosInstance = axios.create({
   baseURL: API_BASE,
   timeout: 15000,
@@ -15,6 +26,7 @@ const service: AxiosInstance = axios.create({
 
 let csrfToken = ''
 let csrfPending: Promise<string> | null = null
+let sessionUnavailableNoticeVisible = false
 
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (event) => {
@@ -138,10 +150,31 @@ function showRequestError(err: any) {
     (path.endsWith('/auth/me') || path.endsWith('/auth/refresh'))
   ) return Promise.reject(err)
   const responseBody = err.response?.data as
-    | { message?: string; msg?: string }
+    | { code?: string; message?: string; msg?: string }
     | undefined
-  ElMessage.error(responseBody?.message || responseBody?.msg || err.message || '网络错误')
+  if (!err.config?.suppressErrorToast) {
+    if (responseBody?.code === SESSION_UNAVAILABLE_CODE) {
+      showSessionUnavailableNotice()
+    } else {
+      ElMessage.error(responseBody?.message || responseBody?.msg || err.message || '网络错误')
+    }
+  }
   return Promise.reject(err)
+}
+
+function showSessionUnavailableNotice() {
+  if (sessionUnavailableNoticeVisible) return
+  sessionUnavailableNoticeVisible = true
+  ElNotification({
+    message: SESSION_UNAVAILABLE_MESSAGE,
+    type: 'error',
+    position: 'top-right',
+    duration: 4500,
+    showClose: false,
+    onClose: () => {
+      sessionUnavailableNoticeVisible = false
+    },
+  })
 }
 
 function isCsrfFailure(err: any) {
@@ -246,7 +279,7 @@ service.interceptors.response.use(
     captureSessionCsrf(body)
     if (body && typeof body === 'object' && 'code' in body) {
       if (body.code === 'OK') return body.data
-      ElMessage.error(body.message || '请求失败')
+      if (!res.config.suppressErrorToast) ElMessage.error(body.message || '请求失败')
       return Promise.reject(body)
     }
     return body

@@ -17,6 +17,7 @@ from app.infrastructure.db.models import (
     DeviceMaintenancePlan,
     ExportTask,
     OutboxTask,
+    PenaltyRuleVersion,
     RepairReport,
     RepairWorklog,
     Reservation,
@@ -540,13 +541,28 @@ async def test_worker_no_show_missing_user_penalty_block_and_compare_set_race(
         user = await session.get(User, student.id)
         assert user is not None
         user.credit_score = 1
+        now = datetime.now(UTC).replace(tzinfo=None)
+        session.add(
+            PenaltyRuleVersion(
+                college_id=student.college_id,
+                version=1,
+                effective_at=now - timedelta(minutes=1),
+                grace_days=0,
+                tiers={
+                    "NO_SHOW": [{"occurrence": 1, "points": 10, "block_days": 0}],
+                    "OVERDUE_RETURN": [],
+                    "MANUAL_VIOLATION": [],
+                },
+                created_by=student.id,
+            )
+        )
         await session.commit()
 
     await worker._handle("RESERVATION_NO_SHOW", {"reservation_id": reservation_id})
     async with factory() as session:
         user = await session.get(User, student.id)
         assert user is not None and user.credit_score == 0
-        assert user.booking_blocked_until is not None
+        assert user.booking_blocked_until is None
 
     original_execute = AsyncSession.execute
     race_once = True

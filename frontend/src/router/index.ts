@@ -63,6 +63,15 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '我的预约', icon: 'Calendar', permissions: ['reservation:read:own'] },
       },
       {
+        path: 'penalties',
+        name: 'penalties',
+        component: () => import('@/views/penalty/Index.vue'),
+        meta: {
+          title: '违规与申诉',
+          icon: 'Warning',
+        },
+      },
+      {
         path: 'reservations/:id',
         name: 'reservation-detail',
         component: () => import('@/views/reservation/Detail.vue'),

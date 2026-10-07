@@ -17,10 +17,12 @@ const mocks = vi.hoisted(() => ({
   deviceAvailability: vi.fn(),
   devicePoolAvailability: vi.fn(),
   createReservation: vi.fn(),
+  isTransientReservationError: vi.fn(() => false),
   joinWaitlist: vi.fn(),
   preflightReservation: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
+  error: vi.fn(),
   valid: true,
   validationThrows: false,
 }))
@@ -30,7 +32,8 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: mocks.push, back: mocks.back }),
 }))
 vi.mock('@/router', () => ({ readSpaDepth: () => 0 }))
-vi.mock('element-plus', () => ({ ElMessage: { success: mocks.success, warning: mocks.warning } }))
+vi.mock('element-plus', () => ({ ElMessage: { success: mocks.success, warning: mocks.warning, error: mocks.error } }))
+vi.mock('@/stores/user', () => ({ useUserStore: () => ({ userId: 7, initialize: vi.fn() }) }))
 vi.mock('@/api/device', () => ({
   getDevice: mocks.getDevice,
   getDevicePool: mocks.getDevicePool,
@@ -44,11 +47,13 @@ vi.mock('@/api/device', () => ({
 }))
 vi.mock('@/api/reservation', () => ({
   createReservation: mocks.createReservation,
+  isTransientReservationError: mocks.isTransientReservationError,
   joinWaitlist: mocks.joinWaitlist,
   preflightReservation: mocks.preflightReservation,
 }))
 
 import Create from '../Create.vue'
+import { savePendingReservationRequest } from '@/utils/reservation-request-recovery'
 
 const device = (overrides: Record<string, unknown> = {}) => ({
   id: 42,
@@ -67,6 +72,8 @@ const preflight = (overrides: Record<string, unknown> = {}) => ({
   device: device(),
   requested_dates: ['2026-10-01', '2026-10-02'],
   available_dates: ['2026-10-01', '2026-10-02'],
+  requested_quantity: 1,
+  available_units: 1,
   conflicts: [],
   all_available: true,
   safety_required: false,
@@ -115,6 +122,11 @@ const stubs = {
     emits: ['update:modelValue'],
     template: '<textarea :placeholder="placeholder" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
   },
+  'el-input-number': {
+    props: ['modelValue', 'min', 'max'],
+    emits: ['update:modelValue'],
+    template: '<input type="number" :value="modelValue" @input="$emit(\'update:modelValue\', Number($event.target.value))" />',
+  },
   'el-select': {
     props: ['modelValue'],
     emits: ['update:modelValue'],
@@ -133,9 +145,29 @@ function mountPage() {
 const setupOf = (wrapper: ReturnType<typeof mount>) =>
   (wrapper.vm as unknown as { $: { setupState: Record<string, unknown> } }).$.setupState
 
+function installLocalStorage() {
+  const entries = new Map<string, string>()
+  const storage = {
+    get length() { return entries.size },
+    clear: () => entries.clear(),
+    getItem: (key: string) => entries.get(key) ?? null,
+    key: (index: number) => [...entries.keys()][index] ?? null,
+    removeItem: (key: string) => entries.delete(key),
+    setItem: (key: string, value: string) => entries.set(key, String(value)),
+  } as Storage
+  Object.defineProperty(window, 'localStorage', { configurable: true, value: storage })
+}
+
 describe('reservation creation page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    installLocalStorage()
+    for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.localStorage.key(index)
+      if (key?.startsWith('lab-reservation-pending:v1:7:')) {
+        window.localStorage.removeItem(key)
+      }
+    }
     mocks.route.query = { deviceId: '42', startDate: '2026-10-01', endDate: '2026-10-02' }
     mocks.valid = true
     mocks.validationThrows = false
@@ -177,7 +209,7 @@ describe('reservation creation page', () => {
     }))
     expect(wrapper.text()).toContain('电子显微镜')
     expect(wrapper.text()).toContain('2026-10-01 至 2026-10-02')
-    expect(wrapper.text()).toContain('2 天可用')
+    expect(wrapper.text()).toContain('2 天满足 1 台名额')
     expect(wrapper.findAll('.availability-calendar__day')).toHaveLength(3)
     expect(wrapper.findAll('.availability-calendar__day')[1].attributes('disabled')).toBeDefined()
     expect(wrapper.find('.submit-button').attributes('disabled')).toBeDefined()
@@ -197,6 +229,34 @@ describe('reservation creation page', () => {
     expect(setupOf(wrapper).selectedDates).toEqual([today, today])
     await wrapper.find('select').setValue('RESEARCH')
     expect((setupOf(wrapper).form as { purposeCategory: string }).purposeCategory).toBe('RESEARCH')
+  })
+
+  it('restores an unresolved request and resends the identical payload and token', async () => {
+    const payload = {
+      poolId: 17,
+      startDate: '2026-10-01',
+      endDate: '2026-10-02',
+      quantity: 2,
+      purpose: '材料测试',
+      purposeCategory: 'RESEARCH' as const,
+      commitMode: 'all_or_nothing' as const,
+    }
+    savePendingReservationRequest({
+      userId: 7,
+      token: 'stable-token-1',
+      payload,
+      createdAt: '2026-10-01T08:00:00.000Z',
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('有一笔预约仍在确认中')
+    await wrapper.find('.reservation-recovery button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createReservation).toHaveBeenCalledWith(payload, 'stable-token-1')
+    expect(window.localStorage.getItem('lab-reservation-pending:v1:7:current')).toBeNull()
+    expect(mocks.push).toHaveBeenCalledWith({ name: 'reservation-mine' })
   })
 
   it('validates route dates and device identifiers while covering date selection and disabled-day rules', async () => {
@@ -437,6 +497,7 @@ describe('reservation creation page', () => {
       deviceId: 42,
       startDate: '2026-10-01',
       endDate: '2026-10-02',
+      quantity: 1,
       purpose: '材料拉伸测试',
       purposeCategory: 'TEACHING',
       projectReference: 'LAB-2026',
@@ -457,7 +518,7 @@ describe('reservation creation page', () => {
     setup.preflight = null
     await onSubmit()
     await flushPromises()
-    expect(mocks.warning).toHaveBeenCalledWith('存在冲突日期，请重新选择一段完全可用的连续日期')
+    expect(mocks.warning).toHaveBeenCalledWith('存在名额不足的日期，或无法在整个区间绑定 1 台设备')
 
     mocks.preflightReservation.mockResolvedValueOnce(preflight())
     mocks.createReservation.mockRejectedValueOnce(new Error('race conflict'))
@@ -466,6 +527,7 @@ describe('reservation creation page', () => {
     await flushPromises()
     expect(setup.submitting).toBe(false)
 
+    setup.preflight = preflight()
     const formRef = setup.formRef
     setup.formRef = undefined
     await onSubmit()

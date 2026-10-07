@@ -1,4 +1,5 @@
 import request from './request'
+import axios from 'axios'
 import type { Page } from '@/types/common'
 import type {
   ReservationCreatePayload,
@@ -113,7 +114,33 @@ function mapReservation(item: V2Reservation): ReservationVO {
  *  - GET  /reservations/mine        → 我的预约（分页 + 预约状态/交接状态过滤）
  *  - GET  /reservations/{id}        → 详情（本人或管理员）
  */
-export const createReservation = (data: ReservationCreatePayload, idempotencyKey?: string) => {
+export function isTransientReservationError(error: unknown): boolean {
+  const candidate = error as {
+    code?: string
+    response?: { status?: number; data?: { code?: string } }
+  } | null
+  const responseCode = candidate?.response?.data?.code || candidate?.code
+  if (responseCode === 'REQUEST_IN_PROGRESS') return true
+  const status = candidate?.response?.status
+  if (status === 408 || (typeof status === 'number' && status >= 500 && status <= 599)) {
+    return true
+  }
+  return axios.isAxiosError(error)
+    && !error.response
+    && ['ECONNABORTED', 'ETIMEDOUT', 'ERR_NETWORK'].includes(error.code || '')
+}
+
+const reservationRetryDelay = (attempt: number) =>
+  new Promise<void>((resolve) => {
+    const baseDelayMs = 250 * (2 ** attempt)
+    const jitterMs = Math.floor(Math.random() * 150)
+    setTimeout(resolve, baseDelayMs + jitterMs)
+  })
+
+export async function createReservation(
+  data: ReservationCreatePayload,
+  idempotencyKey: string,
+) {
   const body = {
     ...(data.poolId != null ? { pool_id: data.poolId } : { device_id: data.deviceId }),
     ...(data.preferredDeviceId != null ? { preferred_device_id: data.preferredDeviceId } : {}),
@@ -126,11 +153,20 @@ export const createReservation = (data: ReservationCreatePayload, idempotencyKey
     commit_mode: data.commitMode || 'all_or_nothing',
     ...(data.dates ? { dates: data.dates } : {}),
   }
-  return idempotencyKey
-    ? request.post<unknown, ReservationCreateResultVO>('/reservations', body, {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await request.post<unknown, ReservationCreateResultVO>('/reservations', body, {
         headers: { 'Idempotency-Key': idempotencyKey },
+        suppressErrorToast: true,
       })
-    : request.post<unknown, ReservationCreateResultVO>('/reservations', body)
+    } catch (error) {
+      lastError = error
+      if (!isTransientReservationError(error) || attempt === 2) throw error
+      await reservationRetryDelay(attempt)
+    }
+  }
+  throw lastError
 }
 
 export const preflightReservation = (data: ReservationCreatePayload) =>

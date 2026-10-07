@@ -24,7 +24,10 @@ from app.core.errors import ApiError
 from app.core.settings import Settings
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
 from app.infrastructure.cache.redis import get_redis, get_redis_circuit
-from app.infrastructure.cache.reservation_quota import ReservationQuotaCache
+from app.infrastructure.cache.reservation_quota import (
+    ReservationQuotaCache,
+    get_reservation_quota_readiness,
+)
 from app.infrastructure.db.models import ReservationWaitlist
 from app.infrastructure.db.session import get_db
 
@@ -48,6 +51,7 @@ def _service(request: Request, session: AsyncSession, principal: Principal) -> R
         reservation_quota=ReservationQuotaCache(
             get_redis(request),
             get_redis_circuit(request.app),
+            get_reservation_quota_readiness(request.app),
         ),
     )
 
@@ -127,7 +131,11 @@ async def confirm_waitlist_offer(
 async def create_reservation(
     payload: ReservationPlanRequest,
     request: Request,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    idempotency_key: str = Header(
+        min_length=1,
+        max_length=128,
+        alias="Idempotency-Key",
+    ),
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ReservationCreateData]:

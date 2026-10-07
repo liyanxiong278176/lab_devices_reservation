@@ -330,7 +330,17 @@ async def test_live_notification_is_emitted_after_a_user_stream_wake(seeded) -> 
         await session.commit()
     await app.state.notification_hub.publish(
         student.id,
-        {"eventType": "notification", "deliverySequence": sequence},
+        {
+            "eventType": "notification",
+            "id": 1,
+            "userId": student.id,
+            "deliverySequence": sequence,
+            "type": "SYSTEM",
+            "title": "实时通知测试",
+            "content": "由 Stream 消息驱动 SSE 推送",
+            "isRead": 0,
+            "createdAt": "2026-01-01T00:00:00",
+        },
     )
 
     assert "event: batch-start" in await anext(iterator)
@@ -338,6 +348,78 @@ async def test_live_notification_is_emitted_after_a_user_stream_wake(seeded) -> 
     assert "event: notification" in notification_event
     assert "id: 1" in notification_event
     assert _data(notification_event)["title"] == "实时通知测试"
+    await iterator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_live_stream_fills_sequence_gap_from_mysql_before_later_event(seeded) -> None:
+    factory, college, _, student, _, _, _, _ = seeded
+    async with factory() as session:
+        first_sequence = await next_delivery_sequence(session, student.id)
+        session.add(
+            Notification(
+                user_id=student.id,
+                college_id=college.id,
+                type="SYSTEM",
+                title="第一条",
+                content="cursor head",
+                delivery_sequence=first_sequence,
+            )
+        )
+        await session.commit()
+
+    app = _test_app(factory)
+    principal = _principal(student.id, college.id)
+    stream = await _connected_stream(app, student.id)
+    iterator = notifications._stream_events(_request(app), principal, stream, None)
+    assert await anext(iterator) == ": connected\n\n"
+    assert "event: stream-ready" in await anext(iterator)
+
+    async with factory() as session:
+        second_sequence = await next_delivery_sequence(session, student.id)
+        second = Notification(
+            user_id=student.id,
+            college_id=college.id,
+            type="SYSTEM",
+            title="第二条",
+            content="fill the gap",
+            delivery_sequence=second_sequence,
+        )
+        session.add(second)
+        await session.flush()
+        second_id = second.id
+        third_sequence = await next_delivery_sequence(session, student.id)
+        third = Notification(
+            user_id=student.id,
+            college_id=college.id,
+            type="SYSTEM",
+            title="第三条",
+            content="arrived first through Stream",
+            delivery_sequence=third_sequence,
+        )
+        session.add(third)
+        await session.commit()
+        third_id = third.id
+
+    await app.state.notification_hub.publish(
+        student.id,
+        {
+            "eventType": "notification",
+            "id": third_id,
+            "userId": student.id,
+            "deliverySequence": third_sequence,
+            "title": "第三条",
+            "content": "arrived first through Stream",
+        },
+    )
+    assert "event: batch-start" in await anext(iterator)
+    second_event = await anext(iterator)
+    third_event = await anext(iterator)
+    assert "id: 2" in second_event
+    assert _data(second_event)["title"] == "第二条"
+    assert f"id: {third_sequence}" in third_event
+    assert _data(third_event)["id"] == third_id
+    assert second_id != third_id
     await iterator.aclose()
 
 

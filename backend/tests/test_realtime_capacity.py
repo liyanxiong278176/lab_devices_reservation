@@ -61,6 +61,37 @@ async def test_hub_coalesces_notification_and_read_state_wakeups_per_user() -> N
 
 
 @pytest.mark.asyncio
+async def test_hub_deduplicates_notification_ids_and_signals_queue_overflow() -> None:
+    hub = NotificationHub(max_pending_events=2)
+    stream = await hub.reserve_pending("192.0.2.9", max_pending=1, max_per_ip=1)
+    assert stream is not None
+    assert await hub.connect(5, stream, max_total=1, max_per_user=1)
+
+    await hub.publish(
+        5,
+        {"eventType": "notification", "id": 10, "deliverySequence": 1},
+    )
+    await hub.publish(
+        5,
+        {"eventType": "notification", "id": 10, "deliverySequence": 2},
+    )
+    await hub.publish(
+        5,
+        {"eventType": "notification", "id": 11, "deliverySequence": 2},
+    )
+    await hub.publish(
+        5,
+        {"eventType": "notification", "id": 12, "deliverySequence": 3},
+    )
+
+    events, read_state, overflow_sequence, fallback = await hub.take_events(stream)
+    assert events == []
+    assert read_state is False
+    assert overflow_sequence == 3
+    assert fallback is False
+
+
+@pytest.mark.asyncio
 async def test_pending_stream_overflow_is_rejected() -> None:
     hub = NotificationHub()
     first = await hub.reserve_pending("192.0.2.1", max_pending=1, max_per_ip=2)

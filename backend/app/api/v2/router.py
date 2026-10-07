@@ -11,6 +11,7 @@ from app.api.v2.feedback import router as feedback_router
 from app.api.v2.maintenance import router as maintenance_router
 from app.api.v2.notifications import router as notifications_router
 from app.api.v2.notifications import stream_router as notification_stream_router
+from app.api.v2.penalties import router as penalties_router
 from app.api.v2.rbac import router as rbac_router
 from app.api.v2.recommendations import router as recommendations_router
 from app.api.v2.repairs import router as repairs_router
@@ -33,6 +34,7 @@ router.include_router(device_documents_router, tags=["device-documents"])
 router.include_router(device_access_router, tags=["device-access"])
 router.include_router(notifications_router, tags=["notifications"])
 router.include_router(notification_stream_router, tags=["notifications"])
+router.include_router(penalties_router, tags=["penalties"])
 router.include_router(reports_router, tags=["reports"])
 router.include_router(reservations_router, tags=["reservations"])
 router.include_router(reservation_rules_router, tags=["reservation-rules"])

@@ -688,7 +688,9 @@ async def test_waitlist_join_rejects_invalid_requests_and_reuses_cancelled_entry
         _assert_api_error(error, "DATE_BLOCKED")
 
         monkeypatch.setattr(service, "_blocked_dates", AsyncMock(return_value={}))
-        service.session.scalar = AsyncMock(return_value=SimpleNamespace(status="OFFERED"))
+        service.session.scalar = AsyncMock(
+            side_effect=[None, SimpleNamespace(status="OFFERED")]
+        )
         with pytest.raises(ApiError) as error:
             await service.join_waitlist(
                 device_id=device.id,
@@ -710,7 +712,7 @@ async def test_waitlist_join_rejects_invalid_requests_and_reuses_cancelled_entry
             user_id=student.id,
             reservation_date=target,
         )
-        service.session.scalar = AsyncMock(return_value=old_entry)
+        service.session.scalar = AsyncMock(side_effect=[None, old_entry])
         service.session.add = Mock()
         service.session.flush = AsyncMock()
         service.session.commit = AsyncMock()
@@ -996,7 +998,12 @@ async def test_create_permission_idempotency_user_and_policy_guards(seeded) -> N
         service.session.scalar = AsyncMock(
             side_effect=[
                 student,
-                SimpleNamespace(request_hash="different", response_body=None),
+                device.id,
+                SimpleNamespace(
+                    request_hash="different",
+                    response_code="PENDING",
+                    response_body=None,
+                ),
             ]
         )
         with pytest.raises(ApiError) as error:
@@ -1006,8 +1013,10 @@ async def test_create_permission_idempotency_user_and_policy_guards(seeded) -> N
         service.session.scalar = AsyncMock(
             side_effect=[
                 student,
+                device.id,
                 SimpleNamespace(
                     request_hash=request_hash(plan),
+                    response_code="PENDING",
                     response_body=None,
                 ),
             ]
@@ -1045,7 +1054,9 @@ async def test_create_permission_idempotency_user_and_policy_guards(seeded) -> N
         monkeypatch = pytest.MonkeyPatch()
         try:
             monkeypatch.setattr(service, "_load_device", AsyncMock(return_value=device))
-            service.session.scalar = AsyncMock(side_effect=[student, None])
+            service.session.scalar = AsyncMock(
+                side_effect=[student, device.id, student, None]
+            )
             with pytest.raises(ApiError) as error:
                 await service.create(plan)
             _assert_api_error(error, "DEVICE_NOT_FOUND")
@@ -1060,7 +1071,9 @@ async def test_create_permission_idempotency_user_and_policy_guards(seeded) -> N
                 permissions=("reservation:create",),
             )
             local._load_device = AsyncMock(return_value=device)
-            local.session.scalar = AsyncMock(side_effect=[student, device])
+            local.session.scalar = AsyncMock(
+                side_effect=[student, device.id, student, device]
+            )
             local.preflight = AsyncMock(return_value=SimpleNamespace(**preflight_values))
             with pytest.raises(ApiError) as captured:
                 await local.create(request)
@@ -1124,10 +1137,15 @@ async def test_create_integrity_conflict_and_idempotency_race_recovery(seeded, m
                 permissions=("reservation:create",),
             )
             monkeypatch.setattr(service, "_load_device", AsyncMock(return_value=device))
-            scalar_results = [student, device]
+            scalar_results = [student, plan.device_id, student, device, None]
             if key:
-                scalar_results.insert(1, None)
-                scalar_results.append(committed)
+                scalar_results = [
+                    student,
+                    plan.device_id,
+                    None,
+                    committed,
+                    None,
+                ]
             service.session.scalar = AsyncMock(side_effect=scalar_results)
             service.preflight = AsyncMock(return_value=base_preflight)
             service.session.flush = AsyncMock(
@@ -1148,20 +1166,29 @@ async def test_create_integrity_conflict_and_idempotency_race_recovery(seeded, m
 
     in_progress = await run_case(
         key="race-pending",
-        committed=SimpleNamespace(request_hash=request_hash(plan), response_body=None),
+        committed=SimpleNamespace(
+            request_hash=request_hash(plan),
+            response_code="PENDING",
+            response_body=None,
+        ),
     )
     assert isinstance(in_progress, ApiError) and in_progress.code == "REQUEST_IN_PROGRESS"
 
     replaced = await run_case(
         key="race-replaced",
-        committed=SimpleNamespace(request_hash="another-payload", response_body=None),
+        committed=SimpleNamespace(
+            request_hash="another-payload",
+            response_code="PENDING",
+            response_body=None,
+        ),
     )
-    assert isinstance(replaced, ApiError) and replaced.code == "RESERVATION_CONFLICT"
+    assert isinstance(replaced, ApiError) and replaced.code == "IDEMPOTENCY_REUSED"
 
     replayed = await run_case(
         key="race-committed",
         committed=SimpleNamespace(
             request_hash=request_hash(plan),
+            response_code="OK",
             response_body=success_shape,
         ),
     )
@@ -1489,6 +1516,11 @@ async def test_batch_approval_validates_scope_state_availability_and_maintenance
 async def test_violation_guards_credit_penalty_and_missing_user(seeded, monkeypatch) -> None:
     factory, _, _, student, _, manager, device, _ = seeded
     async with factory() as session:
+        apply_penalty = AsyncMock(return_value=None)
+        monkeypatch.setattr(
+            "app.application.reservations.apply_violation_penalty",
+            apply_penalty,
+        )
         principal = _principal(
             manager,
             "LAB_ADMIN",
@@ -1527,6 +1559,7 @@ async def test_violation_guards_credit_penalty_and_missing_user(seeded, monkeypa
         service.session.commit = AsyncMock()
         result = await service.violate(missing_user_row.id, "missing account")
         assert result.status == "VIOLATED"
+        apply_penalty.assert_awaited_once()
 
         student.credit_score = 95
         student.booking_blocked_until = None
@@ -1545,8 +1578,9 @@ async def test_violation_guards_credit_penalty_and_missing_user(seeded, monkeypa
         service.session.commit = AsyncMock()
         result = await service.violate(blocked_row.id, " repeated violation ")
         assert result.status == "VIOLATED"
-        assert student.credit_score == 75
-        assert student.booking_blocked_until is not None
+        assert student.credit_score == 95
+        assert student.booking_blocked_until is None
+        assert apply_penalty.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -1625,6 +1659,10 @@ async def test_handover_rejects_scope_state_device_maintenance_and_repair_confli
     monkeypatch,
 ) -> None:
     factory, _, _, student, _, manager, device, _ = seeded
+    monkeypatch.setattr(
+        "app.application.reservations.assert_handover_allowed",
+        AsyncMock(),
+    )
     async with factory() as session:
         manager_principal = _principal(
             manager,
@@ -1716,6 +1754,10 @@ async def test_handover_rejects_scope_state_device_maintenance_and_repair_confli
 @pytest.mark.asyncio
 async def test_handover_normal_and_exception_success_paths(seeded, monkeypatch) -> None:
     factory, _, _, student, _, manager, device, _ = seeded
+    monkeypatch.setattr(
+        "app.application.reservations.assert_handover_allowed",
+        AsyncMock(),
+    )
     async with factory() as session:
         principal = _principal(
             manager,
@@ -1888,7 +1930,7 @@ async def test_return_acceptance_normal_open_repair_and_fault_paths(seeded, monk
                 "_create_fault_repair",
                 AsyncMock(return_value=SimpleNamespace(id=501)),
             )
-            service.session.scalar = AsyncMock(side_effect=[handover, open_repairs])
+            service.session.scalar = AsyncMock(side_effect=[handover, open_repairs, None])
             service.session.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
             service.session.commit = AsyncMock()
             service.session.add = Mock()

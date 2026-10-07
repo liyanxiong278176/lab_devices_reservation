@@ -1,0 +1,38 @@
+groups:
+  - name: notification-stream
+    rules:
+      - alert: NotificationStreamBacklogOldestAge
+        expr: max(notification_stream_oldest_queued_seconds) > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Notification Stream backlog is older than one minute
+          description: At least one API process has unconsumed notification events older than 60 seconds.
+
+      - alert: NotificationStreamDeadLetterEntries
+        expr: max(notification_stream_dead_letter_length) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Notification events are in the dead-letter stream
+          description: Inspect and replay the dead-letter entries with the notification Stream operations command.
+
+      - alert: NotificationStreamConsumerLag
+        expr: max(notification_stream_group_lag) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Notification Stream consumer lag is above 1000 events
+          description: Check API consumer health and notification delivery throughput.
+
+      - alert: NotificationStreamPendingDeliveryStalled
+        expr: max(notification_stream_oldest_pending_seconds) > 60
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: A notification Stream pending entry has not been retried
+          description: Inspect the pending-entry list and consumer health for the affected API process.

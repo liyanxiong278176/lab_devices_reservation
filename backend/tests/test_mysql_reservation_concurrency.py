@@ -29,7 +29,10 @@ from app.infrastructure.cache.redis import (
     get_redis_circuit,
     get_redis_for_app,
 )
-from app.infrastructure.cache.reservation_quota import ReservationQuotaCache
+from app.infrastructure.cache.reservation_quota import (
+    ReservationQuotaCache,
+    ReservationQuotaReadiness,
+)
 from app.infrastructure.db.models import (
     Device,
     DeviceMaintenancePlan,
@@ -44,6 +47,9 @@ from app.infrastructure.db.models import (
     User,
 )
 from app.infrastructure.db.session import build_engine, build_session_factory
+from app.infrastructure.tasks.reservation_quota import (
+    reconcile_reservation_quota_pool_dates,
+)
 from app.infrastructure.tasks.worker import OutboxWorker
 from app.main import create_app
 from fastapi import FastAPI
@@ -57,8 +63,27 @@ def _reservation_quota_for_settings(settings: Settings):
     quota_cache = ReservationQuotaCache(
         get_redis_for_app(app),
         get_redis_circuit(app),
+        ReservationQuotaReadiness(),
     )
     return app, quota_cache
+
+
+async def _rebuild_test_quota(
+    factory,
+    quota_cache: ReservationQuotaCache,
+    pool_id: int,
+    dates: list[date],
+) -> None:
+    async with factory() as session:
+        async with session.begin():
+            await reconcile_reservation_quota_pool_dates(
+                session,
+                quota_cache,
+                pool_id=pool_id,
+                dates=dates,
+            )
+    assert quota_cache.readiness is not None
+    quota_cache.readiness.ready = True
 
 
 @pytest.mark.asyncio
@@ -72,11 +97,25 @@ async def test_mysql_same_device_day_concurrent_booking_has_one_winner(capsys) -
 
     prefix = f"e2e-reservation-race-{secrets.token_hex(4)}"
     engine = None
+    quota_app = None
     try:
         await seed(prefix)
         capsys.readouterr()
         engine = build_engine(settings)
         factory = build_session_factory(engine)
+        unavailable_redis_settings = settings.model_copy(
+            update={
+                "redis_url": "redis://127.0.0.1:1/0",
+                "redis_socket_timeout_seconds": 0.05,
+                "redis_circuit_failure_threshold": 1,
+            }
+        )
+        quota_app = create_app(unavailable_redis_settings)
+        quota_cache = ReservationQuotaCache(
+            get_redis_for_app(quota_app),
+            get_redis_circuit(quota_app),
+            ReservationQuotaReadiness(ready=True),
+        )
         async with factory() as session:
             student = await session.scalar(select(User).where(User.username == f"{prefix}-user"))
             student_role = await session.scalar(
@@ -117,7 +156,11 @@ async def test_mysql_same_device_day_concurrent_booking_has_one_winner(capsys) -
 
         async def submit(contender: int):
             async with factory() as session:
-                service = ReservationService(session, principals[contender])
+                service = ReservationService(
+                    session,
+                    principals[contender],
+                    reservation_quota=quota_cache,
+                )
                 return await service.create(
                     ReservationPlanRequest(
                         device_id=device_id,
@@ -161,6 +204,147 @@ async def test_mysql_same_device_day_concurrent_booking_has_one_winner(capsys) -
             )
             assert occupied_rows == 1
     finally:
+        if quota_app is not None:
+            await dispose_app_redis(quota_app)
+        if engine is not None:
+            await engine.dispose()
+        await cleanup(prefix)
+
+
+@pytest.mark.asyncio
+async def test_mysql_concurrent_same_token_with_different_payloads_is_rejected(capsys) -> None:
+    if os.getenv("LAB_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("set LAB_RUN_MYSQL_INTEGRATION=1 to run against the configured MySQL")
+
+    settings = Settings()
+    if settings.mysql_dsn.startswith("sqlite"):
+        pytest.skip("this test verifies the MySQL idempotency unique constraint")
+
+    prefix = f"e2e-idempotency-payload-race-{secrets.token_hex(4)}"
+    engine = None
+    quota_app = None
+    quota_cache = None
+    pool_id = None
+    target_date = None
+    user_id = None
+    device_id = None
+    token = f"{prefix}-same-token"
+    try:
+        await seed(prefix, pool_units=1)
+        capsys.readouterr()
+        engine = build_engine(settings)
+        factory = build_session_factory(engine)
+        quota_app, quota_cache = _reservation_quota_for_settings(settings)
+        assert await quota_cache.redis.ping() is True
+        async with factory() as session:
+            student = await session.scalar(
+                select(User).where(User.username == f"{prefix}-user")
+            )
+            device = await session.scalar(
+                select(Device).where(Device.name == f"{prefix}-device")
+            )
+            assert student is not None and device is not None and device.pool_id is not None
+            user_id = student.id
+            device_id = device.id
+            pool_id = int(device.pool_id)
+            target_date = date.today() + timedelta(days=10)
+            principal = Principal(
+                user_id=user_id,
+                username=student.username,
+                college_id=student.college_id,
+                roles=("STUDENT",),
+                token_type="access",
+                token_id=f"mysql-idempotency-payload-{secrets.token_hex(6)}",
+                permissions=("reservation:create",),
+            )
+            await session.commit()
+
+        base_plan = ReservationPlanRequest(
+            pool_id=pool_id,
+            start_date=target_date,
+            end_date=target_date,
+            purpose="并发幂等键请求 A",
+        )
+        plans = [
+            base_plan,
+            base_plan.model_copy(update={"purpose": "并发幂等键请求 B"}),
+        ]
+        async with factory() as session:
+            assert (
+                await ReservationService(
+                    session,
+                    principal,
+                    reservation_quota=quota_cache,
+                ).preflight(base_plan)
+            ).all_available is True
+        await _rebuild_test_quota(factory, quota_cache, pool_id, [target_date])
+
+        async def submit(index: int):
+            async with factory() as session:
+                try:
+                    result = await ReservationService(
+                        session,
+                        principal,
+                        reservation_quota=quota_cache,
+                    ).create(plans[index], idempotency_key=token)
+                except ApiError as error:
+                    return index, error
+                return index, result
+
+        outcomes = await asyncio.gather(submit(0), submit(1))
+        successes = [
+            (index, value)
+            for index, value in outcomes
+            if not isinstance(value, ApiError)
+        ]
+        failures = [
+            (index, value)
+            for index, value in outcomes
+            if isinstance(value, ApiError)
+        ]
+        assert len(successes) == len(failures) == 1, outcomes
+        losing_index, losing_error = failures[0]
+        assert losing_error.code in {"REQUEST_IN_PROGRESS", "IDEMPOTENCY_REUSED"}
+
+        winner_index, winner_result = successes[0]
+        replay = await submit(winner_index)
+        assert not isinstance(replay[1], ApiError)
+        assert replay[1].created[0].id == winner_result.created[0].id
+
+        with pytest.raises(ApiError) as reused:
+            async with factory() as session:
+                await ReservationService(
+                    session,
+                    principal,
+                    reservation_quota=quota_cache,
+                ).create(plans[losing_index], idempotency_key=token)
+        assert reused.value.code == "IDEMPOTENCY_REUSED"
+
+        async with factory() as session:
+            occupied = int(
+                await session.scalar(
+                    select(func.count(ReservationItem.id)).where(
+                        ReservationItem.reservation_date == target_date,
+                        ReservationItem.device_id == device_id,
+                    )
+                )
+                or 0
+            )
+            assert occupied == 1
+    finally:
+        if quota_app is not None:
+            if (
+                quota_cache is not None
+                and pool_id is not None
+                and target_date is not None
+                and user_id is not None
+            ):
+                await quota_cache.redis.delete(
+                    quota_cache._quota_key(pool_id, target_date),
+                    quota_cache._ready_key(pool_id, target_date),
+                    quota_cache._marker_key(pool_id, f"{user_id}:{token}", "hold"),
+                )
+            await dispose_app_redis(quota_app)
         if engine is not None:
             await engine.dispose()
         await cleanup(prefix)
@@ -232,6 +416,7 @@ async def test_mysql_same_user_can_repeat_pool_bookings_until_quota_is_full_and_
                 reservation_quota=quota_cache,
             ).preflight(plan)
             assert preflight.all_available is True
+        await _rebuild_test_quota(factory, quota_cache, pool_id, [target_date])
         assert await quota_cache.redis.hgetall(quota_key) == {
             str(device_id): "1" for device_id in physical_device_ids
         }
@@ -389,6 +574,174 @@ async def test_mysql_same_user_can_repeat_pool_bookings_until_quota_is_full_and_
 
 
 @pytest.mark.asyncio
+async def test_mysql_cancel_races_with_same_day_pool_rebooking(capsys) -> None:
+    if os.getenv("LAB_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("set LAB_RUN_MYSQL_INTEGRATION=1 to run against the configured MySQL")
+
+    settings = Settings()
+    if settings.mysql_dsn.startswith("sqlite"):
+        pytest.skip("this test verifies MySQL cancellation and reservation race semantics")
+
+    prefix = f"e2e-cancel-rebook-race-{secrets.token_hex(4)}"
+    engine = None
+    quota_app = None
+    quota_cache = None
+    pool_id = None
+    target_date = None
+    reservation_id = None
+    try:
+        await seed(prefix, pool_units=1)
+        capsys.readouterr()
+        engine = build_engine(settings)
+        factory = build_session_factory(engine)
+        quota_app, quota_cache = _reservation_quota_for_settings(settings)
+        assert await quota_cache.redis.ping() is True
+        async with factory() as session:
+            student = await session.scalar(
+                select(User).where(User.username == f"{prefix}-user")
+            )
+            device = await session.scalar(
+                select(Device).where(Device.name == f"{prefix}-device")
+            )
+            assert student is not None and device is not None and device.pool_id is not None
+            user_id = student.id
+            pool_id = int(device.pool_id)
+            device_id = device.id
+            target_date = date.today() + timedelta(days=10)
+            principal = Principal(
+                user_id=user_id,
+                username=student.username,
+                college_id=student.college_id,
+                roles=("STUDENT",),
+                token_type="access",
+                token_id=f"mysql-cancel-race-{secrets.token_hex(6)}",
+                permissions=(
+                    "reservation:create",
+                    "reservation:cancel",
+                    "reservation:read:own",
+                ),
+            )
+            initial = await ReservationService(session, principal).create(
+                ReservationPlanRequest(
+                    pool_id=pool_id,
+                    start_date=target_date,
+                    end_date=target_date,
+                    purpose="取消与重新预约竞态的初始占用",
+                ),
+                idempotency_key=f"{prefix}-initial-booking",
+            )
+            reservation_id = initial.created[0].id
+            await session.commit()
+
+        await _rebuild_test_quota(factory, quota_cache, pool_id, [target_date])
+        quota_key = quota_cache._quota_key(pool_id, target_date)
+        assert await quota_cache.redis.hget(quota_key, str(device_id)) == "0"
+
+        attempts = 12
+        ready_count = 0
+        ready_lock = asyncio.Lock()
+        start_together = asyncio.Event()
+
+        async def wait_for_start() -> None:
+            nonlocal ready_count
+            async with ready_lock:
+                ready_count += 1
+                if ready_count == attempts + 1:
+                    start_together.set()
+            await start_together.wait()
+
+        async def cancel_initial():
+            async with factory() as session:
+                await wait_for_start()
+                try:
+                    result = await ReservationService(
+                        session,
+                        principal,
+                        reservation_quota=quota_cache,
+                    ).cancel(reservation_id)
+                except ApiError as error:
+                    return error
+                return result
+
+        async def rebook(index: int):
+            async with factory() as session:
+                await wait_for_start()
+                try:
+                    result = await ReservationService(
+                        session,
+                        principal,
+                        reservation_quota=quota_cache,
+                    ).create(
+                        ReservationPlanRequest(
+                            pool_id=pool_id,
+                            start_date=target_date,
+                            end_date=target_date,
+                            purpose=f"取消竞态重新预约 {index}",
+                        ),
+                        idempotency_key=f"{prefix}-rebook-{index}",
+                    )
+                except ApiError as error:
+                    return error
+                return result
+
+        outcomes = await asyncio.gather(
+            cancel_initial(),
+            *(rebook(index) for index in range(attempts)),
+        )
+        cancel_result, *booking_outcomes = outcomes
+        assert not isinstance(cancel_result, ApiError), cancel_result
+        winners = [item for item in booking_outcomes if not isinstance(item, ApiError)]
+        failures = [item for item in booking_outcomes if isinstance(item, ApiError)]
+        assert len(winners) <= 1, outcomes
+        assert all(
+            item.code in {"RESERVATION_CONFLICT", "RESERVATION_QUOTA_INSUFFICIENT"}
+            for item in failures
+        ), failures
+
+        async with factory() as session:
+            stored_initial = await session.get(Reservation, reservation_id)
+            assert stored_initial is not None and stored_initial.status == "CANCELLED"
+            active_rows = int(
+                await session.scalar(
+                    select(func.count(ReservationItem.id))
+                    .join(Reservation, Reservation.id == ReservationItem.reservation_id)
+                    .where(
+                        ReservationItem.device_id == device_id,
+                        ReservationItem.reservation_date == target_date,
+                        Reservation.status.in_(("PENDING", "APPROVED", "IN_USE")),
+                    )
+                )
+                or 0
+            )
+            assert active_rows == len(winners)
+            cancel_task = await session.scalar(
+                select(OutboxTask).where(
+                    OutboxTask.task_key
+                    == f"reservation-quota:reconcile:cancel:{reservation_id}"
+                )
+            )
+            assert cancel_task is not None
+
+        await _rebuild_test_quota(factory, quota_cache, pool_id, [target_date])
+        refreshed = await quota_cache.redis.hget(quota_key, str(device_id))
+        assert refreshed == ("0" if winners else "1")
+    finally:
+        if quota_app is not None:
+            if quota_cache is not None and pool_id is not None:
+                stale_keys = [
+                    key async for key in quota_cache.redis.scan_iter(
+                        match=f"reserve:quota:{{{pool_id}}}:*"
+                    )
+                ]
+                if stale_keys:
+                    await quota_cache.redis.delete(*stale_keys)
+            await dispose_app_redis(quota_app)
+        if engine is not None:
+            await engine.dispose()
+        await cleanup(prefix)
+
+
+@pytest.mark.asyncio
 async def test_mysql_multiday_pool_booking_requires_same_physical_device_for_every_day(
     capsys,
 ) -> None:
@@ -451,6 +804,12 @@ async def test_mysql_multiday_pool_booking_requires_same_physical_device_for_eve
                 reservation_quota=quota_cache,
             ).preflight(continuous_plan)
             assert preflight.all_available is True
+        await _rebuild_test_quota(
+            factory,
+            quota_cache,
+            pool_id,
+            [first_day, second_day],
+        )
 
         for current_day, device_id in zip((first_day, second_day), device_ids, strict=True):
             async with factory() as session:
@@ -511,6 +870,302 @@ async def test_mysql_multiday_pool_booking_requires_same_physical_device_for_eve
             assert occupancy == 2
     finally:
         if quota_app is not None:
+            await dispose_app_redis(quota_app)
+        if engine is not None:
+            await engine.dispose()
+        await cleanup(prefix)
+
+
+@pytest.mark.asyncio
+async def test_mysql_reassigns_stale_redis_prehold_from_current_pool_inventory(capsys) -> None:
+    if os.getenv("LAB_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("set LAB_RUN_MYSQL_INTEGRATION=1 to run against the configured MySQL")
+
+    settings = Settings()
+    if settings.mysql_dsn.startswith("sqlite"):
+        pytest.skip("this test verifies MySQL pool allocation against a stale Redis snapshot")
+
+    prefix = f"e2e-stale-quota-hold-{secrets.token_hex(4)}"
+    engine = None
+    quota_app = None
+    quota_cache = None
+    pool_id = None
+    target_date = None
+    user_id = None
+    failed_token = None
+    try:
+        await seed(prefix, pool_units=2)
+        capsys.readouterr()
+        engine = build_engine(settings)
+        factory = build_session_factory(engine)
+        quota_app, quota_cache = _reservation_quota_for_settings(settings)
+        assert await quota_cache.redis.ping() is True
+
+        async with factory() as session:
+            student = await session.scalar(
+                select(User).where(User.username == f"{prefix}-user")
+            )
+            device = await session.scalar(
+                select(Device).where(Device.name == f"{prefix}-device")
+            )
+            assert student is not None and device is not None and device.pool_id is not None
+            device_ids = list(
+                (
+                    await session.scalars(
+                        select(Device.id)
+                        .where(Device.pool_id == device.pool_id)
+                        .order_by(Device.id)
+                    )
+                ).all()
+            )
+            assert len(device_ids) == 2
+            principal = Principal(
+                user_id=student.id,
+                username=student.username,
+                college_id=student.college_id,
+                roles=("STUDENT",),
+                token_type="access",
+                token_id=f"mysql-stale-quota-{secrets.token_hex(6)}",
+                permissions=("reservation:create",),
+            )
+            user_id = student.id
+            pool_id = int(device.pool_id)
+            target_date = date.today() + timedelta(days=10)
+            await session.commit()
+
+        # MySQL already owns the lowest-ID unit; Redis will be made stale below.
+        async with factory() as session:
+            await ReservationService(session, principal).create(
+                ReservationPlanRequest(
+                    device_id=device_ids[0],
+                    start_date=target_date,
+                    end_date=target_date,
+                    purpose="先占用第一台实物设备",
+                ),
+                idempotency_key=f"{prefix}-occupy-first",
+            )
+
+        await _rebuild_test_quota(factory, quota_cache, pool_id, [target_date])
+        quota_key = quota_cache._quota_key(pool_id, target_date)
+        assert await quota_cache.redis.hgetall(quota_key) == {
+            str(device_ids[0]): "0",
+            str(device_ids[1]): "1",
+        }
+        await quota_cache.redis.hset(
+            quota_key,
+            mapping={str(device_ids[0]): "1", str(device_ids[1]): "0"},
+        )
+
+        async with factory() as session:
+            result = await ReservationService(
+                session,
+                principal,
+                reservation_quota=quota_cache,
+            ).create(
+                ReservationPlanRequest(
+                    pool_id=pool_id,
+                    start_date=target_date,
+                    end_date=target_date,
+                    purpose="MySQL 应从资源池重新分配真实空闲设备",
+                ),
+                idempotency_key=f"{prefix}-stale-hold-request",
+            )
+
+        assert {item.device_id for item in result.created} == {device_ids[1]}
+        assert await quota_cache.redis.hgetall(quota_key) == {}
+        assert await quota_cache.redis.get(
+            quota_cache._ready_key(pool_id, target_date)
+        ) is None
+        assert quota_cache.readiness is not None and quota_cache.readiness.ready is False
+        async with factory() as session:
+            occupancy = int(
+                await session.scalar(
+                    select(func.count(ReservationItem.id)).where(
+                        ReservationItem.device_id.in_(device_ids),
+                        ReservationItem.reservation_date == target_date,
+                    )
+                )
+                or 0
+            )
+            assert occupancy == 2
+            reconcile_task = await session.scalar(
+                select(OutboxTask).where(
+                    OutboxTask.task_type == "RESERVATION_QUOTA_RECONCILE",
+                    OutboxTask.aggregate_key == f"reservation-quota:{pool_id}",
+                    OutboxTask.task_key.like(
+                        "reservation-quota:reconcile:stale-prehold:%"
+                    ),
+                )
+            )
+            assert reconcile_task is not None
+            assert reconcile_task.payload["dates"] == [target_date.isoformat()]
+
+        # A stale cache that advertises an actually occupied unit must not be
+        # compensated back to available after MySQL rejects the request.
+        await _rebuild_test_quota(factory, quota_cache, pool_id, [target_date])
+        await quota_cache.redis.hset(quota_key, str(device_ids[1]), "1")
+        failed_token = f"{prefix}-stale-occupied-hold"
+        with pytest.raises(ApiError) as conflict:
+            async with factory() as session:
+                await ReservationService(
+                    session,
+                    principal,
+                    reservation_quota=quota_cache,
+                ).create(
+                    ReservationPlanRequest(
+                        pool_id=pool_id,
+                        start_date=target_date,
+                        end_date=target_date,
+                        purpose="MySQL must reject an occupied stale Redis candidate",
+                    ),
+                    idempotency_key=failed_token,
+                )
+        assert conflict.value.code == "RESERVATION_CONFLICT"
+        assert await quota_cache.redis.hgetall(quota_key) == {}
+        assert await quota_cache.redis.get(
+            quota_cache._ready_key(pool_id, target_date)
+        ) is None
+        failed_marker = quota_cache._marker_key(
+            pool_id,
+            f"{user_id}:{failed_token}",
+            "hold",
+        )
+        assert await quota_cache.redis.get(failed_marker) == "REFUNDED"
+    finally:
+        if quota_app is not None and quota_cache is not None:
+            if pool_id is not None and target_date is not None:
+                keys = [
+                    quota_cache._quota_key(pool_id, target_date),
+                    quota_cache._ready_key(pool_id, target_date),
+                    quota_cache._marker_key(
+                        pool_id,
+                        f"{user_id}:{prefix}-stale-hold-request",
+                        "hold",
+                    ),
+                ]
+                if user_id is not None and failed_token is not None:
+                    keys.append(
+                        quota_cache._marker_key(
+                            pool_id,
+                            f"{user_id}:{failed_token}",
+                            "hold",
+                        )
+                    )
+                await quota_cache.redis.delete(*keys)
+            await dispose_app_redis(quota_app)
+        if engine is not None:
+            await engine.dispose()
+        await cleanup(prefix)
+
+
+@pytest.mark.asyncio
+async def test_mysql_stale_full_redis_cache_can_false_reject_available_device(capsys) -> None:
+    """Expose the availability tradeoff when Redis under-reports MySQL inventory."""
+    if os.getenv("LAB_RUN_MYSQL_INTEGRATION") != "1":
+        pytest.skip("set LAB_RUN_MYSQL_INTEGRATION=1 to run against the configured MySQL")
+
+    settings = Settings()
+    if settings.mysql_dsn.startswith("sqlite"):
+        pytest.skip("this test verifies stale Redis behavior against MySQL")
+
+    prefix = f"e2e-stale-full-cache-{secrets.token_hex(4)}"
+    engine = None
+    quota_app = None
+    quota_cache = None
+    pool_id = None
+    try:
+        await seed(prefix, pool_units=1)
+        capsys.readouterr()
+        engine = build_engine(settings)
+        factory = build_session_factory(engine)
+        quota_app, quota_cache = _reservation_quota_for_settings(settings)
+        assert await quota_cache.redis.ping() is True
+
+        async with factory() as session:
+            student = await session.scalar(
+                select(User).where(User.username == f"{prefix}-user")
+            )
+            device = await session.scalar(
+                select(Device).where(Device.name == f"{prefix}-device")
+            )
+            assert student is not None and device is not None and device.pool_id is not None
+            pool_id = int(device.pool_id)
+            device_id = device.id
+            target_date = date.today() + timedelta(days=10)
+            principal = Principal(
+                user_id=student.id,
+                username=student.username,
+                college_id=student.college_id,
+                roles=("STUDENT",),
+                token_type="access",
+                token_id=f"mysql-stale-full-{secrets.token_hex(6)}",
+                permissions=("reservation:create",),
+            )
+            plan = ReservationPlanRequest(
+                pool_id=pool_id,
+                start_date=target_date,
+                end_date=target_date,
+                purpose="验证 Redis 错误满额时的 MySQL 回源行为",
+            )
+
+        await _rebuild_test_quota(factory, quota_cache, pool_id, [target_date])
+        quota_key = quota_cache._quota_key(pool_id, target_date)
+        assert await quota_cache.redis.hget(quota_key, str(device_id)) == "1"
+        # Simulate a stale cache that says the free MySQL device is occupied.
+        await quota_cache.redis.hset(quota_key, str(device_id), "0")
+
+        request_token = f"{prefix}-stale-full-token"
+        with pytest.raises(ApiError) as rejected:
+            async with factory() as session:
+                await ReservationService(
+                    session,
+                    principal,
+                    reservation_quota=quota_cache,
+                ).create(plan, idempotency_key=request_token)
+        assert rejected.value.code == "RESERVATION_QUOTA_INSUFFICIENT"
+
+        async with factory() as session:
+            occupied_rows = int(
+                await session.scalar(
+                    select(func.count(ReservationItem.id)).where(
+                        ReservationItem.device_id == device_id,
+                        ReservationItem.reservation_date == target_date,
+                    )
+                )
+                or 0
+            )
+            assert occupied_rows == 0
+
+        # The definite cached rejection is persisted under the token, so repair
+        # does not change that request's terminal outcome; a fresh token succeeds.
+        await _rebuild_test_quota(factory, quota_cache, pool_id, [target_date])
+        with pytest.raises(ApiError) as replayed:
+            async with factory() as session:
+                await ReservationService(
+                    session,
+                    principal,
+                    reservation_quota=quota_cache,
+                ).create(plan, idempotency_key=request_token)
+        assert replayed.value.code == "RESERVATION_QUOTA_INSUFFICIENT"
+
+        async with factory() as session:
+            created = await ReservationService(
+                session,
+                principal,
+                reservation_quota=quota_cache,
+            ).create(plan, idempotency_key=f"{prefix}-fresh-token")
+        assert len(created.created) == 1
+    finally:
+        if quota_app is not None:
+            if quota_cache is not None and pool_id is not None:
+                stale_keys = [
+                    key
+                    async for key in quota_cache.redis.scan_iter(
+                        match=f"reserve:quota:{{{pool_id}}}:*"
+                    )
+                ]
+                if stale_keys:
+                    await quota_cache.redis.delete(*stale_keys)
             await dispose_app_redis(quota_app)
         if engine is not None:
             await engine.dispose()
@@ -622,6 +1277,7 @@ async def test_mysql_resource_pool_concurrency_never_exceeds_physical_quantity(c
                 reservation_quota=quota_cache,
             ).preflight(plan)
             assert preflight.all_available is True
+        await _rebuild_test_quota(factory, quota_cache, pool_id, [target_date])
         assert await quota_cache.redis.hgetall(quota_key) == {
             str(device_id): "1" for device_id in physical_device_ids
         }

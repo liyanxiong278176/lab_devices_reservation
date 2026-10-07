@@ -681,7 +681,7 @@ async def test_handover_compare_and_set_rejects_stale_normal_and_exception_actio
         image = await add_evidence(session, manager, "stale-exception-handover-0001")
         await session.commit()
 
-        async def load_stale(_reservation_id: int):
+        async def load_stale(_reservation_id: int, *, for_update: bool = False):
             return stale
 
         monkeypatch.setattr(service, "_load_reservation", load_stale)
@@ -726,7 +726,7 @@ async def test_handover_compare_and_set_rejects_stale_normal_and_exception_actio
         image = await add_evidence(session, manager, "stale-normal-handover-00001")
         await session.commit()
 
-        async def load_stale(_reservation_id: int):
+        async def load_stale(_reservation_id: int, *, for_update: bool = False):
             return stale
 
         monkeypatch.setattr(service, "_load_reservation", load_stale)

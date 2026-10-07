@@ -13,6 +13,7 @@
 | `device` | 设备目录和生命周期状态 | `college_id + status + id`、`college_id + lab_id + id` |
 | `reservation` | 预约主记录和状态机 | `user_id + id`、`college_id + status + id` |
 | `v2_reservation_day` | 每个设备每天一条占用记录 | `UNIQUE(device_id, date)`，并发防超约最终兜底 |
+| `v2_idempotency_key` | 每个用户的请求 token、规范化请求摘要和最终响应 | `UNIQUE(user_id, key)`；同键同内容重放原结果，同键不同内容拒绝 |
 | `v2_reservation_inspection` | 归还验收记录 | `reservation_id` 唯一 |
 | `v2_reservation_waitlist` | 设备日期候补队列 | 设备、日期、用户唯一，按自增 id 排队 |
 | `v2_reservation_blackout` | 学院/实验室/设备不可预约日 | 作用域、日期唯一 |
@@ -29,8 +30,14 @@
 ## 预约数据完整性
 
 预约输入只有 `date`，`start_time/end_time` 仅作为旧数据兼容字段写入全天边界，不参与
-冲突判断。冲突查询使用 `v2_reservation_day` 与有效状态关联，提交时在 Redis 日期锁内
-执行；Redis 不可用时，数据库唯一约束仍能保证同一设备同一天只有一个有效占用。
+冲突判断。提交时 MySQL 事务使用 `FOR UPDATE SKIP LOCKED` 选择并复核候选设备，再写入
+`v2_reservation_day`；`UNIQUE(device_id, date)` 保证同一实物设备同一天最多有一个占用项。
+多台多日申请必须找到覆盖全部日期的相同设备集合，并在单一事务中全成或全回滚。
+
+请求幂等表以 `(user_id, key)` 唯一约束串行化相同 token 的请求，并保存请求摘要与最终
+响应；token 相同但摘要不同时拒绝。Redis Lua 只作快速预占和辅助请求状态跟踪，Redis
+不可用或完整重建未完成时回退到 MySQL。预约及取消的事实以 MySQL 为准，取消后的 Redis
+同步通过同事务 Outbox 幂等重试。
 
 ## 数据权限
 

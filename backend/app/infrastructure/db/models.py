@@ -531,6 +531,209 @@ class CreditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class CollegeCreditAccount(Base):
+    """Per-college credit balance; credit history remains in CreditEvent."""
+
+    __tablename__ = "v2_college_credit_account"
+    __table_args__ = (
+        UniqueConstraint("user_id", "college_id", name="uk_v2_college_credit_user_college"),
+        Index("idx_v2_college_credit_college_points", "college_id", "points"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    college_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("college.id"), index=True)
+    points: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class PenaltyRuleVersion(Base):
+    """Immutable college-wide violation rules, versioned by effective time."""
+
+    __tablename__ = "v2_penalty_rule_version"
+    __table_args__ = (
+        UniqueConstraint("college_id", "version", name="uk_v2_penalty_rule_college_version"),
+        Index("idx_v2_penalty_rule_effective", "college_id", "effective_at", "version"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    college_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("college.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    effective_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    grace_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tiers: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_by: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PenaltyCase(Base):
+    """One confirmed violation and its immutable initial penalty snapshot."""
+
+    __tablename__ = "v2_penalty_case"
+    __table_args__ = (
+        UniqueConstraint("reservation_id", "violation_type", name="uk_v2_penalty_reservation_type"),
+        Index("idx_v2_penalty_user_college_event", "user_id", "college_id", "event_at"),
+        Index("idx_v2_penalty_college_status", "college_id", "status", "applied_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    reservation_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("reservation.id"), index=True)
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    college_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("college.id"), index=True)
+    lab_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("lab.id"), index=True)
+    device_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("device.id"), index=True)
+    violation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    event_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    rule_version_id: Mapped[int | None] = mapped_column(
+        BIGINT, ForeignKey("v2_penalty_rule_version.id")
+    )
+    occurrence_number: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    points_delta: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reservation_block_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", nullable=False, index=True)
+    confirmed_by: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    applied_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ReservationOverdue(Base):
+    """Return deadline, follow-up, and escalation state for an overdue reservation."""
+
+    __tablename__ = "v2_reservation_overdue"
+    __table_args__ = (
+        UniqueConstraint("reservation_id", name="uk_v2_reservation_overdue_reservation"),
+        Index(
+            "idx_v2_reservation_overdue_scope_status",
+            "college_id",
+            "status",
+            "grace_deadline_at",
+        ),
+        Index("idx_v2_reservation_overdue_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    reservation_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("reservation.id"), index=True)
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    college_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("college.id"), index=True)
+    lab_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("lab.id"), index=True)
+    device_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("device.id"), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    grace_deadline_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    rule_version_id: Mapped[int | None] = mapped_column(
+        BIGINT, ForeignKey("v2_penalty_rule_version.id")
+    )
+    penalty_case_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("v2_penalty_case.id"))
+    status: Mapped[str] = mapped_column(String(24), default="GRACE", nullable=False, index=True)
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    escalated_by: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    escalation_reason: Mapped[str | None] = mapped_column(String(1000))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ReservationOverdueFollowUp(Base):
+    """Append-only manager contact log for one overdue equipment case."""
+
+    __tablename__ = "v2_reservation_overdue_followup"
+    __table_args__ = (Index("idx_v2_overdue_followup_case_time", "overdue_id", "contacted_at"),)
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    overdue_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("v2_reservation_overdue.id", ondelete="CASCADE"), index=True
+    )
+    operator_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    contacted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    result: Mapped[str] = mapped_column(String(1000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ReservationBookingRestriction(Base):
+    """Active reservation or handover hold created by a penalty/escalation."""
+
+    __tablename__ = "v2_reservation_booking_restriction"
+    __table_args__ = (
+        UniqueConstraint("penalty_case_id", name="uk_v2_booking_restriction_penalty"),
+        UniqueConstraint("overdue_id", name="uk_v2_booking_restriction_overdue"),
+        Index(
+            "idx_v2_booking_restriction_user_scope",
+            "user_id",
+            "college_id",
+            "scope_type",
+            "scope_id",
+            "ends_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    college_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("college.id"), index=True)
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    scope_id: Mapped[int] = mapped_column(BIGINT, nullable=False)
+    reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    penalty_case_id: Mapped[int | None] = mapped_column(
+        BIGINT, ForeignKey("v2_penalty_case.id", ondelete="SET NULL")
+    )
+    overdue_id: Mapped[int | None] = mapped_column(
+        BIGINT, ForeignKey("v2_reservation_overdue.id", ondelete="SET NULL")
+    )
+    starts_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime)
+    release_reason: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PenaltyAppeal(Base):
+    """A user's appeal and its manager's auditable disposition."""
+
+    __tablename__ = "v2_penalty_appeal"
+    __table_args__ = (
+        UniqueConstraint("penalty_case_id", "attempt_number", name="uk_v2_penalty_appeal_attempt"),
+        Index("idx_v2_penalty_appeal_college_status", "college_id", "status", "submitted_at"),
+        Index("idx_v2_penalty_appeal_user", "user_id", "submitted_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    penalty_case_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("v2_penalty_case.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("sys_user.id"), index=True)
+    college_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("college.id"), index=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(2000), nullable=False)
+    evidence: Mapped[str | None] = mapped_column(String(2000))
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False, index=True)
+    reviewer_id: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    result: Mapped[str | None] = mapped_column(String(20))
+    result_reason: Mapped[str | None] = mapped_column(String(2000))
+    adjusted_points_delta: Mapped[int | None] = mapped_column(Integer)
+    adjusted_block_days: Mapped[int | None] = mapped_column(Integer)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PenaltyGraceBounds(Base):
+    """School-wide configurable lower/upper bounds for college grace periods."""
+
+    __tablename__ = "v2_penalty_grace_bounds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    minimum_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    maximum_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_by: Mapped[int | None] = mapped_column(BIGINT, ForeignKey("sys_user.id"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class RefreshSession(Base):
     """Rotatable refresh-token family record."""
 

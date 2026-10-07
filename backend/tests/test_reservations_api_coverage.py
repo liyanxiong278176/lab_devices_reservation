@@ -11,6 +11,8 @@ from app.core.settings import Settings
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
 from app.infrastructure.db.models import (
     Device,
+    IdempotencyKey,
+    OutboxTask,
     Reservation,
     ReservationWaitlist,
     ReservationWaitlistOffer,
@@ -137,6 +139,9 @@ async def test_reservation_preflight_create_idempotency_listing_detail_and_cance
         assert preflight.json()["data"]["all_available"] is True
 
         payload = _plan(device.id, requested, requested + timedelta(days=1))
+        missing_token = await client.post("/api/v2/reservations", json=payload)
+        assert missing_token.status_code == 422
+
         created = await client.post(
             "/api/v2/reservations",
             json=payload,
@@ -164,6 +169,23 @@ async def test_reservation_preflight_create_idempotency_listing_detail_and_cance
         assert reused.status_code == 409
         assert reused.json()["code"] == "IDEMPOTENCY_REUSED"
 
+        conflict_key = "coverage-reservation-terminal-failure"
+        conflict = await client.post(
+            "/api/v2/reservations",
+            json=payload,
+            headers={"Idempotency-Key": conflict_key},
+        )
+        assert conflict.status_code == 409
+        assert conflict.json()["code"] == "RESERVATION_CONFLICT"
+        conflict_replay = await client.post(
+            "/api/v2/reservations",
+            json=payload,
+            headers={"Idempotency-Key": conflict_key},
+        )
+        assert conflict_replay.status_code == 409
+        assert conflict_replay.json()["code"] == conflict.json()["code"]
+        assert conflict_replay.json()["message"] == conflict.json()["message"]
+
         listed = await client.get("/api/v2/reservations/mine?page=1&page_size=5&status=APPROVED")
         assert listed.status_code == 200
         assert listed.json()["data"]["total"] == 1
@@ -180,10 +202,31 @@ async def test_reservation_preflight_create_idempotency_listing_detail_and_cance
         assert after_cancel.json()["data"]["items"][0]["id"] == reservation_id
 
     async with factory() as session:
+        failed_key = await session.scalar(
+            select(IdempotencyKey).where(
+                IdempotencyKey.user_id == student.id,
+                IdempotencyKey.key == "coverage-reservation-terminal-failure",
+            )
+        )
+        assert failed_key is not None
+        assert failed_key.response_code == "ERR:409"
+        assert failed_key.response_body["code"] == "RESERVATION_CONFLICT"
         persisted = await session.get(Reservation, reservation_id)
         assert persisted is not None
         assert persisted.college_id == college.id
         assert persisted.status == "CANCELLED"
+        quota_reconcile = await session.scalar(
+            select(OutboxTask).where(
+                OutboxTask.task_key == f"reservation-quota:reconcile:cancel:{reservation_id}"
+            )
+        )
+        assert quota_reconcile is not None
+        assert quota_reconcile.task_type == "RESERVATION_QUOTA_RECONCILE"
+        assert quota_reconcile.payload["pool_id"] == (device.pool_id or device.id)
+        assert quota_reconcile.payload["dates"] == [
+            requested.isoformat(),
+            (requested + timedelta(days=1)).isoformat(),
+        ]
 
 
 @pytest.mark.asyncio
@@ -203,6 +246,7 @@ async def test_approval_queue_single_batch_approval_and_rejection_routes(seeded)
             result = await client.post(
                 "/api/v2/reservations",
                 json=_plan(device.id, base + timedelta(days=offset)),
+                headers={"Idempotency-Key": f"approval-queue-create-{offset}"},
             )
             assert result.status_code == 201
             ids.append(result.json()["data"]["created"][0]["id"])
@@ -243,7 +287,11 @@ async def test_same_day_handover_return_and_acceptance_routes(seeded) -> None:
 
     student_actor = {"value": _principal(student, "STUDENT")}
     async with _client(factory, student_actor) as client:
-        created = await client.post("/api/v2/reservations", json=_plan(device.id, date.today()))
+        created = await client.post(
+            "/api/v2/reservations",
+            json=_plan(device.id, date.today()),
+            headers={"Idempotency-Key": "reservation-handover-create"},
+        )
         assert created.status_code == 201
         reservation_id = created.json()["data"]["created"][0]["id"]
 
@@ -312,7 +360,11 @@ async def test_waitlist_join_list_cancel_and_confirmation_routes(seeded) -> None
     target = date.today() + timedelta(days=5)
     student_actor = {"value": _principal(student, "STUDENT")}
     async with _client(factory, student_actor) as client:
-        held = await client.post("/api/v2/reservations", json=_plan(device.id, target))
+        held = await client.post(
+            "/api/v2/reservations",
+            json=_plan(device.id, target),
+            headers={"Idempotency-Key": "waitlist-create-held"},
+        )
         assert held.status_code == 201
 
     async with factory() as session:
@@ -383,7 +435,11 @@ async def test_waitlist_offer_confirmation_releases_hold_then_creates_reservatio
     target = date.today() + timedelta(days=6)
     student_actor = {"value": _principal(student, "STUDENT")}
     async with _client(factory, student_actor) as client:
-        created = await client.post("/api/v2/reservations", json=_plan(device.id, target))
+        created = await client.post(
+            "/api/v2/reservations",
+            json=_plan(device.id, target),
+            headers={"Idempotency-Key": "waitlist-confirm-flow-create"},
+        )
         reservation_id = created.json()["data"]["created"][0]["id"]
 
     async with factory() as session:
@@ -441,6 +497,7 @@ async def test_handover_exception_cancellation_and_violation_routes(seeded) -> N
         exceptional = await client.post(
             "/api/v2/reservations",
             json=_plan(device.id, date.today()),
+            headers={"Idempotency-Key": "handover-exception-create-1"},
         )
         assert exceptional.status_code == 201
         exceptional_id = exceptional.json()["data"]["created"][0]["id"]
@@ -448,6 +505,7 @@ async def test_handover_exception_cancellation_and_violation_routes(seeded) -> N
         violable = await client.post(
             "/api/v2/reservations",
             json=_plan(device.id, date.today() + timedelta(days=2)),
+            headers={"Idempotency-Key": "handover-exception-create-2"},
         )
         assert violable.status_code == 201
         violable_id = violable.json()["data"]["created"][0]["id"]

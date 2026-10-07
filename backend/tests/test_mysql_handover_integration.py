@@ -111,16 +111,9 @@ async def test_mysql_serializes_normal_and_exception_handover_updates() -> None:
         barrier = asyncio.Barrier(2)
 
         async def submit_handover(condition: str, image_url: str):
+            await barrier.wait()
             async with factory() as session:
                 service = ReservationService(session, _principal(manager, "LAB_ADMIN"))
-                load_reservation = service._load_reservation
-
-                async def load_then_wait(current_reservation_id: int):
-                    reservation = await load_reservation(current_reservation_id)
-                    await barrier.wait()
-                    return reservation
-
-                service._load_reservation = load_then_wait  # type: ignore[method-assign]
                 return await service.handover(
                     reservation_id,
                     condition=condition,

@@ -4,8 +4,9 @@ import asyncio
 import json
 import logging
 import time
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
@@ -25,7 +26,7 @@ from app.common.response import ApiResponse
 from app.core.client_ip import resolve_client_ip
 from app.core.errors import ApiError
 from app.infrastructure.cache.rate_limit import enforce_authenticated_rate_limit
-from app.infrastructure.db.models import Notification, User
+from app.infrastructure.db.models import Notification, OutboxTask, User
 from app.infrastructure.db.pagination import delayed_page_ids, page_metadata, page_offset
 from app.infrastructure.db.session import get_db
 from app.infrastructure.notifications.realtime import NotificationHub, NotificationStream
@@ -217,6 +218,40 @@ async def _visible_sequence_head(request: Request, principal: Principal) -> int:
         )
 
 
+async def _notification_range(
+    request: Request,
+    principal: Principal,
+    cursor: int,
+    high_water: int,
+    *,
+    limit: int,
+) -> tuple[list[dict[str, object]], bool]:
+    """Read the oldest rows in a bounded sequence range for ordered gap recovery."""
+    if high_water <= cursor:
+        return [], False
+    async with request.app.state.session_factory() as session:
+        rows = list(
+            (
+                await session.scalars(
+                    select(Notification)
+                    .where(
+                        *_conditions(principal),
+                        Notification.delivery_sequence > cursor,
+                        Notification.delivery_sequence <= high_water,
+                    )
+                    .order_by(Notification.delivery_sequence.asc())
+                    .limit(limit + 1)
+                )
+            ).all()
+        )
+    has_more = len(rows) > limit
+    events = [
+        {**_row(row), "deliverySequence": row.delivery_sequence}
+        for row in rows[:limit]
+    ]
+    return events, has_more
+
+
 async def _stream_events(
     request: Request,
     principal: Principal,
@@ -270,16 +305,12 @@ async def _stream_events(
         )
 
     next_revalidation = time.monotonic() + settings.notification_sse_revalidate_seconds
-    while not stream.closed.is_set():
-        woke = await hub.wait(stream, settings.notification_sse_heartbeat_seconds)
+    deferred_events: list[dict[str, object]] = []
+    pending_catchup_target: int | None = None
+    while True:
         if stream.closed.is_set():
             yield _sse("auth-revoked", {"reconnect": False})
             return
-
-        notification_pending, read_state_pending = await hub.take_pending(stream)
-        if read_state_pending:
-            yield _sse("read-state-changed", {"scope": "current-user"})
-
         now = time.monotonic()
         if now >= next_revalidation:
             try:
@@ -292,30 +323,115 @@ async def _stream_events(
                 return
             next_revalidation = now + settings.notification_sse_revalidate_seconds
 
-        # Query on every heartbeat as well as every relay wake-up. That repairs
-        # missed Pub/Sub hints without retaining a database connection.
-        events, pending_count, high_water, overflow = await _notification_batch(
-            request, principal, cursor, limit=max_replay
-        )
-        if events:
+        if pending_catchup_target is not None:
+            recovered, has_more = await _notification_range(
+                request,
+                principal,
+                cursor,
+                pending_catchup_target,
+                limit=max_replay,
+            )
+            if not recovered:
+                # The database is authoritative. If the expected sequence is
+                # no longer visible, do not emit a later event out of order;
+                # the next EventSource reconnect will retry from MySQL.
+                logger.warning(
+                    "notification sequence gap could not be recovered; "
+                    "user_id=%s cursor=%s target=%s",
+                    principal.user_id,
+                    cursor,
+                    pending_catchup_target,
+                )
+                pending_catchup_target = None
+                deferred_events.clear()
+                continue
             yield _sse("batch-start", {"replay": False})
-            for event in events:
+            for event in recovered:
                 sequence = int(event["deliverySequence"])
+                if sequence <= cursor:
+                    continue
                 yield _sse("notification", event, event_id=sequence)
                 cursor = sequence
-            if overflow:
-                cursor = high_water
             yield _sse(
                 "batch-complete",
-                {
-                    "replay": False,
-                    "deliveredCount": len(events),
-                    "omittedCount": max(0, pending_count - len(events)) if overflow else 0,
-                    "historySyncRequired": overflow,
-                },
-                event_id=cursor if overflow else None,
+                {"replay": False, "deliveredCount": len(recovered), "historySyncRequired": False},
             )
-        elif not woke or not notification_pending:
+            if has_more and cursor < pending_catchup_target:
+                continue
+            pending_catchup_target = None
+            continue
+
+        woke = True
+        read_state_pending = False
+        overflow_sequence: int | None = None
+        fallback_notification_pending = False
+        if deferred_events:
+            events = deferred_events
+            deferred_events = []
+        else:
+            woke = await hub.wait(stream, settings.notification_sse_heartbeat_seconds)
+            if stream.closed.is_set():
+                yield _sse("auth-revoked", {"reconnect": False})
+                return
+            events, read_state_pending, overflow_sequence, fallback_notification_pending = (
+                await hub.take_events(stream)
+            )
+
+        if read_state_pending:
+            yield _sse("read-state-changed", {"scope": "current-user"})
+
+        if overflow_sequence is not None:
+            pending_catchup_target = overflow_sequence
+            continue
+        if fallback_notification_pending:
+            # Compatibility for internal wakeups without a sequenced payload;
+            # normal Redis Stream events always carry the full notification.
+            pending_catchup_target = await _visible_sequence_head(request, principal)
+            if pending_catchup_target > cursor:
+                continue
+
+        if events:
+            outgoing: list[dict[str, object]] = []
+            ordered = sorted(
+                events,
+                key=lambda event: int(event.get("deliverySequence", 0)),
+            )
+            for index, event in enumerate(ordered):
+                sequence_value = event.get("deliverySequence")
+                if isinstance(sequence_value, bool) or not isinstance(sequence_value, int):
+                    continue
+                sequence = sequence_value
+                if sequence <= cursor:
+                    continue
+                if sequence > cursor + 1:
+                    pending_catchup_target = sequence
+                    deferred_events = ordered[index + 1 :]
+                    break
+                outgoing.append(event)
+                cursor = sequence
+                if len(outgoing) >= max_replay:
+                    deferred_events = ordered[index + 1 :]
+                    break
+
+            if outgoing:
+                yield _sse("batch-start", {"replay": False})
+                for event in outgoing:
+                    yield _sse(
+                        "notification",
+                        event,
+                        event_id=int(event["deliverySequence"]),
+                    )
+                yield _sse(
+                    "batch-complete",
+                    {
+                        "replay": False,
+                        "deliveredCount": len(outgoing),
+                        "historySyncRequired": False,
+                    },
+                )
+            if pending_catchup_target is not None or deferred_events:
+                continue
+        if not woke and not read_state_pending and not events:
             yield ": heartbeat\n\n"
 
 
@@ -417,7 +533,6 @@ async def my_notifications(
 
 @router.patch("/notifications/{notification_id}/read", response_model=ApiResponse[None])
 async def mark_read(
-    request: Request,
     notification_id: int,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
@@ -440,49 +555,43 @@ async def mark_read(
         )
         if exists is None:
             raise ApiError("NOTIFICATION_NOT_FOUND", "通知不存在或无权操作", 404)
-    await session.commit()
     if changed:
-        await _publish_read_state_hint(
-            request,
-            principal.user_id,
-            {"eventType": "read_state_changed", "notificationId": notification_id},
+        now = datetime.now(UTC).replace(tzinfo=None)
+        session.add(
+            OutboxTask(
+                task_key=f"notification:read-state:{principal.user_id}:{notification_id}",
+                task_type="NOTIFICATION_READ_STATE",
+                aggregate_key=f"notification-read-state:{principal.user_id}",
+                college_id=principal.college_id,
+                payload={"user_id": principal.user_id, "notification_id": notification_id},
+                execute_at=now,
+            )
         )
+    await session.commit()
     return ApiResponse.ok(None)
 
 
 @router.patch("/notifications/read-all", response_model=ApiResponse[None])
 async def mark_all_read(
-    request: Request,
     principal: Principal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
     result = await session.execute(
         update(Notification).where(*_conditions(principal, only_unread=True)).values(is_read=True)
     )
-    await session.commit()
     if result.rowcount and result.rowcount > 0:
-        await _publish_read_state_hint(
-            request,
-            principal.user_id,
-            {"eventType": "read_state_changed", "all": True},
+        now = datetime.now(UTC).replace(tzinfo=None)
+        session.add(
+            OutboxTask(
+                task_key=(
+                    f"notification:read-state-all:{principal.user_id}:{uuid4().hex}"
+                ),
+                task_type="NOTIFICATION_READ_STATE",
+                aggregate_key=f"notification-read-state:{principal.user_id}",
+                college_id=principal.college_id,
+                payload={"user_id": principal.user_id, "all": True},
+                execute_at=now,
+            )
         )
+    await session.commit()
     return ApiResponse.ok(None)
-
-
-async def _publish_read_state_hint(
-    request: Request,
-    user_id: int,
-    payload: dict[str, object],
-) -> None:
-    """Notify every user's online SSE connection after the DB commit."""
-    relay = getattr(request.app.state, "notification_relay", None)
-    hub: NotificationHub | None = getattr(request.app.state, "notification_hub", None)
-    try:
-        if relay is not None:
-            await relay.publish(user_id, payload)
-        elif hub is not None:
-            await hub.publish(user_id, payload)
-    except Exception:
-        # Read status is committed in MySQL. A lost Pub/Sub hint is repaired by
-        # reconnect/history reads and must not turn a successful PATCH into 500.
-        logger.warning("notification read-state fan-out failed", exc_info=True)

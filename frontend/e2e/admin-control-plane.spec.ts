@@ -97,7 +97,7 @@ test.describe('管理员管理页与运营工具真实页面验收', () => {
     const deviceDrawer = page.locator('.dmanage-drawer')
     await expect(deviceDrawer).toBeVisible()
     expect(invalidNumberProps, '数字输入框的 v-model 不能使用字符串占位').toEqual([])
-    await deviceDrawer.locator('.el-form-item').filter({ hasText: '名称' }).locator('input').fill(createdDeviceName)
+    await deviceDrawer.getByRole('textbox', { name: /名称/ }).fill(createdDeviceName)
     await deviceDrawer.getByRole('combobox', { name: /分类/ }).click()
     const categoryNode = page.locator('.el-tree-node__content:visible').last()
     await expect(categoryNode).toBeVisible()
@@ -123,7 +123,7 @@ test.describe('管理员管理页与运营工具真实页面验收', () => {
 
     const updatedDeviceName = `${createdDeviceName}-edited`
     await deviceRow.getByRole('button', { name: '编辑' }).click()
-    await deviceDrawer.locator('.el-form-item').filter({ hasText: '名称' }).locator('input').fill(updatedDeviceName)
+    await deviceDrawer.getByRole('textbox', { name: /名称/ }).fill(updatedDeviceName)
     const updateResponsePromise = page.waitForResponse((response) =>
       response.request().method() === 'PUT' && /\/api\/v2\/devices\/\d+$/.test(response.url()),
     )

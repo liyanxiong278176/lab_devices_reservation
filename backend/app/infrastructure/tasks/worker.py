@@ -17,15 +17,21 @@ from sqlalchemy.orm import selectinload
 from app.api.v2.schemas import ReservationPlanRequest
 from app.application.exports import csv_chunk_text, iter_export_rows
 from app.application.lifecycle import append_audit, change_device_status
+from app.application.penalty_processing import (
+    apply_violation_penalty,
+    enqueue_notification,
+    ensure_overdue_started,
+    process_overdue_deadline,
+)
 from app.application.reservations import ReservationService
 from app.auth.security import Principal
+from app.core.business_time import business_day_end_utc_naive
 from app.core.errors import ApiError
 from app.infrastructure.cache.cache import CacheService
 from app.infrastructure.cache.redis import get_redis_circuit, get_redis_for_app
 from app.infrastructure.db.models import (
     AiEmbeddingRebuildJob,
     College,
-    CreditEvent,
     Device,
     DeviceHandover,
     DeviceMaintenancePlan,
@@ -35,11 +41,15 @@ from app.infrastructure.db.models import (
     Lab,
     Notification,
     OutboxTask,
+    PenaltyAppeal,
+    PenaltyCase,
     RepairReport,
     RepairWorklog,
     Reservation,
     ReservationBlackout,
+    ReservationBookingRestriction,
     ReservationItem,
+    ReservationOverdue,
     ReservationWaitlist,
     ReservationWaitlistOffer,
     Role,
@@ -71,6 +81,7 @@ class OutboxWorker:
         self.poll_seconds = poll_seconds
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._last_overdue_reconcile = 0.0
         self._last_knowledge_build_reconcile = 0.0
         self._last_knowledge_build_metrics = 0.0
 
@@ -130,6 +141,12 @@ class OutboxWorker:
         try:
             while not self._stop.is_set():
                 now = asyncio.get_running_loop().time()
+                if now - self._last_overdue_reconcile >= 60:
+                    self._last_overdue_reconcile = now
+                    try:
+                        await self._reconcile_overdue_reservations()
+                    except Exception:
+                        logger.exception("reservation overdue reconciliation failed")
                 if (
                     now - self._last_knowledge_build_reconcile
                     >= self.app.state.settings.ai_knowledge_build_reconcile_interval_seconds
@@ -222,6 +239,34 @@ class OutboxWorker:
             factory = build_session_factory(engine)
             self.app.state.session_factory = factory
         return factory
+
+    async def _reconcile_overdue_reservations(self) -> None:
+        factory = await self._session_factory()
+        now = utcnow_naive()
+        async with factory() as session:
+            async with session.begin():
+                reservations = list(
+                    (
+                        await session.scalars(
+                            select(Reservation)
+                            .where(
+                                Reservation.status == "IN_USE",
+                                Reservation.end_date < date.today(),
+                                Reservation.college_id.is_not(None),
+                                ~exists(
+                                    select(ReservationOverdue.id).where(
+                                        ReservationOverdue.reservation_id == Reservation.id
+                                    )
+                                ),
+                            )
+                            .order_by(Reservation.end_date, Reservation.id)
+                            .limit(100)
+                            .with_for_update(skip_locked=True)
+                        )
+                    ).all()
+                )
+                for reservation in reservations:
+                    await ensure_overdue_started(session, reservation, now=now)
 
     async def _claim_one(self, *, only_task_key: str | None = None) -> ClaimedTask | None:
         factory = await self._session_factory()
@@ -514,6 +559,23 @@ class OutboxWorker:
             await process_embedding_rebuild_batch(self.app, int(payload["job_id"]))
             return
 
+        if task_type == "NOTIFICATION_READ_STATE":
+            user_id = int(payload["user_id"])
+            message = {
+                "eventType": "read_state_changed",
+                "userId": user_id,
+                "notificationId": payload.get("notification_id"),
+                "all": bool(payload.get("all", False)),
+            }
+            relay = getattr(self.app.state, "notification_relay", None)
+            if relay is not None:
+                await relay.publish(user_id, message, task_key=task_key)
+            else:
+                hub = getattr(self.app.state, "notification_hub", None)
+                if hub is not None:
+                    await hub.publish(user_id, message)
+            return
+
         if task_type == "NOTIFICATION":
             async with factory() as session:
                 notification = None
@@ -552,13 +614,13 @@ class OutboxWorker:
                     "relatedId": notification.related_id,
                     "relatedType": notification.related_type,
                     "isRead": 0,
-                    # Redis Pub/Sub carries only a wake-up hint; SSE reads the
-                    # committed row in sequence order from MySQL.
+                    # The full event is persisted in Stream; MySQL remains the
+                    # source for reconnect replay and sequence-gap recovery.
                     "createdAt": notification.created_at.isoformat(),
                 }
                 relay = getattr(self.app.state, "notification_relay", None)
                 if relay is not None:
-                    await relay.publish(notification.user_id, message)
+                    await relay.publish(notification.user_id, message, task_key=task_key)
                 else:
                     hub = getattr(self.app.state, "notification_hub", None)
                     if hub is not None:
@@ -815,6 +877,31 @@ class OutboxWorker:
                 reservation = await session.scalar(
                     select(Reservation).where(Reservation.id == reservation_id).with_for_update()
                 )
+                now = utcnow_naive()
+                event_at = (
+                    business_day_end_utc_naive(reservation.start_date)
+                    if reservation is not None
+                    else now
+                )
+                college_freeze = None
+                if reservation is not None and reservation.college_id is not None:
+                    college_freeze = await session.scalar(
+                        select(ReservationBookingRestriction.id)
+                        .where(
+                            ReservationBookingRestriction.user_id == reservation.user_id,
+                            ReservationBookingRestriction.college_id == reservation.college_id,
+                            ReservationBookingRestriction.scope_type == "COLLEGE",
+                            ReservationBookingRestriction.scope_id == reservation.college_id,
+                            ReservationBookingRestriction.starts_at <= event_at,
+                            or_(
+                                ReservationBookingRestriction.ends_at.is_(None),
+                                ReservationBookingRestriction.ends_at > event_at,
+                            ),
+                            ReservationBookingRestriction.released_at.is_(None),
+                        )
+                        .limit(1)
+                    )
+                blocked_by_college_freeze = college_freeze is not None
                 if (
                     reservation is not None
                     and reservation.status == "APPROVED"
@@ -822,7 +909,11 @@ class OutboxWorker:
                 ):
                     exception_at_handover = reservation.handover_status == "EXCEPTION"
                     expected_handover_status = reservation.handover_status
-                    next_reservation_status = "CANCELLED" if exception_at_handover else "NO_SHOW"
+                    next_reservation_status = (
+                        "CANCELLED"
+                        if exception_at_handover or blocked_by_college_freeze
+                        else "NO_SHOW"
+                    )
                     result = await session.execute(
                         update(Reservation)
                         .where(
@@ -836,6 +927,11 @@ class OutboxWorker:
                             reject_reason=(
                                 "设备交接发现异常，预约日结束时自动取消；未扣除用户信用分。"
                                 if exception_at_handover
+                                    else (
+                                        "逾期升级期间预约领用被冻结，预约日结束时自动取消；"
+                                        "未记为爽约。"
+                                    )
+                                if blocked_by_college_freeze
                                 else None
                             ),
                         )
@@ -844,6 +940,7 @@ class OutboxWorker:
                     result = None
 
                 if result is not None and result.rowcount == 1:
+                    reservation.status = next_reservation_status
                     await session.execute(
                         update(DeviceHandover)
                         .where(
@@ -866,28 +963,14 @@ class OutboxWorker:
                             ReservationItem.reservation_id == reservation_id
                         )
                     )
-                    if not exception_at_handover:
-                        user = await session.scalar(
-                            select(User).where(User.id == reservation.user_id)
-                        )
-                    else:
-                        user = None
-                    if user is not None:
-                        user.credit_score = max(0, user.credit_score - 10)
-                        if user.credit_score < self.app.state.settings.credit_block_threshold:
-                            user.booking_blocked_until = utcnow_naive() + timedelta(
-                                days=self.app.state.settings.credit_block_days
-                            )
-                        session.add(
-                            CreditEvent(
-                                user_id=user.id,
-                                college_id=user.college_id,
-                                reservation_id=reservation_id,
-                                event_type="NO_SHOW",
-                                points=-10,
-                                reason="预约首日未完成负责人设备交接",
-                                created_at=utcnow_naive(),
-                            )
+                    penalty = None
+                    if not exception_at_handover and not blocked_by_college_freeze:
+                        penalty = await apply_violation_penalty(
+                            session,
+                            reservation,
+                            violation_type="NO_SHOW",
+                            event_at=event_at,
+                            reason="预约首日未完成负责人设备交接",
                         )
                     append_audit(
                         session,
@@ -896,11 +979,17 @@ class OutboxWorker:
                         action=(
                             "RESERVATION_AUTO_CANCEL_HANDOVER_EXCEPTION"
                             if exception_at_handover
+                            else "RESERVATION_AUTO_CANCEL_COLLEGE_FREEZE"
+                            if blocked_by_college_freeze
                             else "RESERVATION_NO_SHOW"
                         ),
                         target_type="RESERVATION",
                         target_id=reservation_id,
-                        detail={"credit_penalty": 0 if exception_at_handover else -10},
+                        detail={
+                            "penalty_case_id": penalty.id if penalty is not None else None,
+                            "points_delta": penalty.points_delta if penalty is not None else 0,
+                            "credit_penalty": penalty.points_delta if penalty is not None else 0,
+                        },
                     )
                     for occupied_date in occupied_dates:
                         session.add(
@@ -922,45 +1011,167 @@ class OutboxWorker:
                                 },
                                 execute_at=utcnow_naive(),
                             )
+                    )
+                    if exception_at_handover or blocked_by_college_freeze:
+                        cancellation_kind = (
+                            "handover-exception-auto-cancel"
+                            if exception_at_handover
+                            else "college-freeze-auto-cancel"
                         )
-                    session.add(
-                        OutboxTask(
-                            task_key=(
-                                f"notification:reservation:{reservation_id}:"
-                                "handover-exception-auto-cancel"
-                                if exception_at_handover
-                                else f"notification:reservation:{reservation_id}:no-show"
-                            ),
-                            task_type="NOTIFICATION",
-                            aggregate_key=f"reservation:{reservation_id}",
-                            college_id=payload.get("college_id"),
-                            payload={
-                                "user_id": reservation.user_id,
-                                "college_id": reservation.college_id,
-                                "type": (
-                                    "RESERVATION_UPDATE"
-                                    if exception_at_handover
-                                    else "RESERVATION_NO_SHOW"
+                        session.add(
+                            OutboxTask(
+                                task_key=(
+                                    f"notification:reservation:{reservation_id}:"
+                                    f"{cancellation_kind}"
                                 ),
-                                "title": (
-                                    "设备交接异常，预约已取消"
-                                    if exception_at_handover
-                                    else "预约已标记爽约"
-                                ),
-                                "content": (
-                                    "设备交接时发现异常，系统已取消预约并释放日期，未扣除信用分。"
-                                    if exception_at_handover
-                                    else (
-                                        "预约首日结束前未完成负责人设备交接，"
-                                        "系统已标记爽约并释放设备。"
-                                    )
-                                ),
-                                "related_id": reservation_id,
-                                "related_type": "RESERVATION",
-                            },
-                            execute_at=utcnow_naive(),
+                                task_type="NOTIFICATION",
+                                aggregate_key=f"reservation:{reservation_id}",
+                                college_id=reservation.college_id,
+                                payload={
+                                    "user_id": reservation.user_id,
+                                    "college_id": reservation.college_id,
+                                    "type": "RESERVATION_UPDATE",
+                                    "title": (
+                                        "设备交接异常，预约已取消"
+                                        if exception_at_handover
+                                        else "逾期升级期间预约已取消"
+                                    ),
+                                    "content": (
+                                        "设备交接时发现异常，系统已取消预约并释放日期，未扣除信用分。"
+                                        if exception_at_handover
+                                        else (
+                                            "逾期设备尚未归还，学院已暂停新预约和新领用；"
+                                            "本预约因此取消，未记为爽约。"
+                                        )
+                                    ),
+                                    "related_id": reservation_id,
+                                    "related_type": "RESERVATION",
+                                },
+                                execute_at=utcnow_naive(),
+                            )
+                        )
+                await session.commit()
+            return
+
+        if task_type == "RESERVATION_OVERDUE_START":
+            reservation_id = int(payload["reservation_id"])
+            async with factory() as session:
+                reservation = await session.scalar(
+                    select(Reservation)
+                    .where(Reservation.id == reservation_id)
+                    .with_for_update()
+                )
+                if reservation is not None:
+                    await ensure_overdue_started(
+                        session,
+                        reservation,
+                        now=utcnow_naive(),
+                    )
+                await session.commit()
+            return
+
+        if task_type == "RESERVATION_OVERDUE_PENALTY":
+            reservation_id = int(payload["reservation_id"])
+            overdue_id = int(payload["overdue_id"])
+            async with factory() as session:
+                reservation = await session.scalar(
+                    select(Reservation)
+                    .where(Reservation.id == reservation_id)
+                    .with_for_update()
+                )
+                overdue = await session.scalar(
+                    select(ReservationOverdue)
+                    .where(ReservationOverdue.id == overdue_id)
+                    .with_for_update()
+                )
+                if reservation is not None and overdue is not None:
+                    await process_overdue_deadline(
+                        session,
+                        reservation,
+                        overdue,
+                        now=utcnow_naive(),
+                    )
+                await session.commit()
+            return
+
+        if task_type == "PENALTY_APPEAL_REMINDER":
+            appeal_id = int(payload["appeal_id"])
+            async with factory() as session:
+                appeal = await session.scalar(
+                    select(PenaltyAppeal)
+                    .where(PenaltyAppeal.id == appeal_id)
+                    .with_for_update()
+                )
+                if appeal is None or appeal.status != "PENDING":
+                    return
+                case = await session.scalar(
+                    select(PenaltyCase).where(PenaltyCase.id == appeal.penalty_case_id)
+                )
+                if case is None:
+                    return
+                now = utcnow_naive()
+                if appeal.attempt_number > 1:
+                    first_reviewer_id = await session.scalar(
+                        select(PenaltyAppeal.reviewer_id).where(
+                            PenaltyAppeal.penalty_case_id == case.id,
+                            PenaltyAppeal.attempt_number == 1,
                         )
                     )
+                    recipients = {int(first_reviewer_id)} if first_reviewer_id else set()
+                else:
+                    manager_id = await session.scalar(
+                        select(College.manager_id).where(College.id == case.college_id)
+                    )
+                    recipients = set(
+                        int(user_id)
+                        for user_id in (
+                            await session.scalars(
+                                select(User.id)
+                                .join(User.roles)
+                                .where(
+                                    User.college_id == case.college_id,
+                                    User.status == 1,
+                                    Role.role_code == "LAB_ADMIN",
+                                )
+                            )
+                        ).all()
+                    )
+                    if manager_id is not None:
+                        recipients.add(int(manager_id))
+                    if case.confirmed_by is not None:
+                        recipients.discard(int(case.confirmed_by))
+                    recipients.discard(int(case.user_id))
+                if recipients:
+                    active_recipients = set(
+                        int(user_id)
+                        for user_id in (
+                            await session.scalars(
+                                select(User.id).where(
+                                    User.id.in_(recipients),
+                                    User.status == 1,
+                                )
+                            )
+                        ).all()
+                    )
+                    for recipient_id in sorted(active_recipients):
+                        enqueue_notification(
+                            session,
+                            task_key=(
+                                f"notification:penalty-appeal:{appeal.id}:reminder:"
+                                f"user:{recipient_id}"
+                            ),
+                            user_id=recipient_id,
+                            college_id=case.college_id,
+                            title="处罚申诉待复核提醒",
+                            content=(
+                                f"用户对处罚 #{case.id} 提交的第 {appeal.attempt_number} 次申诉"
+                                "已等待 3 日，请尽快处理。"
+                            ),
+                            related_id=appeal.id,
+                            related_type="PENALTY_APPEAL",
+                            notification_type="PENALTY_UPDATE",
+                            execute_at=now,
+                        )
                 await session.commit()
             return
 
@@ -1511,6 +1722,33 @@ class OutboxWorker:
                 get_redis_circuit(self.app),
             )
             await cache.bump_version(scope)
+            return
+
+        if task_type == "RESERVATION_QUOTA_RECONCILE":
+            from app.infrastructure.cache.reservation_quota import (
+                ReservationQuotaCache,
+                get_reservation_quota_readiness,
+            )
+            from app.infrastructure.tasks.reservation_quota import (
+                reconcile_reservation_quota_pool_dates,
+            )
+
+            quota_cache = ReservationQuotaCache(
+                get_redis_for_app(self.app),
+                get_redis_circuit(self.app),
+                get_reservation_quota_readiness(self.app),
+            )
+            async with factory() as session:
+                async with session.begin():
+                    await reconcile_reservation_quota_pool_dates(
+                        session,
+                        quota_cache,
+                        pool_id=int(payload["pool_id"]),
+                        dates=[
+                            date.fromisoformat(str(value))
+                            for value in payload.get("dates", [])
+                        ],
+                    )
             return
 
         raise ValueError(f"unsupported outbox task type: {task_type}")

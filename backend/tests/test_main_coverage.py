@@ -15,8 +15,14 @@ from app.infrastructure.tasks import worker as worker_module
 
 class FakeRelay:
     def __init__(self, *args: object, **kwargs: object) -> None:
+        self.args = args
+        self.kwargs = kwargs
         self.started = False
         self.stopped = False
+        self.metrics: object | None = None
+
+    def set_metrics(self, metrics: object | None) -> None:
+        self.metrics = metrics
 
     async def start(self) -> None:
         self.started = True
@@ -70,7 +76,13 @@ async def test_lifespan_bootstraps_non_test_runtime_and_stops_relay(
     monkeypatch.setattr(operational_bootstrap, "ensure_operational_metadata", ensure_metadata)
     monkeypatch.setattr(main, "get_redis_for_app", lambda received: "redis-stub")
     relay = FakeRelay()
-    monkeypatch.setattr(main, "RedisNotificationRelay", lambda *args, **kwargs: relay)
+    relay_kwargs: dict[str, object] = {}
+
+    def create_relay(*_args: object, **kwargs: object) -> FakeRelay:
+        relay_kwargs.update(kwargs)
+        return relay
+
+    monkeypatch.setattr(main, "RedisNotificationRelay", create_relay)
     dispose_engine = AsyncMock()
     dispose_redis = AsyncMock()
     monkeypatch.setattr(main, "dispose_app_engine", dispose_engine)
@@ -81,6 +93,8 @@ async def test_lifespan_bootstraps_non_test_runtime_and_stops_relay(
         assert app.state.session_factory is factory
         assert app.state.notification_relay is relay
         assert relay.started is True
+        assert relay.metrics is metrics
+        assert relay_kwargs["group_id"] == app.state.settings.notification_stream_group_id
 
     metrics.monitor_sqlalchemy_pool.assert_called_once_with(engine)
     ensure_admin.assert_awaited_once_with(factory, app.state.settings)

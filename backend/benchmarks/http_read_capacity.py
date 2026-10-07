@@ -1,4 +1,4 @@
-"""Create isolated history and measure authenticated mixed-read HTTP capacity.
+"""Create isolated history and benchmark uniformly distributed reservation pages.
 
 The generated rows belong to a dedicated E2E college. Remove the entire fixture
 with ``scripts/e2e_fixture.py cleanup --prefix <prefix>`` after the run.
@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import random
 import re
 import sys
 import time
@@ -28,18 +29,9 @@ from app.infrastructure.db.session import build_engine, build_session_factory
 from sqlalchemy import insert, select
 
 PREFIX_PATTERN = re.compile(r"e2e-perf-[a-z0-9-]{6,24}")
-READS = (
-    "devices?page=1&page_size=20",
-    "devices?page=1&page_size=20",
-    "devices?page=1&page_size=20",
-    "devices?page=1&page_size=20",
-    "reservations/mine?page=1&page_size=20",
-    "reservations/mine?page=1&page_size=20",
-    "reservations/mine?page=1&page_size=20",
-    "reservations/mine?page=450&page_size=20",
-    "reservations/mine?page=450&page_size=20",
-    "reservations/mine?page=450&page_size=20",
-)
+HISTORY_RESERVATIONS = 10_000
+PAGE_SIZE = 20
+PAGE_COUNT = ceil(HISTORY_RESERVATIONS / PAGE_SIZE)
 
 
 def validate_prefix(value: str) -> str:
@@ -104,7 +96,7 @@ async def seed_history(prefix: str) -> None:
                     "slot_count": 1,
                     "status": "COMPLETED",
                 }
-                for index in range(10_000)
+                for index in range(HISTORY_RESERVATIONS)
             ]
             await session.execute(insert(Reservation), rows)
             await session.commit()
@@ -116,6 +108,18 @@ async def seed_history(prefix: str) -> None:
 def percentile(samples: list[float], ratio: float) -> float:
     ordered = sorted(samples)
     return ordered[min(len(ordered) - 1, max(0, ceil(len(ordered) * ratio) - 1))]
+
+
+def build_page_schedule(requests: int, *, seed: int) -> list[int]:
+    """Return a shuffled schedule whose per-page request counts differ by at most one."""
+    base, remainder = divmod(requests, PAGE_COUNT)
+    pages = [
+        page
+        for page in range(1, PAGE_COUNT + 1)
+        for _ in range(base + (1 if page <= remainder else 0))
+    ]
+    random.Random(seed).shuffle(pages)
+    return pages
 
 
 async def authenticate(
@@ -201,8 +205,8 @@ async def run_benchmark(args: argparse.Namespace) -> None:
     try:
         await asyncio.gather(*(login_client(client) for client in clients))
 
-        async def one(index: int) -> None:
-            path = READS[index % len(READS)]
+        async def one(index: int, page: int) -> None:
+            path = f"reservations/mine?page={page}&page_size={PAGE_SIZE}"
             client = clients[index % len(clients)]
             started = time.perf_counter()
             try:
@@ -219,20 +223,27 @@ async def run_benchmark(args: argparse.Namespace) -> None:
                 failures[type(exc).__name__] += 1
 
         if args.warmup:
-            await asyncio.gather(*(one(index) for index in range(args.warmup)))
+            warmup_pages = build_page_schedule(args.warmup, seed=args.page_seed + 1)
+            await asyncio.gather(
+                *(one(index, page) for index, page in enumerate(warmup_pages))
+            )
             samples.clear()
             statuses.clear()
             failures.clear()
 
+        request_pages = build_page_schedule(args.requests, seed=args.page_seed)
+        page_request_counts = Counter(request_pages)
         started = time.perf_counter()
         if args.burst:
-            await asyncio.gather(*(one(index) for index in range(args.requests)))
+            await asyncio.gather(
+                *(one(index, page) for index, page in enumerate(request_pages))
+            )
         else:
             indexes = count()
 
             async def worker() -> None:
                 while (index := next(indexes)) < args.requests:
-                    await one(index)
+                    await one(index, request_pages[index])
 
             await asyncio.gather(*(worker() for _ in range(args.concurrency)))
         elapsed = time.perf_counter() - started
@@ -241,6 +252,12 @@ async def run_benchmark(args: argparse.Namespace) -> None:
 
     summary = {
         "requests": args.requests,
+        "workload": "authenticated /reservations/mine reads with uniform page distribution",
+        "page_size": PAGE_SIZE,
+        "total_pages": PAGE_COUNT,
+        "covered_pages": len(page_request_counts),
+        "min_requests_per_page": min(page_request_counts.values()),
+        "max_requests_per_page": max(page_request_counts.values()),
         "concurrency": args.requests if args.burst else args.concurrency,
         "burst": args.burst,
         "elapsed_seconds": round(elapsed, 3),
@@ -282,6 +299,7 @@ def main() -> None:
     run_parser.add_argument("--concurrency", type=int, default=20)
     run_parser.add_argument("--burst", action="store_true")
     run_parser.add_argument("--warmup", type=int, default=20)
+    run_parser.add_argument("--page-seed", type=int, default=20261003)
     run_parser.add_argument("--timeout-seconds", type=float, default=60)
     run_parser.add_argument("--target-p95-ms", type=float)
     args = parser.parse_args()

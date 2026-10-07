@@ -103,6 +103,7 @@ services:
       PROMETHEUS_METRICS_TOKEN: ${PROMETHEUS_METRICS_TOKEN:?set PROMETHEUS_METRICS_TOKEN in .env}
     volumes:
       - ./monitoring/prometheus/prometheus.dev.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/notification-alerts.yml:/etc/prometheus/notification-alerts.yml:ro
       - ./monitoring/prometheus/entrypoint.sh:/etc/prometheus/entrypoint.sh:ro
       - prometheus_data:/prometheus
     entrypoint: ["/bin/sh", "/etc/prometheus/entrypoint.sh"]

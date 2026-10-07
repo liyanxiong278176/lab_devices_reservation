@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Calendar, Check, CircleClose, Cpu, Refresh } from '@element-plus/icons-vue'
@@ -15,9 +15,26 @@ import {
   deviceAvailability,
   devicePoolAvailability,
 } from '@/api/device'
-import { createReservation, joinWaitlist, preflightReservation } from '@/api/reservation'
+import {
+  createReservation,
+  isTransientReservationError,
+  joinWaitlist,
+  preflightReservation,
+} from '@/api/reservation'
+import { useUserStore } from '@/stores/user'
 import type { DeviceAvailabilityVO, DeviceVO } from '@/types/device'
-import type { ReservationCreatePayload, ReservationPreflightVO } from '@/types/reservation'
+import type {
+  ReservationCreatePayload,
+  ReservationCreateResultVO,
+  ReservationPreflightVO,
+} from '@/types/reservation'
+import {
+  clearPendingReservationRequest,
+  readPendingReservationRequest,
+  reservationPendingPointerKey,
+  savePendingReservationRequest,
+  type PendingReservationRequest,
+} from '@/utils/reservation-request-recovery'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import GradientButton from '@/components/ui/GradientButton.vue'
 import GhostButton from '@/components/ui/GhostButton.vue'
@@ -26,12 +43,13 @@ import Tag from '@/components/ui/Tag.vue'
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const preflightLoading = ref(false)
 const submitting = ref(false)
 const device = ref<DeviceVO | null>(null)
-const idempotency = ref<{ signature: string; key: string } | null>(null)
+const pendingRequest = ref<PendingReservationRequest | null>(null)
 const preflight = ref<ReservationPreflightVO | null>(null)
 const availabilityDays = ref<DeviceAvailabilityVO[]>([])
 const availabilityLoading = ref(false)
@@ -55,6 +73,64 @@ const form = ref({
   purposeCategory: 'OTHER' as ReservationCreatePayload['purposeCategory'],
   projectReference: '',
 })
+
+function syncPendingRequest() {
+  const currentUserId = userStore.userId
+  pendingRequest.value = currentUserId === null
+    ? null
+    : readPendingReservationRequest(currentUserId)
+}
+
+function onReservationStorage(event: StorageEvent) {
+  const currentUserId = userStore.userId
+  if (
+    currentUserId !== null
+    && event.key === reservationPendingPointerKey(currentUserId)
+  ) {
+    syncPendingRequest()
+  }
+}
+
+function reservationErrorMessage(error: unknown): string {
+  const candidate = error as {
+    message?: string
+    response?: { data?: { message?: string } }
+  } | null
+  return candidate?.response?.data?.message || candidate?.message || '预约请求失败，请稍后重试'
+}
+
+async function submitReservationRequest(envelope: PendingReservationRequest) {
+  submitting.value = true
+  pendingRequest.value = envelope
+  try {
+    savePendingReservationRequest(envelope)
+  } catch {
+    pendingRequest.value = null
+    ElMessage.warning('浏览器无法保存待确认请求，请检查本地存储后再提交')
+    submitting.value = false
+    return
+  }
+  let result: ReservationCreateResultVO
+  try {
+    result = await createReservation(envelope.payload, envelope.token)
+  } catch (error) {
+    if (isTransientReservationError(error)) {
+      pendingRequest.value = envelope
+      ElMessage.warning('暂时无法确认预约结果。原请求和 token 已保留，请继续确认这笔预约，不要新建请求。')
+    } else {
+      clearPendingReservationRequest(envelope.userId, envelope.token)
+      pendingRequest.value = null
+      ElMessage.error(reservationErrorMessage(error))
+    }
+    return
+  } finally {
+    submitting.value = false
+  }
+  clearPendingReservationRequest(envelope.userId, envelope.token)
+  pendingRequest.value = null
+  ElMessage.success(`已提交 ${result.created.length} 条预约`)
+  await router.push({ name: 'reservation-mine' })
+}
 
 const rules: FormRules = {
   purpose: [{ required: true, min: 2, message: '请填写至少 2 个字的使用用途', trigger: 'blur' }],
@@ -229,6 +305,10 @@ watch([selectedDates, () => device.value?.id, quantity], () => {
 })
 
 async function onSubmit() {
+  if (pendingRequest.value) {
+    await submitReservationRequest(pendingRequest.value)
+    return
+  }
   if (!formRef.value || !selectedDates.value || !device.value) {
     ElMessage.warning('请选择设备和完整的预约日期')
     return
@@ -257,21 +337,20 @@ async function onSubmit() {
       projectReference: form.value.projectReference.trim() || undefined,
       commitMode: 'all_or_nothing',
     }
-    const signature = JSON.stringify(payload)
-    if (!idempotency.value || idempotency.value.signature !== signature) {
-      idempotency.value = {
-        signature,
-        key: globalThis.crypto?.randomUUID?.()
-          ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      }
+    if (userStore.userId === null) {
+      ElMessage.warning('登录状态已失效，请重新登录后提交预约')
+      return
     }
-    const result = await createReservation(payload, idempotency.value.key)
-    idempotency.value = null
-    ElMessage.success(`已提交 ${result.created.length} 条预约`)
-    await router.push({ name: 'reservation-mine' })
-  } catch {
-    // The request interceptor already shows the server's conflict or network
-    // message; keep the form available so the user can choose another date.
+    const envelope: PendingReservationRequest = {
+      userId: userStore.userId,
+      payload,
+      token: globalThis.crypto?.randomUUID?.()
+        ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      createdAt: new Date().toISOString(),
+    }
+    await submitReservationRequest(envelope)
+  } catch (error) {
+    ElMessage.error(reservationErrorMessage(error))
   } finally {
     submitting.value = false
   }
@@ -321,7 +400,16 @@ function onCancel() {
   router.back()
 }
 
-onMounted(loadDevice)
+onMounted(async () => {
+  await userStore.initialize()
+  syncPendingRequest()
+  window.addEventListener('storage', onReservationStorage)
+  await loadDevice()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('storage', onReservationStorage)
+})
 </script>
 
 <template>
@@ -343,7 +431,24 @@ onMounted(loadDevice)
       </div>
     </nav>
 
-    <div v-loading="loading" class="reserve-create-v2__grid">
+    <section v-if="pendingRequest" class="reservation-recovery panel-card" aria-live="polite">
+      <span class="eyebrow">REQUEST RESULT NOT CONFIRMED</span>
+      <h2>有一笔预约仍在确认中</h2>
+      <p>系统会使用原请求内容和固定 token 查询结果。请先确认这笔申请，不要创建新的预约请求。</p>
+      <dl>
+        <dt>设备资源</dt>
+        <dd>{{ pendingRequest.payload.poolId ? `资源池 #${pendingRequest.payload.poolId}` : `设备 #${pendingRequest.payload.deviceId}` }}</dd>
+        <dt>日期</dt>
+        <dd>{{ pendingRequest.payload.startDate }} 至 {{ pendingRequest.payload.endDate }}</dd>
+        <dt>数量</dt>
+        <dd>{{ pendingRequest.payload.quantity || 1 }} 台</dd>
+        <dt>提交时间</dt>
+        <dd>{{ dayjs(pendingRequest.createdAt).format('YYYY-MM-DD HH:mm:ss') }}</dd>
+      </dl>
+      <GradientButton :loading="submitting" @click="onSubmit">继续确认这笔预约</GradientButton>
+    </section>
+
+    <div v-else v-loading="loading" class="reserve-create-v2__grid">
       <section class="reserve-create-v2__main">
         <div class="reserve-create-v2__device panel-card">
           <div class="device-mark"><Cpu /></div>
@@ -536,6 +641,12 @@ onMounted(loadDevice)
 
 <style scoped lang="scss">
 .reserve-create-v2 { display: flex; flex-direction: column; gap: 22px; color: var(--text-primary); }
+.reservation-recovery { display: grid; gap: 12px; max-width: 760px; padding: 24px; }
+.reservation-recovery h2, .reservation-recovery p { margin: 0; }
+.reservation-recovery p { color: var(--text-secondary); line-height: 1.6; }
+.reservation-recovery dl { display: grid; grid-template-columns: 100px 1fr; gap: 8px 14px; margin: 8px 0; }
+.reservation-recovery dt { color: var(--text-tertiary); }
+.reservation-recovery dd { margin: 0; font-weight: 600; }
 .booking-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; padding: 0 4px 6px; border-bottom: 1px solid var(--border-default); }
 .booking-step { position: relative; display: flex; align-items: center; gap: 10px; min-height: 42px; color: var(--text-tertiary); font-size: 12px; }
 .booking-step::after { content: ''; position: absolute; right: 18px; left: 78px; top: 50%; height: 1px; background: var(--border-subtle); }

@@ -19,7 +19,10 @@ from app.core.errors import (
 from app.core.metrics import MetricsRegistry
 from app.core.request_id import RequestIdMiddleware
 from app.core.settings import Settings, get_settings
-from app.infrastructure.cache.redis import dispose_app_redis, get_redis_for_app
+from app.infrastructure.cache.redis import (
+    dispose_app_redis,
+    get_redis_for_app,
+)
 from app.infrastructure.db.session import dispose_app_engine
 from app.infrastructure.notifications.realtime import NotificationHub
 from app.infrastructure.notifications.relay import RedisNotificationRelay
@@ -54,8 +57,15 @@ async def lifespan(app: FastAPI):
             app.state.notification_hub,
             get_redis_for_app(app),
             app.state.settings.redis_url,
+            group_id=app.state.settings.notification_stream_group_id,
+            consumer_concurrency=(
+                app.state.settings.notification_stream_consumer_concurrency
+            ),
+            max_attempts=app.state.settings.notification_stream_max_attempts,
+            retry_base_seconds=app.state.settings.notification_stream_retry_base_seconds,
             socket_connect_timeout=app.state.settings.redis_socket_timeout_seconds,
         )
+        notification_relay.set_metrics(app.state.metrics)
         app.state.notification_relay = notification_relay
         await notification_relay.start()
     if app.state.settings.enable_workers and app.state.settings.environment != "test":
@@ -111,7 +121,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved_settings
     app.state.metrics = MetricsRegistry()
-    app.state.notification_hub = NotificationHub()
+    app.state.notification_hub = NotificationHub(
+        max_pending_events=resolved_settings.notification_sse_max_replay_events
+    )
     app.add_middleware(
         RequestCapacityMiddleware,
         capacity=resolved_settings.db_pool_size + resolved_settings.db_max_overflow,

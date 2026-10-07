@@ -30,7 +30,10 @@ PENDING ──审批通过──> APPROVED ──首日负责人交接──> IN
 
 ## 并发与异步
 
-- Redis 日期锁是降低竞争的加速器，故障时 fail-open；数据库唯一约束是最终一致性边界。
+- MySQL 事务使用 `FOR UPDATE SKIP LOCKED` 锁定候选实物设备行，复核设备状态及所有请求日期，再整体写入预约；`UNIQUE(device_id, date)` 是最后防线。多日多台申请必须绑定覆盖整个日期范围的同一批设备，任一天不足就整笔回滚。
+- Redis 每资源池/日期使用设备 ID 到 `1/0` 的 Hash。Lua 脚本原子预占跨日期共有的设备，独立辅助 key 以客户端请求 token 记录 `HELD`、`COMMITTED`、`REFUNDED` 或 `UNKNOWN`。Redis 只做快速拦截；不可用、缓存未就绪或恢复重建期间直接走 MySQL。
+- 幂等记录使用 `(user_id, request_token)` 唯一键并保存请求摘要和最终响应。同 token 同内容返回原结果，不同内容拒绝；并发处理返回 `REQUEST_IN_PROGRESS`。客户端最多请求 3 次，临时故障与处理中响应使用同一 token 退避重试；次数用尽后继续恢复原请求，确认终态后才可创建新请求。浏览器用按用户和 token 隔离的 `localStorage` 跨标签页恢复请求，并通过 `storage` 事件同步状态。
+- MySQL 明确失败的幂等结果持久化后才将 Redis 预占标记为 `REFUNDED`；普通补偿 Lua 只释放仍由该 token 持有的 `HELD` 设备日期。若 MySQL 发现缓存预占库存与数据库冲突，则失效相关日期缓存并由 Outbox 按 MySQL 重建，不能把数据库已占用的设备恢复为可用。`REFUNDED` 对同 token 是终态，需要重新预约时使用新 token。提交结果不确定时不补偿，按原 token 重放查询 MySQL。取消以 MySQL 事务为准，并在事务中写 Outbox；Worker 幂等同步 Redis，失败时可从 MySQL 全量重建，过程中不启用 Redis 预约缓存。
 - 业务事务提交后写入同库 Outbox，单 FastAPI 服务内的异步 Worker 负责通知、超时和候补
   任务。任务带唯一键、重试次数和状态，重复执行不会重复写通知。
 - WebSocket 只做实时提示，通知表才是事实来源；断线重连后前端重新拉取历史和未读数。

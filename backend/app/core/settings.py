@@ -1,3 +1,5 @@
+import os
+import socket
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -13,8 +15,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LAB_",
         env_file=PROJECT_ROOT / ".env",
-        env_ignore_empty=True,
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
     )
 
@@ -72,6 +74,17 @@ class Settings(BaseSettings):
     outbox_retry_base_seconds: int = 5
     outbox_worker_concurrency: int = 4
     outbox_task_timeout_seconds: float = 30.0
+    # Each API process needs its own group so every process receives every
+    # notification. Set a stable, unique value per process in deployments that
+    # need its pending entries to survive a process restart.
+    notification_stream_group_id: str = Field(
+        default_factory=lambda: f"{socket.gethostname()}-{os.getpid()}",
+        min_length=1,
+        max_length=100,
+    )
+    notification_stream_consumer_concurrency: int = Field(default=4, ge=1, le=64)
+    notification_stream_retry_base_seconds: float = Field(default=5.0, gt=0, le=300)
+    notification_stream_max_attempts: int = Field(default=5, ge=1, le=20)
     upload_dir: str = ".data/uploads"
     upload_max_bytes: int = 5 * 1024 * 1024
     upload_user_quota_bytes: int = 100 * 1024 * 1024

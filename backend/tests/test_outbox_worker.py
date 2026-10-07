@@ -13,6 +13,7 @@ from app.infrastructure.db.models import (
     DeviceMaintenancePlan,
     Notification,
     OutboxTask,
+    PenaltyRuleVersion,
     RepairReport,
     RepairWorklog,
     Reservation,
@@ -220,6 +221,22 @@ async def test_pending_handover_timeout_still_records_no_show_penalty(seeded) ->
     factory, _, _, student, _, _, device, _ = seeded
     day = date.today()
     async with factory() as session:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        session.add(
+            PenaltyRuleVersion(
+                college_id=student.college_id,
+                version=1,
+                effective_at=now - timedelta(minutes=1),
+                grace_days=0,
+                tiers={
+                    "NO_SHOW": [{"occurrence": 1, "points": 10, "block_days": 0}],
+                    "OVERDUE_RETURN": [],
+                    "MANUAL_VIOLATION": [],
+                },
+                created_by=student.id,
+            )
+        )
+        await session.commit()
         created = await ReservationService(
             session,
             principal(student, "STUDENT"),

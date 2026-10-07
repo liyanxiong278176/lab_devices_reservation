@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import * as authApi from '@/api/auth'
+import { clearPendingReservationRequest } from '@/utils/reservation-request-recovery'
 
 export const useUserStore = defineStore('user', () => {
   const userId = ref<number | null>(null)
@@ -23,6 +24,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function clearProfile() {
+    if (userId.value !== null) clearPendingReservationRequest(userId.value)
     userId.value = null
     username.value = ''
     realName.value = ''

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(eq=False)
 class NotificationStream:
-    """One authenticated SSE connection and its coalesced wake-up state."""
+    """One authenticated SSE connection with a bounded event queue."""
 
     client_ip: str
     user_id: int | None = None
@@ -19,16 +19,24 @@ class NotificationStream:
     closed: asyncio.Event = field(default_factory=asyncio.Event)
     notification_pending: bool = False
     read_state_pending: bool = False
+    notification_events: dict[int, dict[str, object]] = field(default_factory=dict)
+    notification_overflow_sequence: int | None = None
+    seen_notification_ids: set[int] = field(default_factory=set)
+    recent_notification_ids: deque[int] = field(default_factory=deque)
 
 
 class NotificationHub:
     """Bounded in-process registry for authenticated notification streams.
 
-    Redis and Outbox messages only wake a stream. The stream then reads the
-    durable MySQL rows by per-user sequence, so relay arrival order is irrelevant.
+    Each local SSE connection has a bounded queue of full Stream events. The
+    SSE endpoint emits them in per-user sequence order and reads MySQL only to
+    fill a sequence gap or recover a reconnect.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_pending_events: int = 100) -> None:
+        if max_pending_events < 1:
+            raise ValueError("max_pending_events must be positive")
+        self._max_pending_events = max_pending_events
         self._connections: defaultdict[int, set[NotificationStream]] = defaultdict(set)
         self._pending: set[NotificationStream] = set()
         self._lock = asyncio.Lock()
@@ -116,13 +124,54 @@ class NotificationHub:
                     # A single refresh conveys the latest committed state even
                     # if several read operations arrive before the next tick.
                     stream.read_state_pending = True
-                else:
+                elif event_type == "notification":
                     stream.notification_pending = True
+                    notification_id = payload.get("id")
+                    sequence = payload.get("deliverySequence")
+                    if (
+                        isinstance(notification_id, int)
+                        and not isinstance(notification_id, bool)
+                        and notification_id in stream.seen_notification_ids
+                    ):
+                        stream.wake.set()
+                        continue
+                    if isinstance(notification_id, int) and not isinstance(notification_id, bool):
+                        stream.seen_notification_ids.add(notification_id)
+                        stream.recent_notification_ids.append(notification_id)
+                        while len(stream.recent_notification_ids) > 1024:
+                            expired_id = stream.recent_notification_ids.popleft()
+                            stream.seen_notification_ids.discard(expired_id)
+                    if (
+                        isinstance(sequence, int)
+                        and not isinstance(sequence, bool)
+                        and sequence > 0
+                    ):
+                        if sequence not in stream.notification_events:
+                            if len(stream.notification_events) >= self._max_pending_events:
+                                stream.notification_events.clear()
+                                stream.notification_overflow_sequence = max(
+                                    sequence,
+                                    stream.notification_overflow_sequence or 0,
+                                )
+                            elif stream.notification_overflow_sequence is None:
+                                stream.notification_events[sequence] = dict(payload)
+                        if stream.notification_overflow_sequence is not None:
+                            stream.notification_overflow_sequence = max(
+                                sequence, stream.notification_overflow_sequence
+                            )
                 stream.wake.set()
         return len(connections)
 
+    async def request_mysql_catch_up(self) -> None:
+        """Wake current SSE streams to reconcile events from before a new group existed."""
+        async with self._lock:
+            for connections in self._connections.values():
+                for stream in connections:
+                    stream.notification_pending = True
+                    stream.wake.set()
+
     async def wait(self, stream: NotificationStream, timeout: float) -> bool:
-        """Wait for a relay hint or return False after the heartbeat interval."""
+        """Wait for a queued event or return False after the heartbeat interval."""
         if stream.closed.is_set():
             return True
         try:
@@ -132,10 +181,29 @@ class NotificationHub:
             return False
 
     async def take_pending(self, stream: NotificationStream) -> tuple[bool, bool]:
+        events, read_state_pending, overflow_sequence, notification_pending = (
+            await self.take_events(stream)
+        )
+        has_notification = bool(events) or overflow_sequence is not None or notification_pending
+        return has_notification, read_state_pending
+
+    async def take_events(
+        self,
+        stream: NotificationStream,
+    ) -> tuple[list[dict[str, object]], bool, int | None, bool]:
+        """Take queued full events, read-state state, and any overflow high-water mark."""
         async with self._lock:
-            notification_pending = stream.notification_pending
+            events = [stream.notification_events[key] for key in sorted(stream.notification_events)]
+            fallback_notification_pending = (
+                stream.notification_pending
+                and not events
+                and stream.notification_overflow_sequence is None
+            )
             read_state_pending = stream.read_state_pending
+            overflow_sequence = stream.notification_overflow_sequence
+            stream.notification_events.clear()
+            stream.notification_overflow_sequence = None
             stream.notification_pending = False
             stream.read_state_pending = False
             stream.wake.clear()
-            return notification_pending, read_state_pending
+            return events, read_state_pending, overflow_sequence, fallback_notification_pending

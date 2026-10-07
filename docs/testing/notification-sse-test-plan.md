@@ -6,16 +6,16 @@
 
 - **单元测试**：验证 SSE 事件生成、`NotificationHub` 会话关闭和前端序号去重，不启动 HTTP 服务。
 - **接口测试**：通过 HTTPX `ASGITransport` 请求 FastAPI 路由，检查 SSE 响应头、事件正文及当前用户/学院范围。
-- **集成测试**：使用 MySQL 验证多个独立事务并发分配序号；Redis Pub/Sub 多进程唤醒由现有 relay 测试覆盖。
+- **集成测试**：使用 MySQL 验证多个独立事务并发分配序号；Redis Streams 多进程广播、消费组 ACK、重试和死信由 relay 测试覆盖。
 
 `backend/tests/test_notification_sse.py` 文件头和测试函数说明标注了层级。SQLite 仅用于单元和接口逻辑验证，不能作为 MySQL `SELECT ... FOR UPDATE` 并发行为的证据。
 
 ## 执行方法
 
-在 `backend` 目录运行 SSE 相关的单元、接口及 Redis 模拟 relay 测试：
+在 `backend` 目录运行 SSE、Outbox、Redis Streams 模拟 relay 测试：
 
 ```powershell
-uv run pytest -q tests/test_notification_sse.py tests/test_notifications.py tests/test_notification_relay.py
+uv run pytest -q tests/test_notification_sse.py tests/test_notifications.py tests/test_notification_relay.py tests/test_notification_relay_coverage.py tests/test_realtime_capacity.py
 ```
 
 MySQL 并发集成测试默认跳过。确认 `.env` 中的 MySQL 测试库可用后，在 `backend` 目录运行：
@@ -44,7 +44,7 @@ pnpm exec playwright test e2e/notification-reconnect.spec.ts
 
 | 编号 | 层级 | 测试场景 | 预期结果 |
 |---|---|---|---|
-| SSE-U01 | 单元 | 有效通知写入 MySQL，用户流收到唤醒 | SSE 输出 `notification` 事件，事件 ID 等于用户序号，正文来自持久化通知行 |
+| SSE-U01 | 单元 | 有效通知经过 Stream 消费并交给本机 Hub | SSE 输出完整 `notification` 事件，事件 ID 等于用户序号 |
 | SSE-U02 | 单元 | 使用 `Last-Event-ID=N` 重连 | 只输出序号大于 N 的通知，按序号升序排列；重复唤醒不重复业务投递 |
 | SSE-U03 | 单元 | 注销当前会话 | 对应流结束并输出终止用的 `auth-revoked`；其他用户流不受影响 |
 | SSE-I01 | 接口 | GET SSE 路由并携带有效会话 | 返回 200、`text/event-stream`、禁止缓存响应头；用户身份来自会话，不从 URL 参数读取 |
@@ -55,7 +55,8 @@ pnpm exec playwright test e2e/notification-reconnect.spec.ts
 | SSE-M01 | MySQL 集成 | 16 个独立事务同时为同一用户创建通知 | 用户序号唯一、连续递增；按 SSE 查询结果输出时仍严格升序，无重复 ID |
 | SSE-F01 | 前端单元 | EventSource 连接收到 `error` 后自动重连 | 复用同一 EventSource，重连事件按服务器下发的序号交给通知 store |
 | SSE-F02 | 前端单元 | 重连重放同一序号 | store 忽略重复序号，不重复弹通知；其他新序号仍正常显示 |
-| SSE-R01 | Redis 集成/模拟 | 一个进程发布通知或已读状态，其他进程有该用户流 | 只唤醒该用户在线流；消息正文和顺序仍以 MySQL 为准 |
+| SSE-R01 | Redis 集成/模拟 | 一个进程发布通知或已读状态，多个进程各有独立消费组 | 每个进程收到副本；消费者交给本机 Hub 后 ACK；重复按通知 ID 去重，序号缺口从 MySQL 补齐 |
+| SSE-R02 | Redis 模拟 | Hub 临时失败且消息未 ACK | PEL 按指数退避重新投递；第 5 次失败后进入死信流 |
 
 ## 测试报告模板
 

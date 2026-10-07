@@ -78,7 +78,6 @@ from app.auth.security import Principal, college_scope, get_current_principal
 from app.common.response import ApiResponse
 from app.core.errors import ApiError
 from app.core.uploads import upload_quota_guard
-from app.infrastructure.cache.redis import reservation_lock
 from app.infrastructure.db.models import (
     AiAuxUsageEvent,
     AiCheckpoint,
@@ -1057,12 +1056,15 @@ async def confirm_ai_action(
                 max_days=request.app.state.settings.reservation_max_days,
             ).preflight(plan)
             await require_current_preview(refreshed_preview.model_dump(mode="json"))
-            async with reservation_lock(request, plan.device_id):
-                execution = await ReservationService(
-                    session,
-                    principal,
-                    max_days=request.app.state.settings.reservation_max_days,
-                ).create(plan, idempotency_key=f"ai-confirmation:{confirmation_id}")
+            reservation_service = ReservationService(
+                session,
+                principal,
+                max_days=request.app.state.settings.reservation_max_days,
+            )
+            execution = await reservation_service.create(
+                plan,
+                idempotency_key=f"ai-confirmation:{confirmation_id}",
+            )
             data = execution.model_dump(mode="json")
         elif confirmation.tool_name == "cancel_reservation":
             current_reservation = await ReservationService(
@@ -1775,9 +1777,7 @@ async def parse_knowledge_document(
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[KnowledgeBuildAcceptedData]:
     document = await session.scalar(
-        select(KnowledgeDocument)
-        .where(KnowledgeDocument.id == document_id)
-        .with_for_update()
+        select(KnowledgeDocument).where(KnowledgeDocument.id == document_id).with_for_update()
     )
     if document is None or not _can_manage_knowledge(principal, document.college_id):
         raise ApiError("DOCUMENT_NOT_FOUND", "知识文档不存在或无权操作", 404)
@@ -1846,9 +1846,7 @@ async def skip_failed_knowledge_build(
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[KnowledgeBuildJobData]:
     document = await session.scalar(
-        select(KnowledgeDocument)
-        .where(KnowledgeDocument.id == document_id)
-        .with_for_update()
+        select(KnowledgeDocument).where(KnowledgeDocument.id == document_id).with_for_update()
     )
     if document is None or not _can_manage_knowledge(principal, document.college_id):
         raise ApiError("DOCUMENT_NOT_FOUND", "知识文档不存在或无权操作", 404)
@@ -1870,9 +1868,7 @@ async def skip_failed_knowledge_build(
         .where(
             KnowledgeBuildJob.document_id == document.id,
             KnowledgeBuildJob.sequence < job.sequence,
-            KnowledgeBuildJob.status.in_(
-                ["QUEUED", "PROCESSING", "RETRYING", "FAILED"]
-            ),
+            KnowledgeBuildJob.status.in_(["QUEUED", "PROCESSING", "RETRYING", "FAILED"]),
         )
         .order_by(KnowledgeBuildJob.sequence)
         .limit(1)
@@ -1916,9 +1912,7 @@ async def retry_failed_knowledge_build_job(
     session: AsyncSession = Depends(get_db),
 ) -> ApiResponse[KnowledgeBuildAcceptedData]:
     document = await session.scalar(
-        select(KnowledgeDocument)
-        .where(KnowledgeDocument.id == document_id)
-        .with_for_update()
+        select(KnowledgeDocument).where(KnowledgeDocument.id == document_id).with_for_update()
     )
     if document is None or not _can_manage_knowledge(principal, document.college_id):
         raise ApiError("DOCUMENT_NOT_FOUND", "知识文档不存在或无权操作", 404)
@@ -1946,9 +1940,7 @@ async def retry_failed_knowledge_build_job(
         .where(
             KnowledgeBuildJob.document_id == document.id,
             KnowledgeBuildJob.sequence < job.sequence,
-            KnowledgeBuildJob.status.in_(
-                ["QUEUED", "PROCESSING", "RETRYING", "FAILED"]
-            ),
+            KnowledgeBuildJob.status.in_(["QUEUED", "PROCESSING", "RETRYING", "FAILED"]),
         )
         .order_by(KnowledgeBuildJob.sequence)
         .limit(1)
