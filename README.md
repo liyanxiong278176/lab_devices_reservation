@@ -1,5 +1,11 @@
 # LabFlow 实验室设备预约系统
 
+## 前端流程截图册
+
+[完整截图册，用浏览器打开逐张查看（242 张）](.artifacts/browser-flow-20261007/viewer/gallery.html)
+
+截图覆盖普通用户与管理员的预约审批、设备交接与归还验收、报修处理、违约处罚和申诉，以及管理员周期保养、仪器校准、安全检查与维修复测流程。入口对应当前工作区的本地测试产物。
+
 ## 项目背景
 
 LabFlow 面向高校实验室的设备共享与管理，支持普通用户按自然日预约设备，以及管理员审批、现场交接、归还验收、报修处理、违约处罚和申诉。系统按学院隔离数据，并提供消息通知和 AI 知识库助手。
@@ -72,9 +78,3 @@ uv run python scripts/seed_demo_data.py
 ```powershell
 uv run celery -A app.infrastructure.tasks.celery_app:celery_app worker --pool=solo --loglevel=INFO --concurrency=1 --prefetch-multiplier=1 --queues=knowledge-build
 ```
-
-## 前端流程截图册
-
-[完整截图册，用浏览器打开逐张查看（242 张）](.artifacts/browser-flow-20261007/viewer/gallery.html)
-
-截图覆盖普通用户与管理员的预约审批、设备交接与归还验收、报修处理、违约处罚和申诉，以及管理员周期保养、仪器校准、安全检查与维修复测流程。入口对应当前工作区的本地测试产物。
