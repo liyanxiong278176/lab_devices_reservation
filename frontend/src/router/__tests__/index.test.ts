@@ -26,18 +26,14 @@ describe('router records, lazy pages and in-app navigation depth', () => {
     ]))
 
     const lazyPages = router.getRoutes()
-      .filter((route) => route.name !== 'ai-workbench' && route.components?.default)
+      .filter((route) => route.components?.default)
     expect(lazyPages.length).toBeGreaterThan(15)
     const loaded = await Promise.all(lazyPages.map((route) =>
       (route.components!.default as () => Promise<unknown>)(),
     ))
     expect(loaded.every(Boolean)).toBe(true)
 
-    // Keep the AI view out of feature-level coverage, while checking the shared router's lazy boundary.
-    const aiRoute = router.getRoutes().find((route) => route.name === 'ai-workbench')
-    expect(aiRoute?.components?.default).toBeTypeOf('function')
-    const aiPageModule = await (aiRoute!.components!.default as () => Promise<unknown>)()
-    expect(aiPageModule).toBeTruthy()
+    expect(router.getRoutes().some((route) => route.path === '/ai')).toBe(false)
   }, 20000)
 
   it('does not count the initial page load, increments in-app navigation and supports reset', async () => {

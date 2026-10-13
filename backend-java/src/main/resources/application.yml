@@ -1,0 +1,56 @@
+server:
+  port: ${LAB_PORT:8000}
+  error:
+    include-message: never
+  tomcat:
+    accept-count: ${LAB_REQUEST_QUEUE_CAPACITY:1000}
+    max-connections: 1000
+    threads:
+      max: 100
+spring:
+  application:
+    name: labflow
+  task:
+    scheduling:
+      pool:
+        size: 4
+  datasource:
+    hikari:
+      maximum-pool-size: ${LAB_DB_POOL_SIZE:30}
+      connection-timeout: 10000
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+  flyway:
+    enabled: ${LAB_FLYWAY_ENABLED:false}
+    baseline-on-migrate: false
+    clean-disabled: true
+  data:
+    redis:
+      timeout: 500ms
+      connect-timeout: 500ms
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 31MB
+  jackson:
+    default-property-inclusion: always
+    serialization:
+      write-dates-as-timestamps: false
+management:
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  endpoints:
+    web:
+      exposure:
+        include: health
+mybatis:
+  configuration:
+    call-setters-on-nulls: true
+    jdbc-type-for-null: 'NULL'
+    default-statement-timeout: ${LAB_DB_STATEMENT_TIMEOUT_SECONDS:30}
+springdoc:
+  api-docs:
+    path: /api/v2/openapi.json
+  swagger-ui:
+    path: /api/v2/docs

@@ -1,0 +1,26 @@
+-- Destructive AI-only cleanup authorized by the project owner. Business rows are retained.
+DELETE rp FROM sys_role_permission rp JOIN sys_permission p ON p.id=rp.permission_id WHERE p.module='ai' OR p.permission_code LIKE 'ai:%';
+DELETE FROM sys_permission WHERE module='ai' OR permission_code LIKE 'ai:%';
+DROP TABLE IF EXISTS `v2_ai_aux_usage_event`;
+DROP TABLE IF EXISTS `v2_ai_checkpoint`;
+DROP TABLE IF EXISTS `v2_ai_checkpoint_write`;
+DROP TABLE IF EXISTS `v2_ai_confirmation`;
+DROP TABLE IF EXISTS `v2_ai_context_snapshot`;
+DROP TABLE IF EXISTS `v2_ai_domain_term`;
+DROP TABLE IF EXISTS `v2_ai_embedding_rebuild_job`;
+DROP TABLE IF EXISTS `v2_ai_knowledge_index_state`;
+DROP TABLE IF EXISTS `v2_ai_memory_recall`;
+DROP TABLE IF EXISTS `v2_ai_message_recall`;
+DROP TABLE IF EXISTS `v2_ai_run_event`;
+DROP TABLE IF EXISTS `v2_ai_tool_execution`;
+DROP TABLE IF EXISTS `v2_ai_usage_bucket`;
+DROP TABLE IF EXISTS `v2_ai_usage_event`;
+DROP TABLE IF EXISTS `v2_knowledge_build_job`;
+DROP TABLE IF EXISTS `v2_knowledge_chunk`;
+DROP TABLE IF EXISTS `v2_ai_memory`;
+DROP TABLE IF EXISTS `v2_ai_message`;
+DROP TABLE IF EXISTS `v2_ai_run`;
+DROP TABLE IF EXISTS `v2_knowledge_section`;
+DROP TABLE IF EXISTS `v2_ai_conversation`;
+DROP TABLE IF EXISTS `v2_knowledge_document`;
+UPDATE v2_authz_version SET version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=1;

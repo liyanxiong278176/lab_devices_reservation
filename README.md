@@ -1,53 +1,34 @@
 # LabFlow 实验室设备预约系统
 
-## 前端流程截图册
+面向高校实验室的设备共享平台，支持自然日预约、资源池、多角色审批、候补、设备交接、归还验收、报修、维护校准、安全准入、处罚申诉、报表与通知。学院是租户边界。
 
-[完整截图册，用浏览器打开逐张查看（242 张）](.artifacts/browser-flow-20261007/viewer/gallery.html)
+后端为 **Java 21 / Spring Boot / MyBatis / Flyway**，前端为 Vue 3 / TypeScript / Element Plus，依赖 MySQL 8 和 Redis 7。AI 工作台、知识库及 AI 运行依赖已移除。
 
-截图覆盖普通用户与管理员的预约审批、设备交接与归还验收、报修处理、违约处罚和申诉，以及管理员周期保养、仪器校准、安全检查与维修复测流程。入口对应当前工作区的本地测试产物。
+## 本地启动
 
-## 项目背景
-
-LabFlow 面向高校实验室的设备共享与管理，支持普通用户按自然日预约设备，以及管理员审批、现场交接、归还验收、报修处理、违约处罚和申诉。系统按学院隔离数据，并提供消息通知和 AI 知识库助手。
-
-后端使用 Python 3.13 / FastAPI，前端使用 Vue 3 / TypeScript / Element Plus，依赖 MySQL 8、Redis 7 和 Qdrant。
-
-## 安装使用
-
-准备 Python 3.13、uv、Node.js、pnpm 和 Docker Desktop。以下命令在 PowerShell 中执行。
-
-### 1. 配置环境并启动依赖
-
-在项目根目录执行（已有 `.env` 时保留原文件）：
+准备 JDK 21、Node.js、pnpm、Docker；已有 `.env` 时保留原文件，首次配置执行：
 
 ```powershell
 Copy-Item .env.example .env
+docker compose up -d mysql redis
+cd backend-java
+.\mvnw.cmd package
 ```
 
-按模板填写 `.env` 中的数据库密码、JWT 密钥及 Compose 必填项。`LAB_MYSQL_DSN` 中的账号、密码应与 `DB_APP_USER`、`DB_APP_PASSWORD` 一致；设置 `LAB_BOOTSTRAP_ADMIN_PASSWORD` 作为首次创建 `admin` 的密码。
+按 `.env.example` 填写数据库账号、JWT 密钥和监控配置。`LAB_MYSQL_DSN` 兼容原来的连接串，也可使用 `LAB_JDBC_URL`、`LAB_DB_USERNAME`、`LAB_DB_PASSWORD`。环境变量优先于根目录 `.env`。
+
+**全新空库**在 `backend-java` 执行初始化：
 
 ```powershell
-docker compose up -d mysql redis qdrant
+java -jar target/labflow-backend-1.0.0.jar --spring.main.web-application-type=none --labflow.migration=migrate
+java -jar target/labflow-backend-1.0.0.jar
 ```
 
-若本机使用独立版 Compose，将 `docker compose` 替换为 `docker-compose`。
+**已有业务库**必须走[保留业务数据的切换步骤](docs/springboot-cutover.md)，先核验旧迁移版本并显式 baseline；不能对已有库执行空库建表流程。默认不自动迁移、不自动 baseline。
 
-### 2. 安装并启动后端
+配置 `LAB_BOOTSTRAP_ADMIN_PASSWORD`（至少 12 字符）可创建首次管理员，已有账号和密码不会覆盖。设备和组织可在管理页面维护。
 
-从项目根目录执行：
-
-```powershell
-cd backend
-uv sync
-uv run alembic upgrade head
-uv run uvicorn app.main:app --loop app.core.uvicorn_loop:platform_loop_factory --host 127.0.0.1 --reload --port 8000
-```
-
-后端接口文档：[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)。
-
-### 3. 安装并启动前端
-
-另开终端，从项目根目录执行：
+另开终端启动前端：
 
 ```powershell
 cd frontend
@@ -55,26 +36,12 @@ pnpm install
 pnpm dev
 ```
 
-浏览器访问 [http://localhost:5173](http://localhost:5173)。普通用户可在登录页注册；管理员使用 `admin` 和配置的初始化密码登录，已有账号的密码不会被覆盖。
+页面：[http://localhost:5173](http://localhost:5173)；接口文档：[http://127.0.0.1:8000/api/v2/docs](http://127.0.0.1:8000/api/v2/docs)。接口保持 `/api/v2`。
 
-当前工作区的本地测试账号：普通用户 `zhangsan / 123456`，系统管理员 `admin / admin123`。
+## 验证
 
-推送到 `main` 或 `master` 后，自动部署会在数据库迁移完成后为三个预置学院补齐示例设备和维护计划（空库共 18 台设备、18 个计划）。重复部署不覆盖已有设备、维护计划或账号密码；示例数据可在管理页面编辑。
+Java 检查见 [backend-java/README.md](backend-java/README.md)。前端执行 `pnpm build`、`pnpm test`、`pnpm test:e2e`。真实数据库测试必须指定隔离测试库，不能使用业务库。
 
-### 4. 可选：初始化演示数据与 AI 知识库
+`backend/` 仅保留历史 Alembic 迁移与可选 SQL/Redis 验证工具，不提供 Python HTTP 服务。浏览器验收的 fixture 工具需要 Python 3.13 和 uv，执行 `uv sync --project backend`；Java 运行和 Docker 镜像不需要 Python。
 
-首次使用空库时，可在完成迁移后从 `backend` 目录初始化学院、实验室、设备和 `zhangsan` 普通用户（仅限本地开发）：
-
-```powershell
-$env:LAB_DEMO_USER_PASSWORD = '123456'
-$env:LAB_DEMO_MANAGER_PASSWORD = '<负责人密码>'
-uv run python scripts/seed_demo_data.py
-```
-
-脚本还需 `.env` 已配置 `LAB_BOOTSTRAP_ADMIN_PASSWORD`，已有记录不会重复创建。
-
-使用 AI 功能时，在根目录 `.env` 填写对应的 AI 服务凭据并重启后端；需要构建知识库时，另开终端从 `backend` 目录启动 Worker：
-
-```powershell
-uv run celery -A app.infrastructure.tasks.celery_app:celery_app worker --pool=solo --loglevel=INFO --concurrency=1 --prefetch-multiplier=1 --queues=knowledge-build
-```
+现有本地[前端截图册](.artifacts/browser-flow-20261007/viewer/gallery.html)属于验收产物，不是应用运行入口。

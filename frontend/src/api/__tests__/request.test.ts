@@ -101,7 +101,7 @@ describe('request authentication recovery', () => {
   it('applies the same expired-session handling to streaming fetch requests', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
 
-    const response = await fetchWithSession('/api/v2/ai/runs/stream')
+    const response = await fetchWithSession('/api/v2/notifications/stream')
 
     expect(response.status).toBe(401)
     expect(userStore.clearProfile).toHaveBeenCalledOnce()
@@ -434,7 +434,7 @@ describe('request authentication recovery', () => {
       })
     vi.stubGlobal('fetch', fetchMock)
 
-    const response = await fetchWithSession('/api/v2/ai/runs/stream', {
+    const response = await fetchWithSession('/api/v2/notifications/stream', {
       method: 'POST',
       body: '{}',
     })

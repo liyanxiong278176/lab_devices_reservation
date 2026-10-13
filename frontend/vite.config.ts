@@ -14,7 +14,7 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   server: {
     port: 5173,
-    // FastAPI 本地开发端口默认是 8000；可用 VITE_API_PROXY_TARGET 覆盖。
+    // Spring Boot 本地开发端口默认是 8000；可用 VITE_API_PROXY_TARGET 覆盖。
     proxy: {
       '/api': {
         target:
@@ -35,10 +35,6 @@ export default defineConfig({
       include: ['src/**/*.{ts,tsx,vue}'],
       exclude: [
         'src/**/__tests__/**',
-        'src/**/ai/**',
-        'src/api/aiV2.ts',
-        'src/stores/aiWorkbench.ts',
-        'src/types/aiWorkbench.ts',
       ],
       thresholds: {
         lines: 100,

@@ -55,7 +55,7 @@ async function prepareBooking(page: Page, purpose: string, date: string) {
   await end.fill(date)
   await end.press('Enter')
   await page.getByPlaceholder('例如：完成材料拉伸实验并采集三组数据').fill(purpose)
-  await expect(page.locator('.preflight-summary')).toContainText('1 天可用')
+  await expect(page.locator('.preflight-summary')).toContainText(/1 天(?:可用|满足 1 台名额)/)
   await expect(page.getByRole('button', { name: '提交预约' })).toBeEnabled()
 }
 

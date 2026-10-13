@@ -1,0 +1,13 @@
+-- Only AI-exclusive histories are removed; business records created through AI remain intact.
+DELETE FROM v2_outbox_task WHERE task_type IN (
+  'AI_RUN', 'AI_KNOWLEDGE_PARSE', 'AI_KNOWLEDGE_POLL',
+  'AI_KNOWLEDGE_BUILD_DISPATCH', 'AI_KNOWLEDGE_CLEANUP', 'AI_EMBEDDING_REBUILD'
+);
+DELETE FROM v2_audit_log WHERE target_type IN (
+  'AI_CONVERSATION', 'AI_RUN', 'AI_MEMORY', 'AI_DOMAIN_TERM',
+  'AI_KNOWLEDGE', 'KNOWLEDGE_DOCUMENT', 'KNOWLEDGE_BUILD_JOB', 'AI_CONFIG'
+);
+DELETE FROM notification WHERE related_type IN (
+  'AI_CONVERSATION', 'AI_RUN', 'AI_MEMORY', 'AI_KNOWLEDGE',
+  'KNOWLEDGE_DOCUMENT', 'KNOWLEDGE_BUILD_JOB'
+);

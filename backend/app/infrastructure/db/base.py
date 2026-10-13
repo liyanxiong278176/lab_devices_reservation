@@ -5,7 +5,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
-    """Base for all new FastAPI-owned tables and compatibility mappings."""
+    """Business mappings for optional migration and browser test utilities."""
 
 
 class TimestampMixin:

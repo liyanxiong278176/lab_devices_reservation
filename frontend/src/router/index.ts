@@ -26,12 +26,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '仪表盘', icon: 'Odometer', permissions: ['dashboard:read'] },
       },
       {
-        path: 'ai',
-        name: 'ai-workbench',
-        component: () => import('@/views/ai/Workbench.vue'),
-        meta: { title: 'AI 工作台', icon: 'MagicStick', permissions: ['ai:use'] },
-      },
-      {
         path: 'devices',
         name: 'devices',
         component: () => import('@/views/device/Index.vue'),

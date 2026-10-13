@@ -108,7 +108,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await login(userPage, fixture.username, fixture.password)
     await expect(userPage.getByRole('heading', { name: '我的仪表盘', exact: true })).toBeVisible()
 
-    for (const menu of ['仪表盘', 'AI 工作台', '设备', '我的预约', '我的通知', '提交报修', '我的报修']) {
+    for (const menu of ['仪表盘', '设备', '我的预约', '我的通知', '提交报修', '我的报修']) {
       await expect(userPage.getByRole('menuitem', { name: menu, exact: true })).toBeVisible()
     }
     await expect(userPage.getByRole('menuitem', { name: '待审批', exact: true })).toHaveCount(0)
@@ -146,7 +146,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     const adminContext = await browser.newContext()
     const adminPage = await adminContext.newPage()
     await login(adminPage, fixture.admin_username, fixture.password)
-    for (const menu of ['仪表盘', 'AI 工作台', '设备', '待审批', '我的通知', '报修处理', '设备管理', '设备交接', '运营报表', '用户管理', '组织管理']) {
+    for (const menu of ['仪表盘', '设备', '待审批', '我的通知', '报修处理', '设备管理', '设备交接', '运营报表', '用户管理', '组织管理']) {
       await expect(adminPage.getByRole('menuitem', { name: menu, exact: true })).toBeVisible()
     }
     await expect(adminPage.getByRole('menuitem', { name: '设备交接', exact: true }).locator('svg')).toHaveCount(1)

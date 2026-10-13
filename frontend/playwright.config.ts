@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
+  // The notification operations suite needs two APIs and Prometheus/Grafana.
+  testIgnore: process.env.E2E_NOTIFICATION_LIVE === '1' ? [] : ['**/notification-stream-live.spec.ts'],
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
@@ -16,9 +18,9 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'uv run uvicorn app.main:app --loop app.core.uvicorn_loop:platform_loop_factory --host 127.0.0.1 --port 8000',
-      cwd: '../backend',
-      url: 'http://127.0.0.1:8000/api/v2/live',
+      command: 'java -jar target/labflow-backend-1.0.0.jar',
+      cwd: '../backend-java',
+      url: process.env.E2E_API_URL || 'http://127.0.0.1:8000/api/v2/live',
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },

@@ -20,18 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.auth.security import hash_password
 from app.core.settings import Settings
 from app.infrastructure.db.models import (
-    AiAuxUsageEvent,
-    AiCheckpoint,
-    AiCheckpointWrite,
-    AiConfirmation,
-    AiConversation,
-    AiEmbeddingRebuildJob,
-    AiMessage,
-    AiRun,
-    AiRunEvent,
-    AiUsageEvent,
     AuditLog,
     College,
+    CollegeCreditAccount,
     CreditEvent,
     Device,
     DeviceCategory,
@@ -46,13 +37,19 @@ from app.infrastructure.db.models import (
     Lab,
     Notification,
     OutboxTask,
+    PenaltyAppeal,
+    PenaltyCase,
+    PenaltyRuleVersion,
     RefreshSession,
     RepairReport,
     Reservation,
     ReservationBlackout,
+    ReservationBookingRestriction,
     ReservationFeedback,
     ReservationInspection,
     ReservationItem,
+    ReservationOverdue,
+    ReservationOverdueFollowUp,
     ReservationRule,
     ReservationWaitlist,
     ReservationWaitlistOffer,
@@ -296,29 +293,6 @@ async def cleanup(prefix: str) -> None:
             reservation_id_query = select(Reservation.id).where(
                 Reservation.college_id == college.id
             )
-            conversations = list(
-                (
-                    await session.execute(
-                        select(AiConversation.id, AiConversation.graph_thread_id).where(
-                            AiConversation.user_id.in_(user_ids or [-1])
-                        )
-                    )
-                ).all()
-            )
-            conversation_ids = [conversation_id for conversation_id, _ in conversations]
-            conversation_thread_ids = [thread_id for _, thread_id in conversations]
-            ai_run_ids = list(
-                (
-                    await session.scalars(
-                        select(AiRun.id).where(
-                            or_(
-                                AiRun.user_id.in_(user_ids or [-1]),
-                                AiRun.conversation_id.in_(conversation_ids or [-1]),
-                            )
-                        )
-                    )
-                ).all()
-            )
             export_scope = ExportTask.college_id == college.id
             if user_ids:
                 export_scope = export_scope | ExportTask.requester_id.in_(user_ids)
@@ -365,52 +339,6 @@ async def cleanup(prefix: str) -> None:
             )
             if user_ids:
                 await session.execute(
-                    delete(AiAuxUsageEvent).where(AiAuxUsageEvent.user_id.in_(user_ids))
-                )
-                await session.execute(
-                    delete(AiEmbeddingRebuildJob).where(
-                        AiEmbeddingRebuildJob.requested_by.in_(user_ids)
-                    )
-                )
-                await session.execute(
-                    delete(AiUsageEvent).where(AiUsageEvent.user_id.in_(user_ids))
-                )
-                await session.execute(
-                    delete(AiConfirmation).where(AiConfirmation.user_id.in_(user_ids))
-                )
-                await session.execute(delete(AiMessage).where(AiMessage.user_id.in_(user_ids)))
-            if conversation_thread_ids:
-                await session.execute(
-                    delete(AiCheckpointWrite).where(
-                        AiCheckpointWrite.thread_id.in_(conversation_thread_ids)
-                    )
-                )
-                await session.execute(
-                    delete(AiCheckpoint).where(AiCheckpoint.thread_id.in_(conversation_thread_ids))
-                )
-            if ai_run_ids:
-                await session.execute(delete(AiRunEvent).where(AiRunEvent.run_id.in_(ai_run_ids)))
-                await session.execute(
-                    delete(AiUsageEvent).where(AiUsageEvent.run_id.in_(ai_run_ids))
-                )
-                await session.execute(
-                    delete(AiConfirmation).where(AiConfirmation.run_id.in_(ai_run_ids))
-                )
-                await session.execute(delete(AiRun).where(AiRun.id.in_(ai_run_ids)))
-            if conversation_ids:
-                await session.execute(
-                    delete(AiMessage).where(AiMessage.conversation_id.in_(conversation_ids))
-                )
-                await session.execute(
-                    delete(AiConfirmation).where(
-                        AiConfirmation.conversation_id.in_(conversation_ids)
-                    )
-                )
-                await session.execute(
-                    delete(AiConversation).where(AiConversation.id.in_(conversation_ids))
-                )
-            if user_ids:
-                await session.execute(
                     delete(Notification).where(Notification.user_id.in_(user_ids))
                 )
                 await session.execute(
@@ -423,6 +351,32 @@ async def cleanup(prefix: str) -> None:
                 await session.execute(
                     delete(RefreshSession).where(RefreshSession.user_id.in_(user_ids))
                 )
+            await session.execute(
+                delete(ReservationBookingRestriction).where(
+                    ReservationBookingRestriction.college_id == college.id
+                )
+            )
+            overdue_ids = select(ReservationOverdue.id).where(
+                ReservationOverdue.college_id == college.id
+            )
+            await session.execute(
+                delete(ReservationOverdueFollowUp).where(
+                    ReservationOverdueFollowUp.overdue_id.in_(overdue_ids)
+                )
+            )
+            await session.execute(
+                delete(ReservationOverdue).where(ReservationOverdue.college_id == college.id)
+            )
+            await session.execute(
+                delete(PenaltyAppeal).where(PenaltyAppeal.college_id == college.id)
+            )
+            await session.execute(delete(PenaltyCase).where(PenaltyCase.college_id == college.id))
+            await session.execute(
+                delete(PenaltyRuleVersion).where(PenaltyRuleVersion.college_id == college.id)
+            )
+            await session.execute(
+                delete(CollegeCreditAccount).where(CollegeCreditAccount.college_id == college.id)
+            )
             if device_ids:
                 await session.execute(
                     delete(DeviceMaintenanceRecord).where(

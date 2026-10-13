@@ -58,7 +58,7 @@ jobs:
           else
             while IFS= read -r path; do
               case "$path" in
-                backend/*|Dockerfile|.dockerignore)
+                backend-java/*|backend/migrations/*|Dockerfile|.dockerignore)
                   backend=true
                   ;;
                 frontend/*)
@@ -259,11 +259,12 @@ jobs:
           compose=(docker compose -f docker-compose.prod.yml)
 
           if [[ "$backend_changed" == true ]]; then
-            "${compose[@]}" build app celery-worker
-            "${compose[@]}" up -d --wait --wait-timeout 300 mysql redis qdrant
-            "${compose[@]}" run --rm --no-deps app uv run --no-dev alembic upgrade head
-            "${compose[@]}" run --rm --no-deps app uv run --no-dev python scripts/seed_production_catalog.py
-            "${compose[@]}" up -d --no-deps --wait --wait-timeout 300 app celery-worker
+            "${compose[@]}" build app
+            "${compose[@]}" up -d --wait --wait-timeout 300 mysql redis
+            "${compose[@]}" stop app
+            "${compose[@]}" run --rm --no-deps app java -jar /app/backend-java/app.jar --spring.main.web-application-type=none --LAB_ENABLE_WORKERS=false --labflow.migration=migrate
+            "${compose[@]}" run --rm --no-deps --user root app chown -R 10001:10001 /app/backend/.data
+            "${compose[@]}" up -d --no-deps --wait --wait-timeout 300 app
           fi
 
           if [[ "$prometheus_changed" == true ]]; then

@@ -163,7 +163,7 @@ test.describe('普通用户与管理员非 AI 页面实际渲染截图验收', (
     await expect(userPage.getByRole('heading', { name: '预约设备', exact: true })).toBeVisible()
     await selectDateRange(userPage, reservationDate)
     await userPage.getByPlaceholder('例如：完成材料拉伸实验并采集三组数据').fill(reservationPurpose)
-    await expect(userPage.locator('.preflight-summary')).toContainText('1 天可用')
+    await expect(userPage.locator('.preflight-summary')).toContainText(/1 天(?:可用|满足 1 台名额)/)
     await expect(userPage.getByRole('button', { name: '提交预约' })).toBeEnabled()
     await capture(userPage, testInfo, 'user-reservation-create-available')
     await userPage.getByRole('button', { name: '提交预约' }).click()

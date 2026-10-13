@@ -4,7 +4,7 @@
 #
 # ============================================================
 # 生产环境不再为数据库密码和 JWT 密钥提供默认值；缺失时直接拒绝启动。
-#   - 4G 机器内存分配：mysql 512M / redis 128M / qdrant 256M / app 768M / Celery worker 768M / frontend 64M
+#   - 4G 机器内存分配：mysql 512M / redis 128M / Spring Boot app 768M / frontend 64M
 # ============================================================
 name: labprod
 
@@ -15,21 +15,9 @@ x-backend-environment: &backend-environment
   LAB_API_PREFIX: "${LAB_API_PREFIX:-}"
   LAB_MYSQL_DSN: "${LAB_MYSQL_DSN:-}"
   LAB_REDIS_URL: "${LAB_REDIS_URL:-}"
-  LAB_CELERY_BROKER_URL: "${LAB_CELERY_BROKER_URL:-}"
-  LAB_CELERY_VISIBILITY_TIMEOUT_SECONDS: "${LAB_CELERY_VISIBILITY_TIMEOUT_SECONDS:-}"
-  LAB_CELERY_TASK_SOFT_TIME_LIMIT_SECONDS: "${LAB_CELERY_TASK_SOFT_TIME_LIMIT_SECONDS:-}"
-  LAB_CELERY_TASK_TIME_LIMIT_SECONDS: "${LAB_CELERY_TASK_TIME_LIMIT_SECONDS:-}"
-  LAB_CELERY_WORKER_CONCURRENCY: "${LAB_CELERY_WORKER_CONCURRENCY:-}"
-  LAB_AI_KNOWLEDGE_BUILD_EMBED_BATCH_SIZE: "${LAB_AI_KNOWLEDGE_BUILD_EMBED_BATCH_SIZE:-}"
-  LAB_AI_KNOWLEDGE_BUILD_LEASE_SECONDS: "${LAB_AI_KNOWLEDGE_BUILD_LEASE_SECONDS:-}"
-  LAB_AI_KNOWLEDGE_BUILD_DISPATCH_RECOVERY_SECONDS: "${LAB_AI_KNOWLEDGE_BUILD_DISPATCH_RECOVERY_SECONDS:-}"
-  LAB_AI_KNOWLEDGE_BUILD_RECONCILE_INTERVAL_SECONDS: "${LAB_AI_KNOWLEDGE_BUILD_RECONCILE_INTERVAL_SECONDS:-}"
-  LAB_AI_KNOWLEDGE_BUILD_MAX_REDELIVERIES: "${LAB_AI_KNOWLEDGE_BUILD_MAX_REDELIVERIES:-}"
-  LAB_AI_RAG_QUERY_CONCURRENCY: "${LAB_AI_RAG_QUERY_CONCURRENCY:-}"
   LAB_REDIS_SOCKET_TIMEOUT_SECONDS: "${LAB_REDIS_SOCKET_TIMEOUT_SECONDS:-}"
   LAB_REDIS_CIRCUIT_FAILURE_THRESHOLD: "${LAB_REDIS_CIRCUIT_FAILURE_THRESHOLD:-}"
   LAB_REDIS_CIRCUIT_RECOVERY_SECONDS: "${LAB_REDIS_CIRCUIT_RECOVERY_SECONDS:-}"
-  LAB_QDRANT_URL: "${LAB_QDRANT_URL:-}"
   LAB_CORS_ORIGINS: "${LAB_CORS_ORIGINS:-}"
   LAB_TRUSTED_PROXY_IPS: "${LAB_TRUSTED_PROXY_IPS:-}"
   LAB_JWT_SECRET: "${LAB_JWT_SECRET:-}"
@@ -39,14 +27,12 @@ x-backend-environment: &backend-environment
   LAB_JWT_ISSUER: "${LAB_JWT_ISSUER:-}"
   LAB_ENABLE_WORKERS: "${LAB_ENABLE_WORKERS:-}"
   LAB_UPLOAD_COLLEGE_QUOTA_BYTES: "${LAB_UPLOAD_COLLEGE_QUOTA_BYTES:-}"
-  LAB_AI_KNOWLEDGE_GLOBAL_STORAGE_BYTES: "${LAB_AI_KNOWLEDGE_GLOBAL_STORAGE_BYTES:-}"
-  LAB_AI_KNOWLEDGE_COLLEGE_STORAGE_BYTES: "${LAB_AI_KNOWLEDGE_COLLEGE_STORAGE_BYTES:-}"
   LAB_BOOTSTRAP_ADMIN_USERNAME: "${LAB_BOOTSTRAP_ADMIN_USERNAME:-}"
   LAB_BOOTSTRAP_ADMIN_PASSWORD: "${LAB_BOOTSTRAP_ADMIN_PASSWORD:-}"
-  LAB_DB_POOL_SIZE: "${LAB_DB_POOL_SIZE:-}"
+  LAB_DB_POOL_SIZE: "${LAB_DB_POOL_SIZE:-30}"
   LAB_DB_MAX_OVERFLOW: "${LAB_DB_MAX_OVERFLOW:-}"
   LAB_DB_POOL_TIMEOUT_SECONDS: "${LAB_DB_POOL_TIMEOUT_SECONDS:-}"
-  LAB_REQUEST_QUEUE_CAPACITY: "${LAB_REQUEST_QUEUE_CAPACITY:-}"
+  LAB_REQUEST_QUEUE_CAPACITY: "${LAB_REQUEST_QUEUE_CAPACITY:-1000}"
   LAB_OUTBOX_MAX_ATTEMPTS: "${LAB_OUTBOX_MAX_ATTEMPTS:-}"
   LAB_OUTBOX_WORKER_CONCURRENCY: "${LAB_OUTBOX_WORKER_CONCURRENCY:-}"
   LAB_NOTIFICATION_STREAM_CONSUMER_CONCURRENCY: "${LAB_NOTIFICATION_STREAM_CONSUMER_CONCURRENCY:-}"
@@ -72,25 +58,6 @@ x-backend-environment: &backend-environment
   LAB_RATE_LIMIT_LOGIN_REFILL_PER_SECOND: "${LAB_RATE_LIMIT_LOGIN_REFILL_PER_SECOND:-}"
   LAB_RATE_LIMIT_RESERVATION_CAPACITY: "${LAB_RATE_LIMIT_RESERVATION_CAPACITY:-}"
   LAB_RATE_LIMIT_REPAIR_CAPACITY: "${LAB_RATE_LIMIT_REPAIR_CAPACITY:-}"
-  LAB_AI_PROVIDER: "${LAB_AI_PROVIDER:-}"
-  LAB_AI_MODEL: "${LAB_AI_MODEL:-}"
-  LAB_AI_API_KEY: "${LAB_AI_API_KEY:-}"
-  LAB_AI_BASE_URL: "${LAB_AI_BASE_URL:-}"
-  LAB_AI_ALLOWED_MODELS: "${LAB_AI_ALLOWED_MODELS:-}"
-  LAB_AI_EMBEDDING_PROVIDER: "${LAB_AI_EMBEDDING_PROVIDER:-}"
-  LAB_AI_EMBEDDING_MODEL: "${LAB_AI_EMBEDDING_MODEL:-}"
-  LAB_AI_EMBEDDING_API_KEY: "${LAB_AI_EMBEDDING_API_KEY:-}"
-  LAB_AI_EMBEDDING_BASE_URL: "${LAB_AI_EMBEDDING_BASE_URL:-}"
-  LAB_AI_EMBEDDING_DIMENSION: "${LAB_AI_EMBEDDING_DIMENSION:-}"
-  LAB_AI_RERANKER_MODEL: "${LAB_AI_RERANKER_MODEL:-}"
-  LAB_AI_MINERU_MODEL: "${LAB_AI_MINERU_MODEL:-}"
-  LAB_AI_MINERU_API_KEY: "${LAB_AI_MINERU_API_KEY:-}"
-  LAB_AI_MINERU_BASE_URL: "${LAB_AI_MINERU_BASE_URL:-}"
-  LAB_AI_USER_DAILY_TOKEN_CAP: "${LAB_AI_USER_DAILY_TOKEN_CAP:-}"
-  LAB_AI_COLLEGE_DAILY_TOKEN_CAP: "${LAB_AI_COLLEGE_DAILY_TOKEN_CAP:-}"
-  LAB_AI_GLOBAL_DAILY_TOKEN_CAP: "${LAB_AI_GLOBAL_DAILY_TOKEN_CAP:-}"
-  LAB_AI_QDRANT_COLLECTION: "${LAB_AI_QDRANT_COLLECTION:-}"
-  LAB_AI_QDRANT_TIMEOUT_SECONDS: "${LAB_AI_QDRANT_TIMEOUT_SECONDS:-}"
 
 services:
   mysql:
@@ -131,24 +98,6 @@ services:
     volumes: ["redis_data:/data"]
     # Redis 只允许 Docker 内部 app 服务访问，不发布到宿主机/公网。
     mem_limit: 128m
-  qdrant:
-    image: qdrant/qdrant:v1.19.0
-    networks: [lab-internal]
-    restart: unless-stopped
-    volumes: ["qdrant_data:/qdrant/storage"]
-    expose: ["6333"]
-    mem_limit: 256m
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 &&
-          printf "GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 &&
-          IFS= read -r status <&3 &&
-          [[ "$$status" == *" 200 "* ]]'
-      interval: 10s
-      timeout: 5s
-      retries: 12
   app:
     build: .
     networks: [lab-internal]
@@ -156,7 +105,6 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
-      qdrant: { condition: service_healthy }
     environment:
       <<: *backend-environment
       LAB_ENVIRONMENT: prod
@@ -164,8 +112,6 @@ services:
       # Runtime uses the application account scoped to lab_reservation, never MySQL root.
       LAB_MYSQL_DSN: mysql+asyncmy://${DB_APP_USER:?DB_APP_USER must be set}:${DB_APP_PASSWORD:?DB_APP_PASSWORD must be set}@mysql:3306/lab_reservation?charset=utf8mb4
       LAB_REDIS_URL: redis://redis:6379/0
-      LAB_CELERY_BROKER_URL: redis://redis:6379/1
-      LAB_QDRANT_URL: http://qdrant:6333
       LAB_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       LAB_COOKIE_SECURE: "${LAB_COOKIE_SECURE:-true}"
       LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING: "${LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING:-false}"
@@ -178,37 +124,11 @@ services:
       - app_data:/app/backend/.data
     mem_limit: 768m
     healthcheck:
-      test: ["CMD", "python", "-c", "from urllib.request import urlopen; assert urlopen('http://127.0.0.1:8000/api/v2/live', timeout=4).status == 200"]
+      test: ["CMD", "curl", "--fail", "--max-time", "4", "http://127.0.0.1:8000/api/v2/live"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 60s
-  celery-worker:
-    build: .
-    networks: [lab-internal]
-    restart: unless-stopped
-    depends_on:
-      mysql: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      qdrant: { condition: service_healthy }
-    environment:
-      <<: *backend-environment
-      LAB_ENVIRONMENT: prod
-      LAB_DEBUG: "false"
-      LAB_MYSQL_DSN: mysql+asyncmy://${DB_APP_USER:?DB_APP_USER must be set}:${DB_APP_PASSWORD:?DB_APP_PASSWORD must be set}@mysql:3306/lab_reservation?charset=utf8mb4
-      LAB_REDIS_URL: redis://redis:6379/0
-      LAB_CELERY_BROKER_URL: redis://redis:6379/1
-      LAB_QDRANT_URL: http://qdrant:6333
-      LAB_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
-      LAB_COOKIE_SECURE: "${LAB_COOKIE_SECURE:-true}"
-      LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING: "${LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING:-false}"
-      LAB_METRICS_TOKEN: ${PROMETHEUS_METRICS_TOKEN:?PROMETHEUS_METRICS_TOKEN must be set}
-      LAB_ENABLE_WORKERS: "false"
-    command: ["uv", "run", "--no-dev", "celery", "-A", "app.infrastructure.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1", "--hostname=knowledge@%h"]
-    volumes:
-      - app_data:/app/backend/.data
-    # One worker process limits simultaneous source files and embedding batches.
-    mem_limit: 768m
   frontend:
     build:
       context: ./frontend
@@ -311,7 +231,6 @@ volumes:
   mysql_data:
   mysql_socket:
   redis_data:
-  qdrant_data:
   app_data:
   prometheus_data:
   grafana_data:

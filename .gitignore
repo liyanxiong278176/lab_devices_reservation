@@ -11,6 +11,7 @@ backend/__pycache__/
 backend/**/__pycache__/
 backend/.pytest_cache/
 backend/.data/
+/.artifacts/business-backup-*.sql
 .kotlin
 
 # Legacy local AI credentials kept outside the Python runtime; never commit.

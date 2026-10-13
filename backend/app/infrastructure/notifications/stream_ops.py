@@ -39,9 +39,7 @@ def _jsonable_entry(message_id: object, fields: dict[object, object]) -> dict[st
 
 async def _stats(redis: Any) -> dict[str, object]:
     stream_length = int(await redis.xlen(RedisNotificationRelay.STREAM))
-    groups = (
-        await redis.xinfo_groups(RedisNotificationRelay.STREAM) if stream_length else []
-    )
+    groups = await redis.xinfo_groups(RedisNotificationRelay.STREAM) if stream_length else []
     group_stats = []
     for group in groups:
         name = _decode_text(_field(group, "name", ""))
@@ -60,13 +58,9 @@ async def _stats(redis: Any) -> dict[str, object]:
                 "pending": pending,
                 "lag": _field(group, "lag", 0),
                 "oldestPendingIdleMs": (
-                    int(_field(oldest[0], "time_since_delivered", 0) or 0)
-                    if oldest
-                    else 0
+                    int(_field(oldest[0], "time_since_delivered", 0) or 0) if oldest else 0
                 ),
-                "lastDeliveredId": _decode_text(
-                    _field(group, "last-delivered-id", "0-0")
-                ),
+                "lastDeliveredId": _decode_text(_field(group, "last-delivered-id", "0-0")),
             }
         )
     dead_letter_total = int(await redis.xlen(RedisNotificationRelay.DEAD_LETTER_STREAM))

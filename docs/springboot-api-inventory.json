@@ -1,0 +1,752 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/v2/auth/csrf",
+    "source": "backend/app/api/v2/auth.py",
+    "handler": "get_csrf_token"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/auth/colleges",
+    "source": "backend/app/api/v2/auth.py",
+    "handler": "public_colleges"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/auth/login",
+    "source": "backend/app/api/v2/auth.py",
+    "handler": "login"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/auth/register",
+    "source": "backend/app/api/v2/auth.py",
+    "handler": "register"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/auth/refresh",
+    "source": "backend/app/api/v2/auth.py",
+    "handler": "refresh"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/auth/logout",
+    "source": "backend/app/api/v2/auth.py",
+    "handler": "logout"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/auth/me",
+    "source": "backend/app/api/v2/auth.py",
+    "handler": "me"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/colleges",
+    "source": "backend/app/api/v2/catalog.py",
+    "handler": "list_colleges"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/organization/managers",
+    "source": "backend/app/api/v2/catalog.py",
+    "handler": "list_managers"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/colleges",
+    "source": "backend/app/api/v2/catalog.py",
+    "handler": "create_college"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v2/colleges/{college_id}",
+    "source": "backend/app/api/v2/catalog.py",
+    "handler": "update_college"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/labs",
+    "source": "backend/app/api/v2/catalog.py",
+    "handler": "list_labs"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/labs",
+    "source": "backend/app/api/v2/catalog.py",
+    "handler": "create_lab"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v2/labs/{lab_id}",
+    "source": "backend/app/api/v2/catalog.py",
+    "handler": "update_lab"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/device-categories",
+    "source": "backend/app/api/v2/catalog.py",
+    "handler": "category_tree"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/dashboard/me",
+    "source": "backend/app/api/v2/dashboard.py",
+    "handler": "dashboard_me"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/dashboard/overview",
+    "source": "backend/app/api/v2/dashboard.py",
+    "handler": "dashboard_overview"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/dashboard/summary",
+    "source": "backend/app/api/v2/dashboard.py",
+    "handler": "dashboard_summary"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/devices",
+    "source": "backend/app/api/v2/devices.py",
+    "handler": "list_devices"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/device-pools/options",
+    "source": "backend/app/api/v2/devices.py",
+    "handler": "list_device_pool_options"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/device-pools/{pool_id}",
+    "source": "backend/app/api/v2/devices.py",
+    "handler": "get_device_pool"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/device-pools/{pool_id}/availability",
+    "source": "backend/app/api/v2/devices.py",
+    "handler": "get_device_pool_availability"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/devices/{device_id}",
+    "source": "backend/app/api/v2/devices.py",
+    "handler": "get_device"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/devices/{device_id}/availability",
+    "source": "backend/app/api/v2/devices.py",
+    "handler": "device_availability"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/devices",
+    "source": "backend/app/api/v2/devices.py",
+    "handler": "create_device"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v2/devices/{device_id}",
+    "source": "backend/app/api/v2/devices.py",
+    "handler": "update_device"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/devices/{device_id}",
+    "source": "backend/app/api/v2/devices.py",
+    "handler": "delete_device"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v2/devices/{device_id}/status",
+    "source": "backend/app/api/v2/devices.py",
+    "handler": "update_device_status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/devices/{device_id}/safety-documents",
+    "source": "backend/app/api/v2/device_access.py",
+    "handler": "safety_documents"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/devices/{device_id}/safety-ack",
+    "source": "backend/app/api/v2/device_access.py",
+    "handler": "acknowledge_safety"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/devices/{device_id}/qualification-uploads",
+    "source": "backend/app/api/v2/device_access.py",
+    "handler": "upload_qualification_material"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/devices/{device_id}/qualifications/mine",
+    "source": "backend/app/api/v2/device_access.py",
+    "handler": "my_qualification"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/devices/{device_id}/qualifications",
+    "source": "backend/app/api/v2/device_access.py",
+    "handler": "submit_qualification"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/devices/{device_id}/qualifications",
+    "source": "backend/app/api/v2/device_access.py",
+    "handler": "list_qualifications"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v2/devices/{device_id}/qualifications/{qualification_id}",
+    "source": "backend/app/api/v2/device_access.py",
+    "handler": "review_qualification"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/devices/{device_id}/access",
+    "source": "backend/app/api/v2/device_access.py",
+    "handler": "device_access"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/devices/{device_id}/documents",
+    "source": "backend/app/api/v2/device_documents.py",
+    "handler": "list_device_documents"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/devices/{device_id}/documents",
+    "source": "backend/app/api/v2/device_documents.py",
+    "handler": "upload_device_document"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/devices/{device_id}/documents/{document_id}",
+    "source": "backend/app/api/v2/device_documents.py",
+    "handler": "archive_device_document"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/device-documents/{asset_token}",
+    "source": "backend/app/api/v2/device_documents.py",
+    "handler": "download_device_document"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/{reservation_id}/feedback",
+    "source": "backend/app/api/v2/feedback.py",
+    "handler": "create_feedback"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/reservations/{reservation_id}/feedback",
+    "source": "backend/app/api/v2/feedback.py",
+    "handler": "get_feedback"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/maintenance-devices",
+    "source": "backend/app/api/v2/maintenance.py",
+    "handler": "list_maintenance_devices"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/maintenance-plans",
+    "source": "backend/app/api/v2/maintenance.py",
+    "handler": "list_maintenance_plans"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/devices/{device_id}/maintenance-plans",
+    "source": "backend/app/api/v2/maintenance.py",
+    "handler": "create_maintenance_plan"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v2/maintenance-plans/{plan_id}",
+    "source": "backend/app/api/v2/maintenance.py",
+    "handler": "update_maintenance_plan"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/maintenance-plans/{plan_id}/records",
+    "source": "backend/app/api/v2/maintenance.py",
+    "handler": "list_maintenance_records"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/maintenance-plans/{plan_id}/records",
+    "source": "backend/app/api/v2/maintenance.py",
+    "handler": "complete_maintenance_cycle"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/devices/{device_id}/maintenance-evidence",
+    "source": "backend/app/api/v2/maintenance.py",
+    "handler": "upload_maintenance_evidence"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/maintenance-evidence/{asset_token}",
+    "source": "backend/app/api/v2/maintenance.py",
+    "handler": "download_maintenance_evidence"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/notifications/stream",
+    "source": "backend/app/api/v2/notifications.py",
+    "handler": "notification_stream"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/notifications/mine",
+    "source": "backend/app/api/v2/notifications.py",
+    "handler": "my_notifications"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v2/notifications/{notification_id}/read",
+    "source": "backend/app/api/v2/notifications.py",
+    "handler": "mark_read"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v2/notifications/read-all",
+    "source": "backend/app/api/v2/notifications.py",
+    "handler": "mark_all_read"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/penalties/policy",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "get_policy"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v2/penalties/policy",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "save_policy"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/penalties/system/grace-bounds",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "get_grace_bounds"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v2/penalties/system/grace-bounds",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "update_grace_bounds"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/penalties/mine",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "my_penalties"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/penalties/balance",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "my_penalty_balance"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/penalties/cases",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "college_penalties"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/penalties/appeals",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "list_appeals"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/penalties/cases/{case_id}/appeals",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "submit_appeal"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/penalties/appeals/{appeal_id}/review",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "review_appeal"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/penalties/overdue",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "list_overdue"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/penalties/overdue/{overdue_id}/followups",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "add_overdue_followup"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/penalties/overdue/{overdue_id}/escalate",
+    "source": "backend/app/api/v2/penalties.py",
+    "handler": "escalate_overdue"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/rbac/permissions",
+    "source": "backend/app/api/v2/rbac.py",
+    "handler": "list_permissions"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/rbac/roles",
+    "source": "backend/app/api/v2/rbac.py",
+    "handler": "list_roles"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/rbac/roles",
+    "source": "backend/app/api/v2/rbac.py",
+    "handler": "create_role"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v2/rbac/roles/{role_id}",
+    "source": "backend/app/api/v2/rbac.py",
+    "handler": "rename_role"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v2/rbac/roles/{role_id}/permissions",
+    "source": "backend/app/api/v2/rbac.py",
+    "handler": "update_role_permissions"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/rbac/roles/{role_id}",
+    "source": "backend/app/api/v2/rbac.py",
+    "handler": "delete_role"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/recommendations",
+    "source": "backend/app/api/v2/recommendations.py",
+    "handler": "recommendations"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/repair-uploads",
+    "source": "backend/app/api/v2/repairs.py",
+    "handler": "upload_repair_image"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/repair-uploads/{asset_token}",
+    "source": "backend/app/api/v2/repairs.py",
+    "handler": "get_repair_image"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/repair-reports",
+    "source": "backend/app/api/v2/repairs.py",
+    "handler": "create_repair"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/repair-reports/mine",
+    "source": "backend/app/api/v2/repairs.py",
+    "handler": "my_repairs"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/repair-reports",
+    "source": "backend/app/api/v2/repairs.py",
+    "handler": "managed_repairs"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/repair-reports/{report_id}/take",
+    "source": "backend/app/api/v2/repairs.py",
+    "handler": "take_repair"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/repair-reports/{report_id}/resolve",
+    "source": "backend/app/api/v2/repairs.py",
+    "handler": "resolve_repair"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/repair-reports/{report_id}/reject",
+    "source": "backend/app/api/v2/repairs.py",
+    "handler": "reject_repair"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/repair-reports/{report_id}/confirm",
+    "source": "backend/app/api/v2/repairs.py",
+    "handler": "confirm_repair"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/repair-reports/{report_id}/worklogs",
+    "source": "backend/app/api/v2/repairs.py",
+    "handler": "repair_worklogs"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/reports/export/{export_type}",
+    "source": "backend/app/api/v2/reports.py",
+    "handler": "direct_export"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/reports/summary",
+    "source": "backend/app/api/v2/reports.py",
+    "handler": "report_summary"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reports/exports",
+    "source": "backend/app/api/v2/reports.py",
+    "handler": "create_export"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/reports/exports/{task_id}",
+    "source": "backend/app/api/v2/reports.py",
+    "handler": "export_status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/reports/exports/{task_id}/download",
+    "source": "backend/app/api/v2/reports.py",
+    "handler": "download_export"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/preflight",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "preflight"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/waitlist",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "join_waitlist"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/reservations/waitlist/mine",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "my_waitlist"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/reservations/waitlist/{entry_id}",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "cancel_waitlist"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/waitlist/{entry_id}/confirm",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "confirm_waitlist_offer"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "create_reservation"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/reservations/mine",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "my_reservations"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/reservations/handovers",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "pending_handovers"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/reservations/{reservation_id}",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "reservation_detail"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/{reservation_id}/cancel",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "cancel_reservation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/{reservation_id}/cancel-handover-exception",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "cancel_handover_exception"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/{reservation_id}/check-in",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "check_in"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/{reservation_id}/return",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "return_device"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/{reservation_id}/handover",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "handover_reservation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/{reservation_id}/accept-return",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "accept_return"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/reservations/{reservation_id}/violate",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "violate_reservation"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/approvals/pending",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "pending_approvals"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/approvals/{reservation_id}/approve",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "approve_reservation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/approvals/{reservation_id}/reject",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "reject_reservation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/approvals/batch-approve",
+    "source": "backend/app/api/v2/reservations.py",
+    "handler": "batch_approve"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/reservation-rules",
+    "source": "backend/app/api/v2/reservation_rules.py",
+    "handler": "list_reservation_rules"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v2/reservation-rules",
+    "source": "backend/app/api/v2/reservation_rules.py",
+    "handler": "upsert_reservation_rule"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/reservation-rules/{rule_id}",
+    "source": "backend/app/api/v2/reservation_rules.py",
+    "handler": "delete_reservation_rule"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/blackouts",
+    "source": "backend/app/api/v2/scheduling.py",
+    "handler": "list_blackouts"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/blackouts",
+    "source": "backend/app/api/v2/scheduling.py",
+    "handler": "create_blackout"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/blackouts/{blackout_id}",
+    "source": "backend/app/api/v2/scheduling.py",
+    "handler": "delete_blackout"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/live",
+    "source": "backend/app/api/v2/system.py",
+    "handler": "live"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/metrics",
+    "source": "backend/app/api/v2/system.py",
+    "handler": "metrics"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/system/outbox/failed",
+    "source": "backend/app/api/v2/system.py",
+    "handler": "failed_outbox_tasks"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/system/outbox/{task_id}/retry",
+    "source": "backend/app/api/v2/system.py",
+    "handler": "retry_outbox_task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/ready",
+    "source": "backend/app/api/v2/system.py",
+    "handler": "ready"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/users",
+    "source": "backend/app/api/v2/users.py",
+    "handler": "list_users"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/users",
+    "source": "backend/app/api/v2/users.py",
+    "handler": "create_user"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v2/users/{user_id}",
+    "source": "backend/app/api/v2/users.py",
+    "handler": "update_user"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/users/{user_id}",
+    "source": "backend/app/api/v2/users.py",
+    "handler": "delete_user"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v2/users/{user_id}/status",
+    "source": "backend/app/api/v2/users.py",
+    "handler": "update_user_status"
+  }
+]
