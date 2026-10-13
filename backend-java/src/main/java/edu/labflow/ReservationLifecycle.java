@@ -13,8 +13,6 @@ public class ReservationLifecycle {
   private final CatalogService catalog;
   private final StorageService storage;
   private final BusinessEvents events;
-  private final DeadlineService deadlines;
-  private final PenaltyService penalties;
   private final RepairService repairs;
 
   public ReservationLifecycle(
@@ -24,8 +22,6 @@ public class ReservationLifecycle {
       CatalogService catalog,
       StorageService storage,
       BusinessEvents events,
-      DeadlineService deadlines,
-      PenaltyService penalties,
       RepairService repairs) {
     this.db = db;
     this.scope = scope;
@@ -33,8 +29,6 @@ public class ReservationLifecycle {
     this.catalog = catalog;
     this.storage = storage;
     this.events = events;
-    this.deadlines = deadlines;
-    this.penalties = penalties;
     this.repairs = repairs;
   }
 
@@ -110,12 +104,6 @@ public class ReservationLifecycle {
     if (approve) {
       var device = scope.device(p, Database.id(r, "device_id"), true);
       reservations.validateLifecycleDates(r, device);
-      if (db.count(
-              "SELECT COUNT(*) FROM v2_reservation_booking_restriction WHERE user_id=? AND college_id=? AND scope_type='COLLEGE' AND scope_id=? AND released_at IS NULL AND starts_at<=UTC_TIMESTAMP() AND (ends_at IS NULL OR ends_at>UTC_TIMESTAMP())",
-              r.get("user_id"),
-              r.get("college_id"),
-              r.get("college_id"))
-          > 0) throw new ApiError("HANDOVER_RESTRICTED", "该用户暂时不能办理新领用", 409);
       if (!"IDLE".equals(device.get("status")))
         throw new ApiError("DEVICE_UNAVAILABLE", "设备当前不可用", 409);
     }
@@ -129,8 +117,8 @@ public class ReservationLifecycle {
     if (!approve) release(r);
     else
       events.task(
-          "reservation:no-show:" + id,
-          "RESERVATION_NO_SHOW",
+          "reservation:unclaimed-cancel:" + id,
+          "RESERVATION_UNCLAIMED_CANCEL",
           "reservation:" + id,
           (Long) r.get("college_id"),
           Map.of("reservation_id", id),
@@ -199,11 +187,10 @@ public class ReservationLifecycle {
     var device = scope.device(p, Database.id(r, "device_id"), true);
     reservations.validateLifecycleDates(r, device);
     if (db.count(
-            "SELECT COUNT(*) FROM v2_reservation_booking_restriction WHERE user_id=? AND college_id=? AND scope_type='COLLEGE' AND scope_id=? AND released_at IS NULL AND starts_at<=UTC_TIMESTAMP() AND (ends_at IS NULL OR ends_at>UTC_TIMESTAMP())",
-            r.get("user_id"),
-            r.get("college_id"),
-            r.get("college_id"))
-        > 0) throw new ApiError("HANDOVER_RESTRICTED", "该用户暂时不能办理新领用", 409);
+            "SELECT COUNT(*) FROM reservation WHERE device_id=? AND status='IN_USE' AND id<>?",
+            r.get("device_id"),
+            id)
+        > 0) throw new ApiError("DEVICE_UNAVAILABLE", "设备尚未归还验收", 409);
     if (!"IDLE".equals(device.get("status")))
       throw new ApiError("DEVICE_UNAVAILABLE", "设备当前不可用", 409);
     storage.evidence(p, data.get("image_urls"), Database.id(r, "college_id"));
@@ -228,14 +215,6 @@ public class ReservationLifecycle {
         db.json(data.get("image_urls")),
         id);
     if (!normal) fault(p, r, data, "交接发现设备损坏或配件缺失");
-    else
-      events.task(
-          "reservation:overdue-start:" + id,
-          "RESERVATION_OVERDUE_START",
-          "reservation:" + id,
-          (Long) r.get("college_id"),
-          Map.of("reservation_id", id),
-          BusinessTime.dayEnd((LocalDate) r.get("end_date")));
     events.audit(p, "DEVICE_HANDOVER", "RESERVATION", id, Map.of("condition", condition));
     return reservations.get(p, id);
   }
@@ -249,8 +228,6 @@ public class ReservationLifecycle {
       throw new ApiError("INVALID_RESERVATION_STATE", "当前预约不能提交归还", 409);
     if (BusinessTime.today().isBefore((LocalDate) r.get("end_date")))
       throw new ApiError("RETURN_DAY_INVALID", "预约结束日及之后才能归还", 409);
-    deadlines.overdueStart(id);
-    deadlines.overduePenalty(id);
     storage.evidence(p, data.get("image_urls"), Database.id(r, "college_id"));
     String c = condition(data);
     if (db.execute(
@@ -303,7 +280,6 @@ public class ReservationLifecycle {
       faultData.put("image_urls", db.parse(handover.get("return_image_urls"), List.of()));
       fault(p, r, faultData, "归还验收发现设备损坏或配件缺失");
     }
-    deadlines.acceptReturn(id);
     events.audit(p, "DEVICE_RETURN_ACCEPT", "RESERVATION", id, Map.of("condition", c));
     return reservations.get(p, id);
   }
@@ -317,19 +293,5 @@ public class ReservationLifecycle {
         title,
         Database.str(data, "note", title),
         data.get("image_urls"));
-  }
-
-  @Transactional
-  public Map<String, Object> violate(Principal p, long id, String reason) {
-    if (reason == null || reason.strip().length() < 2) throw ApiError.validation("请填写违规原因");
-    var r = load(p, id, true, "reservation:approve");
-    String status = Database.str(r, "status", "");
-    if (!Set.of("APPROVED", "IN_USE").contains(status))
-      throw new ApiError("INVALID_RESERVATION_STATE", "当前预约不能标记违规", 409);
-    update(r, status, "VIOLATED", "reject_reason=?", reason);
-    release(r);
-    penalties.apply(id, "MANUAL_VIOLATION", reason, BusinessTime.utcNow(), p.userId());
-    events.audit(p, "RESERVATION_VIOLATE", "RESERVATION", id, Map.of("reason", reason));
-    return reservations.get(p, id);
   }
 }

@@ -49,7 +49,7 @@ const statusLabelText = computed(() => {
 const bookingUnavailable = computed(() => {
   if (!device.value) return true
   if (poolId.value != null && device.value.poolIdleQuantity != null) return device.value.poolIdleQuantity < 1
-  return device.value.status !== 'IDLE' || Boolean(device.value.maintenanceWarning)
+  return device.value.status !== 'IDLE'
 })
 const selectedDate = ref<Date>(new Date())
 const activeTab = ref<'specs' | 'calendar'>('specs')
@@ -340,7 +340,6 @@ onMounted(async () => {
         <GhostButton @click="goRepair">报修</GhostButton>
       </div>
     </div>
-    <el-alert v-if="device?.maintenanceWarning && bookingUnavailable" :title="device.maintenanceWarning" type="warning" :closable="false" show-icon />
 
     <!-- tabs:规格参数 / 预约日历 -->
     <el-tabs v-model="activeTab" class="device-detail__tabs">

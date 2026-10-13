@@ -195,8 +195,7 @@ describe('device detail booking, calendar, and document journeys', () => {
   })
 
   it.each([
-    { status: 'IDLE', maintenanceWarning: '校准逾期' },
-    { status: 'MAINTENANCE', maintenanceWarning: undefined },
+    { status: 'MAINTENANCE' },
   ])('blocks a restricted physical device even when the API supplies default pool counts: %j', async (restriction) => {
     api.getDevice.mockResolvedValueOnce({
       ...baseDevice,
@@ -207,18 +206,16 @@ describe('device detail booking, calendar, and document journeys', () => {
     const wrapper = await settledPage()
     const reserve = wrapper.get('.device-detail__actionbar .gradient-button')
     expect(reserve.attributes('disabled')).toBeDefined()
-    if (restriction.maintenanceWarning) expect(wrapper.text()).toContain(restriction.maintenanceWarning)
     await reserve.trigger('click')
     expect(router.push).not.toHaveBeenCalled()
   })
 
-  it('handles missing device fields, unknown status, and a maintenance warning that blocks booking', async () => {
-    api.getDevice.mockResolvedValueOnce({ id: 42, name: '无品牌设备', status: 'CALIBRATING', maintenanceWarning: '校准逾期' })
+  it('handles missing device fields, unknown status, and a disabled device that blocks booking', async () => {
+    api.getDevice.mockResolvedValueOnce({ id: 42, name: '无品牌设备', status: 'CUSTOM_STATUS' })
     api.listDeviceDocuments.mockResolvedValueOnce([])
     const wrapper = await settledPage()
     expect(wrapper.text()).toContain('未填写品牌 / 型号')
-    expect(wrapper.text()).toContain('CALIBRATING')
-    expect(wrapper.text()).toContain('校准逾期')
+    expect(wrapper.text()).toContain('CUSTOM_STATUS')
     expect(wrapper.text()).toContain('未分类')
     expect(wrapper.text()).toContain('STANDARD')
     expect(wrapper.text()).toContain('限实验室内使用')

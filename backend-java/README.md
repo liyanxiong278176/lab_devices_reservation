@@ -17,6 +17,8 @@ java -jar target/labflow-backend-1.0.0.jar
 
 详见 [切换说明](../docs/springboot-cutover.md)。`verify`、`baseline`、`migrate` 均使用一次性 CLI，执行期间自动停用后台 Worker 和通知消费。已有库先验证 Alembic 0038 和业务表结构再显式基线 1；新库直接执行 V1。后续迁移删除 AI 专属表和共享表中的已知 AI 记录。
 
+V4/V5 进一步移除违规申诉、信用处罚、计划维护/校准及逾期流程的专属历史、权限、任务与附件，详见 [流程精简验收](../docs/workflow-removal-verification.md)。普通报修及归还验收保留；首日未领用自动取消，已领用实物在验收前保持占用。
+
 ## 自动验证
 
 不设置集成环境时只运行独立单元测试。真实 MySQL/Redis 测试需要：

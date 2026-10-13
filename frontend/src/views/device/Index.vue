@@ -266,7 +266,6 @@ onMounted(load)
           </Tag>
           <span class="device-drawer__limit">最多 {{ selectedDevice.maxReservationDays ?? '—' }} 天</span>
         </div>
-        <el-alert v-if="selectedDevice?.maintenanceWarning" :title="selectedDevice.maintenanceWarning" type="warning" :closable="false" show-icon />
 
         <section class="device-drawer__section">
           <span class="section-kicker">LOCATION</span>

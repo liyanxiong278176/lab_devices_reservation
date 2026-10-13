@@ -8,6 +8,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 @Component
+@org.springframework.core.annotation.Order(-100)
 public class MigrationCommand implements ApplicationRunner {
   private final DataSource dataSource;
   private final SchemaVerifier schema;

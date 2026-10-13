@@ -26,6 +26,7 @@ class BusinessIntegrationTest {
   @Autowired AuthService auth;
   @Autowired ReservationService reservations;
   @Autowired ReservationLifecycle lifecycle;
+  @Autowired DeadlineService deadlines;
   @Autowired CatalogService catalog;
   @Autowired SchemaVerifier schema;
   @Autowired OutboxWorker worker;
@@ -285,6 +286,12 @@ class BusinessIntegrationTest {
       if (!actual.contains(route)) missing.add(route);
     }
     assertThat(missing).isEmpty();
+    assertThat(actual)
+        .noneMatch(
+            route ->
+                route.contains("/penalties")
+                    || route.contains("/maintenance")
+                    || route.endsWith("/violate"));
   }
 
   private NotificationRelay testRelay(String group) {
@@ -489,6 +496,106 @@ class BusinessIntegrationTest {
   @Test
   void schemaMatchesSnapshot() {
     assertThat(schema.differences()).isEmpty();
+  }
+
+  @Test
+  void unclaimedBookingCancelsIdempotentlyWithoutRemovedWorkflows() {
+    long unit =
+        db.insert(
+            "INSERT INTO device (name,college_id,lab_id,status,need_approval,max_reservation_days,accessory_checklist) VALUES (?,?,?,'IDLE',1,31,'[]')",
+            "unclaimed-" + suffix,
+            college,
+            lab);
+    LocalDate day = BusinessTime.today().minusDays(1);
+    long booking =
+        db.insert(
+            "INSERT INTO reservation (college_id,user_id,device_id,purpose,start_date,end_date,start_time,end_time,slot_count,status,handover_status) VALUES (?,?,?,'test',?,?,?,?,1,'APPROVED','PENDING')",
+            college,
+            user,
+            unit,
+            day,
+            day,
+            day.atStartOfDay(),
+            day.atTime(23, 59, 59));
+    db.execute(
+        "INSERT INTO v2_reservation_day (reservation_id,device_id,date) VALUES (?,?,?)",
+        booking,
+        unit,
+        day);
+    db.execute(
+        "INSERT INTO v2_device_handover (reservation_id,device_id,user_id,college_id,status,accessory_snapshot) VALUES (?,?,?,?,'PENDING','[]')",
+        booking,
+        unit,
+        user,
+        college);
+    deadlines.cancelUnclaimed(booking);
+    deadlines.cancelUnclaimed(booking);
+    var row = db.one("SELECT status,reject_reason FROM reservation WHERE id=?", booking);
+    assertThat(row.get("status")).isEqualTo("CANCELLED");
+    assertThat(row.get("reject_reason")).isEqualTo("未在预约首日领用");
+    assertThat(db.count("SELECT COUNT(*) FROM v2_reservation_day WHERE reservation_id=?", booking))
+        .isZero();
+    assertThat(
+            db.count(
+                "SELECT COUNT(*) FROM v2_outbox_task WHERE task_key=? AND task_type='NOTIFICATION'",
+                "notification:reservation:" + booking + ":unclaimed-cancel"))
+        .isEqualTo(1);
+    assertThat(
+            db.count(
+                "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND (TABLE_NAME LIKE 'v2_penalty_%' OR TABLE_NAME LIKE 'v2_device_maintenance_%' OR TABLE_NAME LIKE 'v2_reservation_overdue%')"))
+        .isZero();
+  }
+
+  @Test
+  void lateReturnKeepsPhysicalDeviceOccupiedUntilAcceptance() {
+    long unit =
+        db.insert(
+            "INSERT INTO device (name,college_id,lab_id,status,need_approval,max_reservation_days,accessory_checklist) VALUES (?,?,?,'IDLE',1,31,'[]')",
+            "borrowed-" + suffix,
+            college,
+            lab);
+    LocalDate yesterday = BusinessTime.today().minusDays(1);
+    long booking =
+        db.insert(
+            "INSERT INTO reservation (college_id,user_id,device_id,purpose,start_date,end_date,start_time,end_time,slot_count,status,handover_status) VALUES (?,?,?,'test',?,?,?,?,1,'IN_USE','HANDED_OVER')",
+            college,
+            user,
+            unit,
+            yesterday,
+            yesterday,
+            yesterday.atStartOfDay(),
+            yesterday.atTime(23, 59, 59));
+    db.execute(
+        "INSERT INTO v2_device_handover (reservation_id,device_id,user_id,college_id,status,accessory_snapshot) VALUES (?,?,?,?,'HANDED_OVER','[]')",
+        booking,
+        unit,
+        user,
+        college);
+    String token = "late-return-" + suffix + "-photo";
+    db.insert(
+        "INSERT INTO v2_upload_asset (asset_token,user_id,college_id,original_name,content_type,size_bytes,storage_path) VALUES (?,?,?,'test.png','image/png',8,'not-a-real-file.png')",
+        token,
+        user,
+        college);
+    LocalDate tomorrow = BusinessTime.today().plusDays(1);
+    var plan =
+        new ReservationPlan(
+            unit, null, null, 1, "late return", null, null, tomorrow, tomorrow, null, null, null);
+    assertThat(reservations.preflight(student, plan).get("all_available")).isEqualTo(false);
+    lifecycle.requestReturn(
+        student,
+        booking,
+        Map.of("condition", "NORMAL", "image_urls", List.of("/api/v2/repair-uploads/" + token)));
+    assertThat(reservations.preflight(student, plan).get("all_available")).isEqualTo(false);
+    lifecycle.acceptReturn(
+        administrator, booking, Map.of("condition", "NORMAL", "checklist", List.of()));
+    assertThat(reservations.preflight(student, plan).get("all_available")).isEqualTo(true);
+    assertThat(db.one("SELECT status FROM reservation WHERE id=?", booking).get("status"))
+        .isEqualTo("COMPLETED");
+    assertThat(
+            db.count(
+                "SELECT COUNT(*) FROM v2_outbox_task WHERE task_type LIKE 'RESERVATION_OVERDUE%'"))
+        .isZero();
   }
 
   @Test

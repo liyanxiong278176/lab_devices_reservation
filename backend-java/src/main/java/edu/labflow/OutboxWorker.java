@@ -206,15 +206,9 @@ public class OutboxWorker {
               Database.id(payload, "user_id"),
               Map.of("eventType", "read_state_changed", "userId", payload.get("user_id")),
               key);
-      case "RESERVATION_NO_SHOW" -> deadlines.noShow(Database.id(payload, "reservation_id"));
-      case "RESERVATION_OVERDUE_START" ->
-          deadlines.overdueStart(Database.id(payload, "reservation_id"));
-      case "RESERVATION_OVERDUE_PENALTY" ->
-          deadlines.overduePenalty(Database.id(payload, "reservation_id"));
+      case "RESERVATION_UNCLAIMED_CANCEL" ->
+          deadlines.cancelUnclaimed(Database.id(payload, "reservation_id"));
       case "REPAIR_AUTO_CLOSE" -> deadlines.autoCloseRepair(Database.id(payload, "report_id"));
-      case "MAINTENANCE_DUE" ->
-          deadlines.maintenanceDue(
-              Database.id(payload, "plan_id"), Database.str(payload, "due_date", ""));
       case "WAITLIST_PROMOTE" -> {
         long device = Database.id(payload, "device_id");
         if (payload.get("reservation_date") != null)
@@ -243,19 +237,6 @@ public class OutboxWorker {
               report.get("title").toString(),
               Database.id(report, "id"),
               "REPAIR_SLA");
-      }
-      case "PENALTY_APPEAL_REMINDER" -> {
-        var appeal =
-            db.one(
-                "SELECT a.*,pc.device_id FROM v2_penalty_appeal a JOIN v2_penalty_case pc ON pc.id=a.penalty_case_id WHERE a.id=? AND a.status='PENDING'",
-                payload.get("appeal_id"));
-        if (appeal != null)
-          deadlines.notifyManagers(
-              Database.id(appeal, "device_id"),
-              "处罚申诉待复核",
-              "申诉已提交三日，请及时处理",
-              Database.id(appeal, "id"),
-              "PENALTY_APPEAL");
       }
       case "EXPORT_GENERATE" -> reports.generate(Database.id(payload, "export_id"));
       case "CACHE_BUMP" -> relay.bumpCatalogVersion(Database.str(payload, "scope", ""));

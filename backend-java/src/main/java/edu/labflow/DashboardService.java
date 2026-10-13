@@ -111,13 +111,7 @@ public class DashboardService {
             db.count(
                 "SELECT COUNT(*) FROM reservation r JOIN device d ON d.id=r.device_id WHERE "
                     + where
-                    + " AND r.status='PENDING'"),
-            "weeklyViolations",
-            db.count(
-                "SELECT COUNT(*) FROM reservation r JOIN device d ON d.id=r.device_id WHERE "
-                    + where
-                    + " AND r.status IN ('VIOLATED','NO_SHOW') AND r.start_date>=?",
-                today.minusDays(6))));
+                    + " AND r.status='PENDING'")));
     result.put(
         "categoryDist",
         db.rows(

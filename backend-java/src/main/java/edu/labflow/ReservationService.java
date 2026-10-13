@@ -104,6 +104,11 @@ public class ReservationService {
     long id = Database.id(device, "id");
     if (Set.of("DELETED", "MAINTENANCE", "DISABLED", "OFFLINE", "RETIRED")
         .contains(device.get("status"))) return "设备当前不可预约";
+    if (db.count(
+            "SELECT COUNT(*) FROM reservation WHERE device_id=? AND status='IN_USE' AND start_date<=?",
+            id,
+            day)
+        > 0) return "设备尚未归还验收";
     var blackout =
         db.one(
             "SELECT reason FROM v2_reservation_blackout WHERE active=1 AND blocked_date=? AND ((scope_type='DEVICE' AND scope_id=?) OR (scope_type='LAB' AND scope_id=?) OR (scope_type='COLLEGE' AND scope_id=?)) LIMIT 1",
@@ -112,13 +117,6 @@ public class ReservationService {
             device.get("lab_id"),
             device.get("college_id"));
     if (blackout != null) return Database.str(blackout, "reason", "不可预约日");
-    var maintenance =
-        db.one(
-            "SELECT title FROM v2_device_maintenance_plan WHERE device_id=? AND active=1 AND ((downtime_start IS NOT NULL AND ? BETWEEN downtime_start AND downtime_end) OR (plan_type IN ('CALIBRATION','SAFETY_CHECK') AND due_date<?)) LIMIT 1",
-            id,
-            day,
-            BusinessTime.today());
-    if (maintenance != null) return "维护或检查：" + maintenance.get("title");
     if (db.count("SELECT COUNT(*) FROM v2_reservation_day WHERE device_id=? AND date=?", id, day)
         > 0) return "设备日期已被预约";
     if (db.count(
@@ -131,21 +129,13 @@ public class ReservationService {
 
   public void validateLifecycleDates(Map<String, Object> reservation, Map<String, Object> device) {
     if (db.count(
-                "SELECT COUNT(*) FROM v2_reservation_blackout WHERE active=1 AND blocked_date BETWEEN ? AND ? AND ((scope_type='DEVICE' AND scope_id=?) OR (scope_type='LAB' AND scope_id=?) OR (scope_type='COLLEGE' AND scope_id=?))",
-                reservation.get("start_date"),
-                reservation.get("end_date"),
-                device.get("id"),
-                device.get("lab_id"),
-                device.get("college_id"))
-            > 0
-        || db.count(
-                "SELECT COUNT(*) FROM v2_device_maintenance_plan WHERE device_id=? AND active=1 AND ((downtime_start IS NOT NULL AND downtime_start<=? AND downtime_end>=?) OR (plan_type IN ('CALIBRATION','SAFETY_CHECK') AND due_date<?))",
-                device.get("id"),
-                reservation.get("end_date"),
-                reservation.get("start_date"),
-                BusinessTime.today())
-            > 0)
-      throw new ApiError("DEVICE_MAINTENANCE_RESTRICTION", "设备在预约日期不可交接或使用，请先处理维护与不可预约规则", 409);
+            "SELECT COUNT(*) FROM v2_reservation_blackout WHERE active=1 AND blocked_date BETWEEN ? AND ? AND ((scope_type='DEVICE' AND scope_id=?) OR (scope_type='LAB' AND scope_id=?) OR (scope_type='COLLEGE' AND scope_id=?))",
+            reservation.get("start_date"),
+            reservation.get("end_date"),
+            device.get("id"),
+            device.get("lab_id"),
+            device.get("college_id"))
+        > 0) throw new ApiError("DEVICE_BLACKOUT_RESTRICTION", "设备在预约日期不可交接或使用，请先处理不可预约规则", 409);
   }
 
   public Map<String, Object> preflight(Principal p, ReservationPlan plan) {
@@ -407,12 +397,6 @@ public class ReservationService {
       if (Boolean.TRUE.equals(access.get("qualification_required"))
           && !Boolean.TRUE.equals(access.get("qualification_approved")))
         throw new ApiError("QUALIFICATION_REQUIRED", "使用资质未通过或不能覆盖预约日期", 403);
-      if (db.count(
-              "SELECT COUNT(*) FROM v2_reservation_booking_restriction WHERE user_id=? AND college_id=? AND released_at IS NULL AND starts_at<=UTC_TIMESTAMP() AND (ends_at IS NULL OR ends_at>UTC_TIMESTAMP()) AND (scope_type='COLLEGE' OR (scope_type='LAB' AND scope_id=?))",
-              p.userId(),
-              member.get("college_id"),
-              member.get("lab_id"))
-          > 0) throw new ApiError("BOOKING_RESTRICTED", "当前处罚限制预约", 403);
       for (var requestedSegment : plan.segments()) {
         var segment = requestedSegment.stream().filter(committedDates::contains).toList();
         if (segment.isEmpty()) continue;
@@ -452,19 +436,12 @@ public class ReservationService {
         events.audit(p, "RESERVATION_CREATE", "RESERVATION", id, Map.of("dates", segment));
         if (status.equals("APPROVED"))
           events.task(
-              "timeout:reservation:" + id + ":no-show",
-              "RESERVATION_NO_SHOW",
+              "timeout:reservation:" + id + ":unclaimed-cancel",
+              "RESERVATION_UNCLAIMED_CANCEL",
               "reservation:" + id,
               (Long) member.get("college_id"),
               Map.of("reservation_id", id),
               BusinessTime.dayEnd(segment.getFirst()));
-        events.task(
-            "timeout:reservation:" + id + ":overdue-start",
-            "RESERVATION_OVERDUE_START",
-            "reservation:" + id,
-            (Long) member.get("college_id"),
-            Map.of("reservation_id", id),
-            BusinessTime.dayEnd(segment.getLast()).plusNanos(1000));
       }
     }
     var result = new HashMap<String, Object>();

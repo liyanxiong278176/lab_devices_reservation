@@ -253,54 +253,6 @@
   },
   {
     "method": "GET",
-    "path": "/api/v2/maintenance-devices",
-    "source": "backend/app/api/v2/maintenance.py",
-    "handler": "list_maintenance_devices"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v2/maintenance-plans",
-    "source": "backend/app/api/v2/maintenance.py",
-    "handler": "list_maintenance_plans"
-  },
-  {
-    "method": "POST",
-    "path": "/api/v2/devices/{device_id}/maintenance-plans",
-    "source": "backend/app/api/v2/maintenance.py",
-    "handler": "create_maintenance_plan"
-  },
-  {
-    "method": "PUT",
-    "path": "/api/v2/maintenance-plans/{plan_id}",
-    "source": "backend/app/api/v2/maintenance.py",
-    "handler": "update_maintenance_plan"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v2/maintenance-plans/{plan_id}/records",
-    "source": "backend/app/api/v2/maintenance.py",
-    "handler": "list_maintenance_records"
-  },
-  {
-    "method": "POST",
-    "path": "/api/v2/maintenance-plans/{plan_id}/records",
-    "source": "backend/app/api/v2/maintenance.py",
-    "handler": "complete_maintenance_cycle"
-  },
-  {
-    "method": "POST",
-    "path": "/api/v2/devices/{device_id}/maintenance-evidence",
-    "source": "backend/app/api/v2/maintenance.py",
-    "handler": "upload_maintenance_evidence"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v2/maintenance-evidence/{asset_token}",
-    "source": "backend/app/api/v2/maintenance.py",
-    "handler": "download_maintenance_evidence"
-  },
-  {
-    "method": "GET",
     "path": "/api/v2/notifications/stream",
     "source": "backend/app/api/v2/notifications.py",
     "handler": "notification_stream"
@@ -322,84 +274,6 @@
     "path": "/api/v2/notifications/read-all",
     "source": "backend/app/api/v2/notifications.py",
     "handler": "mark_all_read"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v2/penalties/policy",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "get_policy"
-  },
-  {
-    "method": "PUT",
-    "path": "/api/v2/penalties/policy",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "save_policy"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v2/penalties/system/grace-bounds",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "get_grace_bounds"
-  },
-  {
-    "method": "PUT",
-    "path": "/api/v2/penalties/system/grace-bounds",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "update_grace_bounds"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v2/penalties/mine",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "my_penalties"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v2/penalties/balance",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "my_penalty_balance"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v2/penalties/cases",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "college_penalties"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v2/penalties/appeals",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "list_appeals"
-  },
-  {
-    "method": "POST",
-    "path": "/api/v2/penalties/cases/{case_id}/appeals",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "submit_appeal"
-  },
-  {
-    "method": "POST",
-    "path": "/api/v2/penalties/appeals/{appeal_id}/review",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "review_appeal"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v2/penalties/overdue",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "list_overdue"
-  },
-  {
-    "method": "POST",
-    "path": "/api/v2/penalties/overdue/{overdue_id}/followups",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "add_overdue_followup"
-  },
-  {
-    "method": "POST",
-    "path": "/api/v2/penalties/overdue/{overdue_id}/escalate",
-    "source": "backend/app/api/v2/penalties.py",
-    "handler": "escalate_overdue"
   },
   {
     "method": "GET",
@@ -622,12 +496,6 @@
     "path": "/api/v2/reservations/{reservation_id}/accept-return",
     "source": "backend/app/api/v2/reservations.py",
     "handler": "accept_return"
-  },
-  {
-    "method": "POST",
-    "path": "/api/v2/reservations/{reservation_id}/violate",
-    "source": "backend/app/api/v2/reservations.py",
-    "handler": "violate_reservation"
   },
   {
     "method": "GET",

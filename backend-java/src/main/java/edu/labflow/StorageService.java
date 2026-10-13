@@ -185,8 +185,7 @@ public class StorageService {
     if (!p.manager()) throw ApiError.forbidden();
     var devices =
         db.rows(
-            "SELECT device_id FROM v2_device_qualification WHERE asset_id=? UNION SELECT device_id FROM v2_device_maintenance_record WHERE evidence_asset_id=? UNION SELECT device_id FROM v2_repair_report WHERE JSON_SEARCH(image_urls,'one',?) IS NOT NULL UNION SELECT device_id FROM v2_device_handover WHERE JSON_SEARCH(handover_image_urls,'one',?) IS NOT NULL OR JSON_SEARCH(return_image_urls,'one',?) IS NOT NULL",
-            row.get("id"),
+            "SELECT device_id FROM v2_device_qualification WHERE asset_id=? UNION SELECT device_id FROM v2_repair_report WHERE JSON_SEARCH(image_urls,'one',?) IS NOT NULL UNION SELECT device_id FROM v2_device_handover WHERE JSON_SEARCH(handover_image_urls,'one',?) IS NOT NULL OR JSON_SEARCH(return_image_urls,'one',?) IS NOT NULL",
             row.get("id"),
             "%" + token + "%",
             "%" + token + "%",

@@ -27,8 +27,6 @@ export interface ReportSummaryVO {
   waitlistRequests: number
   waitlistConverted: number
   waitlistConversionRate: number
-  noShowRate: number
-  violationRate: number
 }
 
 export interface ExportTaskVO {

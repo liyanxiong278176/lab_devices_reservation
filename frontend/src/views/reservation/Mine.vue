@@ -62,8 +62,6 @@ const tabs: { label: string; value: ReservationTabValue }[] = [
   { label: '已完成', value: 'COMPLETED' },
   { label: '已取消', value: 'CANCELLED' },
   { label: '已拒绝', value: 'REJECTED' },
-  { label: '已违规', value: 'VIOLATED' },
-  { label: '已爽约', value: 'NO_SHOW' },
 ]
 
 // 卡片错峰容器(同 R4 设备网格):首次进入视口 60ms 错峰 fade+rise

@@ -41,7 +41,6 @@ interface V2Device {
   requires_safety_ack?: boolean
   requires_qualification?: boolean
   max_advance_days?: number | null
-  maintenance_warning?: string | null
 }
 
 interface V2DevicePage {
@@ -95,7 +94,6 @@ function mapDevice(item: V2Device): DeviceVO {
     requiresSafetyAck: Boolean(item.requires_safety_ack),
     requiresQualification: Boolean(item.requires_qualification),
     maxAdvanceDays: item.max_advance_days ?? undefined,
-    maintenanceWarning: item.maintenance_warning || undefined,
   }
 }
 

@@ -39,7 +39,6 @@ const firstDevice = {
   labId: 1,
   categoryName: '计算设备',
   assetCode: 'ASSET-1',
-  maintenanceWarning: '',
 } as DeviceVO
 
 const secondDevice = {
@@ -60,7 +59,6 @@ const secondDevice = {
   labId: null,
   categoryName: '',
   assetCode: '',
-  maintenanceWarning: '定期维护中',
 } as DeviceVO
 
 const page = (records: DeviceVO[] = [firstDevice, secondDevice], overrides: Record<string, unknown> = {}) => ({
@@ -194,7 +192,7 @@ describe('device browse page', () => {
     await wrapper.findAll('.glow-card')[1].trigger('click')
     await flushPromises()
     expect(wrapper.find('aside').text()).toContain('显微镜 B')
-    expect(wrapper.find('aside').text()).toContain('定期维护中')
+    expect(wrapper.find('aside').text()).not.toContain('定期维护中')
     await wrapper.find('.drawer-update').trigger('click')
     expect(wrapper.find('aside').exists()).toBe(false)
 

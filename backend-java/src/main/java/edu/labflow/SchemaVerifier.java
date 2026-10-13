@@ -27,8 +27,26 @@ public class SchemaVerifier {
     Matcher tables =
         Pattern.compile("CREATE TABLE `([^`]+)` \\((.*?)\\) ENGINE=", Pattern.DOTALL)
             .matcher(snapshot);
+    boolean removed =
+        db.count(
+                "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='v2_removed_workflow_file_cleanup'")
+            > 0;
+    var removedTables =
+        Set.of(
+            "v2_reservation_booking_restriction",
+            "v2_reservation_overdue_followup",
+            "v2_reservation_overdue",
+            "v2_penalty_appeal",
+            "v2_penalty_case",
+            "v2_penalty_rule_version",
+            "v2_penalty_grace_bounds",
+            "v2_credit_event",
+            "v2_college_credit_account",
+            "v2_device_maintenance_record",
+            "v2_device_maintenance_plan");
     while (tables.find()) {
       String table = tables.group(1);
+      if (removed && removedTables.contains(table)) continue;
       var columns =
           db.rows(
               "SELECT COLUMN_NAME,DATA_TYPE,IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?",

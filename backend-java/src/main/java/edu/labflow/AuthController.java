@@ -106,8 +106,7 @@ public class AuthController {
     Principal p = Principal.from(request);
     var user =
         db.one(
-            "SELECT id,username,real_name,college_id,credit_score,booking_blocked_until,status FROM sys_user WHERE id=?",
-            p.userId());
+            "SELECT id,username,real_name,college_id,status FROM sys_user WHERE id=?", p.userId());
     user.put("roles", p.roles().stream().sorted().toList());
     user.put("permissions", p.permissions().stream().sorted().toList());
     return ApiResponse.ok(user);

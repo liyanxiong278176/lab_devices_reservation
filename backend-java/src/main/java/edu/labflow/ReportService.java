@@ -157,11 +157,6 @@ public class ReportService {
     result.put("waitlistRequests", waits.size());
     result.put("waitlistConverted", converted);
     result.put("waitlistConversionRate", ratio(converted, waits.size()));
-    result.put(
-        "noShowRate", ratio(reservationCounts.getOrDefault("NO_SHOW", 0L), reservations.size()));
-    result.put(
-        "violationRate",
-        ratio(reservationCounts.getOrDefault("VIOLATED", 0L), reservations.size()));
     return result;
   }
 

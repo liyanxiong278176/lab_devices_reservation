@@ -57,15 +57,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '我的预约', icon: 'Calendar', permissions: ['reservation:read:own'] },
       },
       {
-        path: 'penalties',
-        name: 'penalties',
-        component: () => import('@/views/penalty/Index.vue'),
-        meta: {
-          title: '违规与申诉',
-          icon: 'Warning',
-        },
-      },
-      {
         path: 'reservations/:id',
         name: 'reservation-detail',
         component: () => import('@/views/reservation/Detail.vue'),
@@ -124,12 +115,6 @@ const routes: RouteRecordRaw[] = [
         name: 'reservation-rules',
         component: () => import('@/views/scheduling/Index.vue'),
         meta: { title: '预约规则', icon: 'Calendar', permissions: ['reservation-rule:manage'] },
-      },
-      {
-        path: 'maintenance',
-        name: 'maintenance',
-        component: () => import('@/views/maintenance/Index.vue'),
-        meta: { title: '维护与校准', icon: 'Tools', permissions: ['maintenance:manage'] },
       },
       {
         path: 'users',

@@ -22,7 +22,7 @@ describe('router records, lazy pages and in-app navigation depth', () => {
       'login', 'dashboard', 'devices', 'device-detail', 'recommendations', 'reservation-create',
       'reservation-mine', 'reservation-detail', 'approvals', 'notifications', 'repair-submit',
       'repair-mine', 'repairs-admin', 'devices-manage', 'handovers', 'reports',
-      'reservation-rules', 'maintenance', 'users', 'organization', 'rbac',
+      'reservation-rules', 'users', 'organization', 'rbac',
     ]))
 
     const lazyPages = router.getRoutes()
@@ -34,6 +34,7 @@ describe('router records, lazy pages and in-app navigation depth', () => {
     expect(loaded.every(Boolean)).toBe(true)
 
     expect(router.getRoutes().some((route) => route.path === '/ai')).toBe(false)
+    expect(router.getRoutes().some((route) => ['penalties', 'maintenance'].includes(String(route.name)))).toBe(false)
   }, 20000)
 
   it('does not count the initial page load, increments in-app navigation and supports reset', async () => {

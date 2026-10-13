@@ -301,7 +301,6 @@ test.describe('普通用户与管理员非 AI 页面实际渲染截图验收', (
       ['设备管理', '设备管理', 'admin-device-management'],
       ['运营报表', '运营报表', 'admin-reports'],
       ['预约规则', '预约规则中心', 'admin-reservation-rules'],
-      ['维护与校准', '维护与校准', 'admin-maintenance'],
       ['用户管理', '用户管理', 'admin-users'],
       ['组织管理', '组织管理', 'admin-organization'],
       ['角色权限', '角色与权限', 'admin-rbac'],

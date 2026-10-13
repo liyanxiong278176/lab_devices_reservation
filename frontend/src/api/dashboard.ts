@@ -47,8 +47,6 @@ export interface HeatmapCellVO {
 export interface DashboardCardsVO {
   todayReservations: number
   pendingApprovals: number
-  /** 近 7 天 VIOLATED + NO_SHOW 数 */
-  weeklyViolations: number
 }
 
 export interface DashboardOverviewVO {

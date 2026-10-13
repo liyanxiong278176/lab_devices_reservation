@@ -80,11 +80,4 @@ public class LifecycleController {
       HttpServletRequest req, @PathVariable long id, @RequestBody Map<String, Object> data) {
     return ApiResponse.ok(service.acceptReturn(Principal.from(req), id, data));
   }
-
-  @PostMapping("/reservations/{id}/violate")
-  public ApiResponse<?> violate(
-      HttpServletRequest req, @PathVariable long id, @RequestBody Map<String, Object> data) {
-    return ApiResponse.ok(
-        service.violate(Principal.from(req), id, Database.str(data, "reason", null)));
-  }
 }

@@ -179,7 +179,6 @@ onBeforeUnmount(stopPolling)
             <span>{{ statusLabel(name) }}</span><strong>{{ count }}</strong>
           </div>
         </div>
-        <p class="reports-panel__note">爽约率 {{ formatPercent(summary.noShowRate) }} · 违规率 {{ formatPercent(summary.violationRate) }}</p>
       </GlowCard>
       <GlowCard class="reports-panel">
         <header class="reports-panel__head">

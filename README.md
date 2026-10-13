@@ -1,6 +1,6 @@
 # LabFlow 实验室设备预约系统
 
-面向高校实验室的设备共享平台，支持自然日预约、资源池、多角色审批、候补、设备交接、归还验收、报修、维护校准、安全准入、处罚申诉、报表与通知。学院是租户边界。
+面向高校实验室的设备共享平台，支持自然日预约、资源池、多角色审批、候补、设备交接、归还验收、报修、安全准入、报表与通知。学院是租户边界。
 
 后端为 **Java 21 / Spring Boot / MyBatis / Flyway**，前端为 Vue 3 / TypeScript / Element Plus，依赖 MySQL 8 和 Redis 7。AI 工作台、知识库及 AI 运行依赖已移除。
 
@@ -45,3 +45,5 @@ Java 检查见 [backend-java/README.md](backend-java/README.md)。前端执行 `
 `backend/` 仅保留历史 Alembic 迁移与可选 SQL/Redis 验证工具，不提供 Python HTTP 服务。浏览器验收的 fixture 工具需要 Python 3.13 和 uv，执行 `uv sync --project backend`；Java 运行和 Docker 镜像不需要 Python。
 
 现有本地[前端截图册](.artifacts/browser-flow-20261007/viewer/gallery.html)属于验收产物，不是应用运行入口。
+
+违规申诉、信用处罚与计划维护/校准已移除，详见 [ADR 0042](docs/adr/0042-remove-penalties-and-planned-maintenance.md)。首日未领用自动取消；已领用设备直到归还验收完成才释放。

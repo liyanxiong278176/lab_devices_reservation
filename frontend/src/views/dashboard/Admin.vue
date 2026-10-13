@@ -136,7 +136,6 @@ onMounted(load)
         <StatCard label="待审批" :value="cards?.pendingApprovals ?? 0" icon="Clock" />
       </el-col>
       <el-col :xs="24" :sm="8">
-        <StatCard label="近 7 天违规" :value="cards?.weeklyViolations ?? 0" icon="Warning" />
       </el-col>
     </el-row>
 

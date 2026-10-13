@@ -112,11 +112,7 @@ public class DeviceAccessController {
         storage.upload(Principal.from(req), file, true, "/api/v2/repair-uploads/"));
   }
 
-  @GetMapping({
-    "/device-documents/{token}",
-    "/repair-uploads/{token}",
-    "/maintenance-evidence/{token}"
-  })
+  @GetMapping({"/device-documents/{token}", "/repair-uploads/{token}"})
   public ResponseEntity<?> download(HttpServletRequest req, @PathVariable String token) {
     var row = storage.asset(Principal.from(req), token);
     return ResponseEntity.ok()

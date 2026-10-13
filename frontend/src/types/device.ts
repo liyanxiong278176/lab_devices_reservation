@@ -39,7 +39,6 @@ export interface DeviceVO {
   requiresSafetyAck?: boolean
   requiresQualification?: boolean
   maxAdvanceDays?: number
-  maintenanceWarning?: string
   createdAt?: string
   updatedAt?: string
 }

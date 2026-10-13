@@ -22,14 +22,10 @@ from app.core.settings import Settings
 from app.infrastructure.db.models import (
     AuditLog,
     College,
-    CollegeCreditAccount,
-    CreditEvent,
     Device,
     DeviceCategory,
     DeviceDocument,
     DeviceHandover,
-    DeviceMaintenancePlan,
-    DeviceMaintenanceRecord,
     DevicePool,
     DeviceStatusHistory,
     ExportTask,
@@ -37,19 +33,13 @@ from app.infrastructure.db.models import (
     Lab,
     Notification,
     OutboxTask,
-    PenaltyAppeal,
-    PenaltyCase,
-    PenaltyRuleVersion,
     RefreshSession,
     RepairReport,
     Reservation,
     ReservationBlackout,
-    ReservationBookingRestriction,
     ReservationFeedback,
     ReservationInspection,
     ReservationItem,
-    ReservationOverdue,
-    ReservationOverdueFollowUp,
     ReservationRule,
     ReservationWaitlist,
     ReservationWaitlistOffer,
@@ -313,18 +303,6 @@ async def cleanup(prefix: str) -> None:
                 ).all()
             )
             scope_ids = [college.id, *lab_ids, *device_ids]
-            maintenance_assets = list(
-                (
-                    await session.execute(
-                        select(UploadAsset.id, UploadAsset.storage_path)
-                        .join(
-                            DeviceMaintenanceRecord,
-                            DeviceMaintenanceRecord.evidence_asset_id == UploadAsset.id,
-                        )
-                        .where(DeviceMaintenanceRecord.device_id.in_(device_ids or [-1]))
-                    )
-                ).all()
-            )
             await session.execute(
                 delete(ReservationRule).where(
                     or_(
@@ -351,43 +329,7 @@ async def cleanup(prefix: str) -> None:
                 await session.execute(
                     delete(RefreshSession).where(RefreshSession.user_id.in_(user_ids))
                 )
-            await session.execute(
-                delete(ReservationBookingRestriction).where(
-                    ReservationBookingRestriction.college_id == college.id
-                )
-            )
-            overdue_ids = select(ReservationOverdue.id).where(
-                ReservationOverdue.college_id == college.id
-            )
-            await session.execute(
-                delete(ReservationOverdueFollowUp).where(
-                    ReservationOverdueFollowUp.overdue_id.in_(overdue_ids)
-                )
-            )
-            await session.execute(
-                delete(ReservationOverdue).where(ReservationOverdue.college_id == college.id)
-            )
-            await session.execute(
-                delete(PenaltyAppeal).where(PenaltyAppeal.college_id == college.id)
-            )
-            await session.execute(delete(PenaltyCase).where(PenaltyCase.college_id == college.id))
-            await session.execute(
-                delete(PenaltyRuleVersion).where(PenaltyRuleVersion.college_id == college.id)
-            )
-            await session.execute(
-                delete(CollegeCreditAccount).where(CollegeCreditAccount.college_id == college.id)
-            )
             if device_ids:
-                await session.execute(
-                    delete(DeviceMaintenanceRecord).where(
-                        DeviceMaintenanceRecord.device_id.in_(device_ids)
-                    )
-                )
-                await session.execute(
-                    delete(DeviceMaintenancePlan).where(
-                        DeviceMaintenancePlan.device_id.in_(device_ids)
-                    )
-                )
                 await session.execute(
                     delete(ReservationWaitlistOffer).where(
                         ReservationWaitlistOffer.device_id.in_(device_ids)
@@ -418,9 +360,6 @@ async def cleanup(prefix: str) -> None:
                 )
             )
             await session.execute(
-                delete(CreditEvent).where(CreditEvent.reservation_id.in_(reservation_id_query))
-            )
-            await session.execute(
                 delete(ReservationItem).where(
                     ReservationItem.reservation_id.in_(reservation_id_query)
                 )
@@ -444,12 +383,6 @@ async def cleanup(prefix: str) -> None:
                         UploadAsset.id.in_([asset_id for asset_id, _ in document_assets])
                     )
                 )
-            if maintenance_assets:
-                await session.execute(
-                    delete(UploadAsset).where(
-                        UploadAsset.id.in_([asset_id for asset_id, _ in maintenance_assets])
-                    )
-                )
             await session.execute(delete(Device).where(Device.college_id == college.id))
             await session.execute(delete(DevicePool).where(DevicePool.college_id == college.id))
             await session.execute(delete(Lab).where(Lab.college_id == college.id))
@@ -464,8 +397,6 @@ async def cleanup(prefix: str) -> None:
             await session.execute(delete(College).where(College.id == college.id))
             await session.commit()
             for _, storage_path in document_assets:
-                Path(storage_path).unlink(missing_ok=True)
-            for _, storage_path in maintenance_assets:
                 Path(storage_path).unlink(missing_ok=True)
             export_root = (Path(settings.upload_dir).resolve() / "exports").resolve()
             for _, storage_path in export_files:
