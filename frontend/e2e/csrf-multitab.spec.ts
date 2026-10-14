@@ -23,7 +23,7 @@ test.describe('同一登录会话的多标签页 CSRF 保护', () => {
     fixtureCommand('cleanup')
   })
 
-  test('两个标签页并发提交时使用共享令牌并成功通过 CSRF 校验', async ({ browser }) => {
+  test('两个标签页并发提交时使用共享令牌并成功通过 CSRF 校验', async ({ browser }, testInfo) => {
     const context = await browser.newContext()
     const firstTab = await context.newPage()
     await firstTab.goto('/login')
@@ -63,6 +63,7 @@ test.describe('同一登录会话的多标签页 CSRF 保护', () => {
     expect(outcomes.map((outcome) => outcome.status)).toEqual([404, 404])
     expect(outcomes.map((outcome) => outcome.code)).not.toContain('CSRF_TOKEN_INVALID')
     expect(outcomes.map((outcome) => outcome.code)).not.toContain('CSRF_SESSION_MISMATCH')
+    await secondTab.screenshot({ path: testInfo.outputPath('csrf-shared-session-dashboard.png'), fullPage: true })
     await context.close()
   })
 })

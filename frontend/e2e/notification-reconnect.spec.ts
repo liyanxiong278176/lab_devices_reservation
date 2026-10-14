@@ -112,7 +112,7 @@ test.describe('通知 SSE 断线重连', () => {
     fixtureCommand('cleanup')
   })
 
-  test('HTTP 连接中断后同一 EventSource 按 Last-Event-ID 补发通知', async ({ browser }) => {
+  test('HTTP 连接中断后同一 EventSource 按 Last-Event-ID 补发通知', async ({ browser }, testInfo) => {
     test.setTimeout(45_000)
     const context = await browser.newContext()
     const backendPort = Number(process.env.E2E_BACKEND_PORT || 8000)
@@ -143,13 +143,14 @@ test.describe('通知 SSE 断线重连', () => {
       await page.getByRole('menuitem', { name: '我的通知', exact: true }).click()
       await expect(page.getByRole('heading', { name: '通知中心', exact: true })).toBeVisible()
       await expect(page.locator('.notif-row__title').filter({ hasText: title })).toBeVisible()
+      await page.screenshot({ path: testInfo.outputPath('notification-reconnected-history.png'), fullPage: true })
     } finally {
       await context.close()
       await proxy.close()
     }
   })
 
-  test('一个标签页标记已读后同步更新同账号的另一个标签页', async ({ browser }) => {
+  test('一个标签页标记已读后同步更新同账号的另一个标签页', async ({ browser }, testInfo) => {
     test.setTimeout(45_000)
     const context = await browser.newContext()
     try {
@@ -174,6 +175,7 @@ test.describe('通知 SSE 断线重连', () => {
       await firstPage.locator('.notif-row').filter({ hasText: title }).click()
       await expect(secondRow).toHaveAttribute('data-read', 'read', { timeout: 10_000 })
       await expect(secondPage.locator('.layout__header-right .el-badge__content')).toBeHidden()
+      await secondPage.screenshot({ path: testInfo.outputPath('notification-read-synchronized.png'), fullPage: true })
     } finally {
       await context.close()
     }

@@ -16,7 +16,7 @@
 
 ## 3. 两个标签页并发提交时使用共享令牌并成功通过 CSRF 校验
 
-![两个标签页并发提交时使用共享令牌并成功通过 CSRF 校验 · 打开页面](images/0005.png)
+![两个标签页并发提交时使用共享令牌并成功通过 CSRF 校验 · 结果核对 · csrf-shared-session-dashboard](images/0005.png)
 
 ## 4. 交接发现配件损坏会阻止启用、生成报修并等待负责人处置
 
@@ -60,11 +60,11 @@
 
 ## 11. HTTP 连接中断后同一 EventSource 按 Last-Event-ID 补发通知
 
-![HTTP 连接中断后同一 EventSource 按 Last-Event-ID 补发通知 · 点击 · 我的通知](images/0019.png)
+![HTTP 连接中断后同一 EventSource 按 Last-Event-ID 补发通知 · 结果核对 · notification-reconnected-history](images/0019.png)
 
 ## 12. 一个标签页标记已读后同步更新同账号的另一个标签页
 
-![一个标签页标记已读后同步更新同账号的另一个标签页 · 点击控件](images/0020.png)
+![一个标签页标记已读后同步更新同账号的另一个标签页 · 结果核对 · notification-read-synchronized](images/0020.png)
 
 ## 13. 非 AI 菜单页面、预约与报修协作链路及预期错误状态均截图验证
 

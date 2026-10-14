@@ -29,9 +29,10 @@ async function walk(directory) {
   }
 }
 await walk(join(root, 'raw'))
-if (reports.length > 1) await walk(join(root, 'retest-raw'))
+for (const directory of new Set(process.argv.slice(3).map(file => file.endsWith('-results.json') ? file.replace(/-results\.json$/, '-raw') : 'retest-raw')))
+  await walk(join(root, directory))
 const latestFlows = new Map()
-for (const path of manifests.sort()) {
+for (const path of manifests) {
   const flow = JSON.parse(await readFile(path, 'utf8'))
   latestFlows.set(flow.title, { path, flow })
 }
@@ -78,7 +79,7 @@ const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).fo
 const data = JSON.stringify({ date, groups, frames }).replaceAll('<', '\\u003c')
 const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>前端流程截图册 · ${date}</title>
 <style>body{margin:0;background:#f7f7f5;color:#222;font:16px/1.65 system-ui,sans-serif}header,main{max-width:1280px;margin:auto;padding:32px}h1{font-size:38px;margin:0 0 12px}p{color:#555}input,select,button{font:inherit;border:1px solid #ccc;border-radius:8px;padding:10px;background:white;color:#222}nav{display:flex;gap:12px;flex-wrap:wrap}input{flex:1;min-width:240px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px}article{background:white;border-radius:12px;padding:14px}article button{padding:0;border:0;width:100%;cursor:zoom-in}article img{display:block;width:100%;height:190px;object-fit:contain;background:#eee}article h2{font-size:15px;margin:10px 0}small{color:#555}.badge{color:#17663d}dialog{border:0;border-radius:12px;padding:18px;width:92vw;max-width:1500px;height:90vh}dialog::backdrop{background:#000b}.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.detail{height:calc(100% - 75px);overflow:auto;text-align:center}.detail img{max-width:100%;height:auto}#caption{flex:1}a{color:#1462c2}</style>
-<header><h1>前端流程截图册</h1><div class="badge">${date} · ${groups.length} 条流程通过 · ${frames.length} 张新截图</div><p>真实 Vue 页面、Java Spring Boot、MySQL 与 Redis；使用隔离测试学院和数据库，上传图片为测试占位附件。覆盖预约审批、交接与归还验收、报修、角色权限、学院隔离、并发预约和通知。旧处罚申诉、逾期和维护校准流程已移除。</p><nav><input id="search" placeholder="搜索流程或操作步骤" aria-label="搜索截图"><select id="group" aria-label="选择流程"><option value="">全部流程</option></select></nav><p id="count"></p></header><main><div class="grid" id="grid"></div></main>
+<header><h1>前端流程截图册</h1><div class="badge">${date} · ${groups.length} 条流程通过 · ${frames.length} 张关键截图</div><p>真实 Vue 页面、Java Spring Boot、MySQL 与 Redis；使用隔离测试学院和数据库，上传图片为测试占位附件。覆盖预约审批、交接与归还验收、报修、角色权限、学院隔离、并发预约和通知。旧处罚申诉、逾期和维护校准流程已移除。</p><nav><input id="search" placeholder="搜索流程或操作步骤" aria-label="搜索截图"><select id="group" aria-label="选择流程"><option value="">全部流程</option></select></nav><p id="count"></p></header><main><div class="grid" id="grid"></div></main>
 <dialog id="viewer"><div class="controls"><button id="prev">上一张 ←</button><button id="next">下一张 →</button><span id="caption"></span><a id="original" target="_blank">原图</a><button id="close">关闭 Esc</button></div><div class="detail"><img id="large" alt="流程截图"></div></dialog>
 <script type="application/json" id="data">${data}</script><script>
 const data=JSON.parse(document.getElementById('data').textContent), grid=document.getElementById('grid'), modal=document.getElementById('viewer'), search=document.getElementById('search'), group=document.getElementById('group');let visible=data.frames,position=0;
