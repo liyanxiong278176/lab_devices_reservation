@@ -1,4 +1,4 @@
-import { readdir, readFile, mkdir, copyFile, writeFile } from 'node:fs/promises'
+import { readdir, readFile, mkdir, copyFile, writeFile, unlink } from 'node:fs/promises'
 import { resolve, join, dirname, relative } from 'node:path'
 
 const root = resolve(process.argv[2] || '../.artifacts/browser-flow-20261014')
@@ -37,6 +37,9 @@ for (const path of manifests.sort()) {
 }
 const viewer = join(root, 'viewer')
 await mkdir(join(viewer, 'images'), { recursive: true })
+// Replace only this generator's numbered screenshots; raw browser evidence stays local.
+for (const entry of await readdir(join(viewer, 'images'), { withFileTypes: true }))
+  if (entry.isFile() && /^\d{4}\.png$/.test(entry.name)) await unlink(join(viewer, 'images', entry.name))
 const frames = []
 const groups = []
 for (const { path, flow } of latestFlows.values()) {
@@ -51,10 +54,19 @@ for (const { path, flow } of latestFlows.values()) {
     if (png.length >= 24 && png.readUInt32BE(16) > 300 && png.readUInt32BE(20) > 100)
       shots.push({ action: '结果核对 · ' + entry.name.replace(/\.png$/, ''), file: entry.name, url: '' })
   }
-  const group = { title: flow.title, count: shots.length }
+  const results = shots.filter(shot => shot.action.startsWith('结果核对'))
+  let selected
+  if (results.length) selected = results.length === 1 ? results : [results[0], results.at(-1)]
+  else {
+    const pages = new Map()
+    for (const shot of shots)
+      if (shot.url && shot.url !== '/login' && !shot.action.startsWith('填写')) pages.set(shot.url, shot)
+    selected = [...pages.values()].slice(-2)
+  }
+  const group = { title: flow.title, count: selected.length }
   if (!group.count) throw new Error(`Missing screenshots: ${flow.title}`)
   groups.push(group)
-  for (const shot of shots) {
+  for (const shot of selected) {
     const index = frames.length + 1
     const file = `images/${String(index).padStart(4, '0')}.png`
     await copyFile(join(directory, shot.file), join(viewer, file))
@@ -76,6 +88,11 @@ function render(){const query=search.value.trim().toLowerCase();visible=data.fra
 search.oninput=render;group.onchange=render;document.getElementById('close').onclick=()=>modal.close();document.getElementById('prev').onclick=()=>show((position-1+visible.length)%visible.length);document.getElementById('next').onclick=()=>show((position+1)%visible.length);document.addEventListener('keydown',event=>{if(!modal.open)return;if(event.key==='ArrowRight')document.getElementById('next').click();if(event.key==='ArrowLeft')document.getElementById('prev').click()});render();
 </script></html>`
 await writeFile(join(viewer, 'gallery.html'), html)
+const markdown = `# 前端流程截图册\n\n${date} · ${groups.length} 条流程 · ${frames.length} 张关键截图\n\n` + groups.map((group, index) => {
+  const shots = frames.filter(frame => frame.group === group.title)
+  return `## ${index + 1}. ${group.title}\n\n` + shots.map(frame => `![${group.title} · ${frame.action}](${frame.file})`).join('\n\n')
+}).join('\n\n') + '\n'
+await writeFile(join(viewer, 'gallery.md'), markdown)
 await writeFile(join(root, 'manifest.json'), JSON.stringify({ date, passed: groups.length, screenshots: frames.length, runs: reports.map(report => ({ passed: report.stats.expected, failed: report.stats.unexpected, startedAt: report.stats.startTime })), groups }, null, 2))
-await writeFile(join(root, 'REPORT.md'), `# ${date} 前端流程截图册\n\n${groups.length} 条真实浏览器流程通过，${frames.length} 张新截图。\n\n[打开完整截图册](viewer/gallery.html)\n\n` + groups.map(g => `- ${g.title}：${g.count} 张`).join('\n') + '\n')
+await writeFile(join(root, 'REPORT.md'), `# ${date} 前端流程截图册\n\n${groups.length} 条真实浏览器流程通过，${frames.length} 张关键截图。每条流程最多保留两张，优先选择结果核对截图。\n\n[查看截图册（GitHub 直接显示图片）](viewer/gallery.md)\n\n` + groups.map(g => `- ${g.title}：${g.count} 张`).join('\n') + '\n')
 console.log(JSON.stringify({ gallery: relative(process.cwd(), join(viewer, 'gallery.html')), flows: groups.length, screenshots: frames.length }))
