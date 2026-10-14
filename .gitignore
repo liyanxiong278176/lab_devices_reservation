@@ -59,3 +59,43 @@ build/
 /frontend/e2e/device-pool-capacity.spec.ts
 /frontend/e2e/reservation-joint-observe.spec.ts
 /frontend/e2e/reservation-special-cases.spec.ts
+
+# Machine caches, raw browser sessions and scratch tools are not project changes.
+/.codegraph/
+/.playwright-mcp/
+/.review/
+/backend/.coverage*
+/backend/coverage-*.json
+/frontend/.coverage*/
+/frontend/coverage/
+/frontend/.artifacts/
+/frontend/frontend/
+/frontend/test-results/
+*.pyc
+**/__pycache__/
+**/.runtime/
+*.pid
+*.log
+*.har
+*.zip
+
+# Publish the reviewed current gallery; keep raw sessions, backups and ad hoc tools local.
+/.artifacts/*
+!/.artifacts/browser-flow-20261014/
+/.artifacts/browser-flow-20261014/*
+!/.artifacts/browser-flow-20261014/viewer/
+!/.artifacts/browser-flow-20261014/manifest.json
+!/.artifacts/browser-flow-20261014/REPORT.md
+!/.artifacts/browser-flow-20261014/gallery-preview.png
+
+# Historical QA sources and written reports remain versioned; generated captures are local.
+/qa_joint/screenshots/
+/qa_joint/results/test-results/
+/qa_joint_run_20261005/screenshots/
+/qa_joint_run_20261005/results/test-results/
+/qa_joint_run_20261005/results/playwright*.json
+/qa_non_ai_20261003/results/e2e-html-report/
+/qa_non_ai_20261003/results/e2e-test-results/
+/qa_non_ai_20261003/results/**/screenshots/
+/qa_non_ai_20261003/results/**/*.png
+**/*sse-network.json

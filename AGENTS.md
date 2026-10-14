@@ -18,7 +18,7 @@ monitoring/                        Prometheus、Grafana 和 exporter
 
 `backend-java/` 是唯一后端构建入口。根目录忽略的 `target/` 是旧 Maven 产物，不作为实现依据；个人旧 Java 配置不属于项目配置，不得提交凭据。
 
-本工作区另外存在未跟踪的 `qa_joint/` 联调脚本、截图和人工复看指南；它是本地专项验收资料，不是所有 checkout 都有的项目入口。需要使用时先读其 `README.md`。版本控制中的标准浏览器测试仍以 `frontend/e2e/` 为准。
+`qa_joint/`、`qa_joint_run_20261005/` 和 `qa_non_ai_20261003/` 保存迁移前的历史实验脚本和文字报告，不是当前项目入口；旧截图和原始会话仅保留在本地。先读各目录 README，不运行其旧 FastAPI 启动命令。标准浏览器测试以 `frontend/e2e/` 为准，最新版截图册随仓库交付。
 
 ## 本地开发命令
 

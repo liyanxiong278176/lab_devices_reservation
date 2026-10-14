@@ -1,0 +1,365 @@
+{
+  "runTag": "naimuse71wd",
+  "startedAt": "2026-10-03T12:52:56.798Z",
+  "finishedAt": "2026-10-03T12:55:11.634Z",
+  "inventory": {
+    "nonAiOperations": 107,
+    "observedOperations": 104,
+    "operationCoveragePercent": 97.2,
+    "missingOperations": [
+      "GET /api/v2/device-pools/options",
+      "GET /api/v2/reservations/handovers",
+      "GET /api/v2/reservations/mine"
+    ],
+    "pageRouteChecks": 40
+  },
+  "scenarios": [
+    {
+      "name": "登录、身份读取、Refresh 轮换与系统健康/Outbox 查询",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "公开注册入口尝试",
+      "result": "LIMITED",
+      "detail": "POST /auth/register HTTP 429；该共享 IP 配额已耗尽，当前角色由管理端创建"
+    },
+    {
+      "name": "学院/实验室/用户/角色管理 CRUD，普通账号注册与负责人登录",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "设备与资源池读写、状态历史、安全须知和资质上传审核",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "系统管理员 20/20 个非 AI Vue 页面路由和截图",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Vue 预约表单 → 审批/签到/交接 → 归还/验收 → 使用评价",
+      "result": "PASS",
+      "detail": "reservation_id=235523"
+    },
+    {
+      "name": "驳回/批量审批、取消预约、候补递补/确认/取消",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "同设备并发唯一占用、违规信用事件、损坏交接/维修/预约释放",
+      "result": "PASS",
+      "detail": "race=201,409"
+    },
+    {
+      "name": "不可预约日和预约规则配置/过滤/删除",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "故障图片、报修/接单/解决/用户确认，以及驳回/退回",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "维护计划、周期完成记录、附件与历史记录",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "仪表盘、报表导出、推荐、通知历史/已读与浏览器 SSE",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "学院边界验证与 Outbox retry 路由的无效任务拒绝",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "联调浏览器会话登出",
+      "result": "PASS",
+      "detail": ""
+    }
+  ],
+  "routeChecks": [
+    {
+      "actor": "system-admin",
+      "route": "/organization",
+      "landed": "/organization",
+      "screenshot": "admin-organization.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/users",
+      "landed": "/users",
+      "screenshot": "admin-users.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/rbac",
+      "landed": "/rbac",
+      "screenshot": "admin-rbac.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/devices-manage",
+      "landed": "/devices-manage",
+      "screenshot": "admin-devices-manage.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservation-rules",
+      "landed": "/reservation-rules",
+      "screenshot": "admin-reservation-rules.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/maintenance",
+      "landed": "/maintenance",
+      "screenshot": "admin-maintenance.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reports",
+      "landed": "/reports",
+      "screenshot": "admin-reports.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/approvals/pending",
+      "landed": "/approvals/pending",
+      "screenshot": "admin-approvals_pending.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/handovers",
+      "landed": "/handovers",
+      "screenshot": "admin-handovers.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/repairs",
+      "landed": "/repairs",
+      "screenshot": "admin-repairs.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/notifications",
+      "landed": "/notifications",
+      "screenshot": "admin-notifications.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/dashboard",
+      "landed": "/dashboard",
+      "screenshot": "admin-dashboard.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/devices",
+      "landed": "/devices",
+      "screenshot": "admin-devices.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/devices/13566",
+      "landed": "/devices/13566",
+      "screenshot": "admin-devices_13566.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/recommendations",
+      "landed": "/recommendations",
+      "screenshot": "admin-recommendations.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservations/create?deviceId=13566&startDate=2026-10-03&endDate=2026-10-03",
+      "landed": "/reservations/create",
+      "screenshot": "admin-reservations_create_deviceId13566startDate2026-10-03.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservations/mine",
+      "landed": "/reservations/mine",
+      "screenshot": "admin-reservations_mine.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/repairs/submit",
+      "landed": "/repairs/submit",
+      "screenshot": "admin-repairs_submit.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/repairs/mine",
+      "landed": "/repairs/mine",
+      "screenshot": "admin-repairs_mine.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservations/1",
+      "landed": "/reservations/1",
+      "screenshot": "admin-reservations_1.png"
+    },
+    {
+      "actor": "naimuse71wdu1",
+      "route": "/dashboard",
+      "landed": "/dashboard",
+      "screenshot": "student-dashboard.png"
+    },
+    {
+      "actor": "naimuse71wdu1",
+      "route": "/devices",
+      "landed": "/devices",
+      "screenshot": "student-devices.png"
+    },
+    {
+      "actor": "naimuse71wdu1",
+      "route": "/devices/13566",
+      "landed": "/devices/13566",
+      "screenshot": "student-devices_13566.png"
+    },
+    {
+      "actor": "naimuse71wdu1",
+      "route": "/recommendations",
+      "landed": "/recommendations",
+      "screenshot": "student-recommendations.png"
+    },
+    {
+      "actor": "naimuse71wdu1",
+      "route": "/reservations/create?deviceId=13566&startDate=2026-10-03&endDate=2026-10-03",
+      "landed": "/reservations/create",
+      "screenshot": "student-reservations_create_deviceId13566startDate2026-10-03.png"
+    },
+    {
+      "actor": "naimuse71wdu1",
+      "route": "/reservations/mine",
+      "landed": "/reservations/mine",
+      "screenshot": "student-reservations_mine.png"
+    },
+    {
+      "actor": "naimuse71wdu1",
+      "route": "/reservations/235523",
+      "landed": "/reservations/235523",
+      "screenshot": "student-reservations_235523.png"
+    },
+    {
+      "actor": "naimuse71wdu1",
+      "route": "/notifications",
+      "landed": "/notifications",
+      "screenshot": "student-notifications.png"
+    },
+    {
+      "actor": "naimuse71wdu1",
+      "route": "/repairs/submit",
+      "landed": "/repairs/submit",
+      "screenshot": "student-repairs_submit.png"
+    },
+    {
+      "actor": "naimuse71wdu1",
+      "route": "/repairs/mine",
+      "landed": "/repairs/mine",
+      "screenshot": "student-repairs_mine.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/dashboard",
+      "landed": "/dashboard",
+      "screenshot": "manager-dashboard.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/devices",
+      "landed": "/devices",
+      "screenshot": "manager-devices.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/devices-manage",
+      "landed": "/devices-manage",
+      "screenshot": "manager-devices-manage.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/approvals/pending",
+      "landed": "/approvals/pending",
+      "screenshot": "manager-approvals_pending.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/handovers",
+      "landed": "/handovers",
+      "screenshot": "manager-handovers.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/repairs",
+      "landed": "/repairs",
+      "screenshot": "manager-repairs.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/reservation-rules",
+      "landed": "/reservation-rules",
+      "screenshot": "manager-reservation-rules.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/maintenance",
+      "landed": "/maintenance",
+      "screenshot": "manager-maintenance.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/reports",
+      "landed": "/reports",
+      "screenshot": "manager-reports.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/notifications",
+      "landed": "/notifications",
+      "screenshot": "manager-notifications.png"
+    }
+  ],
+  "registrationAttempts": [
+    {
+      "username": "naimuse71wdu1",
+      "status": 429
+    }
+  ],
+  "ids": {
+    "college": 1027,
+    "foreignCollege": 1028,
+    "manager": 5137,
+    "lab": 1065,
+    "mainDevice": 13566,
+    "queueDevice": 13567,
+    "rejectDevice": 13568,
+    "batchA": 13569,
+    "batchB": 13570,
+    "incidentDevice": 13571,
+    "exceptionDevice": 13572,
+    "repairDevice": 13573,
+    "maintenanceDevice": 13574,
+    "accessDevice": 13575,
+    "mainReservation": 235523,
+    "repair": 264
+  },
+  "pageErrors": [],
+  "http5xx": [],
+  "unknownApiCalls": [
+    "GET /api/v2/maintenance-evidence/{asset_token}",
+    "GET /api/v2/repair-uploads/{asset_token}",
+    "GET /api/v2/repair-uploads/{asset_token}",
+    "GET /api/v2/reports/exports/{task_id}/download"
+  ],
+  "failures": [],
+  "outcome": "INCOMPLETE",
+  "coverageMeaning": "HTTP method/path coverage and UI route coverage; not source line or branch coverage."
+}

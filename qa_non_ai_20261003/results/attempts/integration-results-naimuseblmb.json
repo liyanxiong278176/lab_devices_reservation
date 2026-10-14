@@ -1,0 +1,485 @@
+{
+  "runTag": "naimuseblmb",
+  "startedAt": "2026-10-03T12:56:28.979Z",
+  "finishedAt": "2026-10-03T12:58:39.248Z",
+  "inventory": {
+    "nonAiOperations": 107,
+    "observedOperations": 107,
+    "operationCoveragePercent": 100,
+    "missingOperations": [],
+    "pageRouteChecks": 40
+  },
+  "scenarios": [
+    {
+      "name": "登录、身份读取、Refresh 轮换与系统健康/Outbox 查询",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "公开注册入口成功与限流响应",
+      "result": "PASS",
+      "detail": "本轮 POST /auth/register HTTP 201；注册后登录成功"
+    },
+    {
+      "name": "学院/实验室/用户/角色管理 CRUD，普通账号注册与负责人登录",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "设备与资源池读写、状态历史、安全须知和资质上传审核",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "系统管理员 20/20 个非 AI Vue 页面路由和截图",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Vue 预约表单 → 审批/签到/交接 → 归还/验收 → 使用评价",
+      "result": "PASS",
+      "detail": "reservation_id=235532"
+    },
+    {
+      "name": "驳回/批量审批、取消预约、候补递补/确认/取消",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "同设备并发唯一占用、违规信用事件、损坏交接/维修/预约释放",
+      "result": "PASS",
+      "detail": "race=201,409"
+    },
+    {
+      "name": "不可预约日和预约规则配置/过滤/删除",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "故障图片、报修/接单/解决/用户确认，以及驳回/退回",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "维护计划、周期完成记录、附件与历史记录",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "仪表盘、报表导出、推荐、通知历史/已读与浏览器 SSE",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "学院边界验证与 Outbox retry 路由的无效任务拒绝",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "联调浏览器会话登出",
+      "result": "PASS",
+      "detail": ""
+    }
+  ],
+  "routeChecks": [
+    {
+      "actor": "system-admin",
+      "route": "/organization",
+      "landed": "/organization",
+      "screenshot": "admin-organization.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/users",
+      "landed": "/users",
+      "screenshot": "admin-users.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/rbac",
+      "landed": "/rbac",
+      "screenshot": "admin-rbac.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/devices-manage",
+      "landed": "/devices-manage",
+      "screenshot": "admin-devices-manage.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservation-rules",
+      "landed": "/reservation-rules",
+      "screenshot": "admin-reservation-rules.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/maintenance",
+      "landed": "/maintenance",
+      "screenshot": "admin-maintenance.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reports",
+      "landed": "/reports",
+      "screenshot": "admin-reports.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/approvals/pending",
+      "landed": "/approvals/pending",
+      "screenshot": "admin-approvals_pending.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/handovers",
+      "landed": "/handovers",
+      "screenshot": "admin-handovers.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/repairs",
+      "landed": "/repairs",
+      "screenshot": "admin-repairs.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/notifications",
+      "landed": "/notifications",
+      "screenshot": "admin-notifications.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/dashboard",
+      "landed": "/dashboard",
+      "screenshot": "admin-dashboard.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/devices",
+      "landed": "/devices",
+      "screenshot": "admin-devices.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/devices/13577",
+      "landed": "/devices/13577",
+      "screenshot": "admin-devices_13577.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/recommendations",
+      "landed": "/recommendations",
+      "screenshot": "admin-recommendations.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservations/create?deviceId=13577&startDate=2026-10-03&endDate=2026-10-03",
+      "landed": "/reservations/create",
+      "screenshot": "admin-reservations_create_deviceId13577startDate2026-10-03.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservations/mine",
+      "landed": "/reservations/mine",
+      "screenshot": "admin-reservations_mine.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/repairs/submit",
+      "landed": "/repairs/submit",
+      "screenshot": "admin-repairs_submit.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/repairs/mine",
+      "landed": "/repairs/mine",
+      "screenshot": "admin-repairs_mine.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservations/1",
+      "landed": "/reservations/1",
+      "screenshot": "admin-reservations_1.png"
+    },
+    {
+      "actor": "naimuseblmbu1",
+      "route": "/dashboard",
+      "landed": "/dashboard",
+      "screenshot": "student-dashboard.png"
+    },
+    {
+      "actor": "naimuseblmbu1",
+      "route": "/devices",
+      "landed": "/devices",
+      "screenshot": "student-devices.png"
+    },
+    {
+      "actor": "naimuseblmbu1",
+      "route": "/devices/13577",
+      "landed": "/devices/13577",
+      "screenshot": "student-devices_13577.png"
+    },
+    {
+      "actor": "naimuseblmbu1",
+      "route": "/recommendations",
+      "landed": "/recommendations",
+      "screenshot": "student-recommendations.png"
+    },
+    {
+      "actor": "naimuseblmbu1",
+      "route": "/reservations/create?deviceId=13577&startDate=2026-10-03&endDate=2026-10-03",
+      "landed": "/reservations/create",
+      "screenshot": "student-reservations_create_deviceId13577startDate2026-10-03.png"
+    },
+    {
+      "actor": "naimuseblmbu1",
+      "route": "/reservations/mine",
+      "landed": "/reservations/mine",
+      "screenshot": "student-reservations_mine.png"
+    },
+    {
+      "actor": "naimuseblmbu1",
+      "route": "/reservations/235532",
+      "landed": "/reservations/235532",
+      "screenshot": "student-reservations_235532.png"
+    },
+    {
+      "actor": "naimuseblmbu1",
+      "route": "/notifications",
+      "landed": "/notifications",
+      "screenshot": "student-notifications.png"
+    },
+    {
+      "actor": "naimuseblmbu1",
+      "route": "/repairs/submit",
+      "landed": "/repairs/submit",
+      "screenshot": "student-repairs_submit.png"
+    },
+    {
+      "actor": "naimuseblmbu1",
+      "route": "/repairs/mine",
+      "landed": "/repairs/mine",
+      "screenshot": "student-repairs_mine.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/dashboard",
+      "landed": "/dashboard",
+      "screenshot": "manager-dashboard.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/devices",
+      "landed": "/devices",
+      "screenshot": "manager-devices.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/devices-manage",
+      "landed": "/devices-manage",
+      "screenshot": "manager-devices-manage.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/approvals/pending",
+      "landed": "/approvals/pending",
+      "screenshot": "manager-approvals_pending.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/handovers",
+      "landed": "/handovers",
+      "screenshot": "manager-handovers.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/repairs",
+      "landed": "/repairs",
+      "screenshot": "manager-repairs.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/reservation-rules",
+      "landed": "/reservation-rules",
+      "screenshot": "manager-reservation-rules.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/maintenance",
+      "landed": "/maintenance",
+      "screenshot": "manager-maintenance.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/reports",
+      "landed": "/reports",
+      "screenshot": "manager-reports.png"
+    },
+    {
+      "actor": "lab-manager",
+      "route": "/notifications",
+      "landed": "/notifications",
+      "screenshot": "manager-notifications.png"
+    }
+  ],
+  "registrationAttempts": [
+    {
+      "username": "naimuseblmbu1",
+      "status": 201
+    }
+  ],
+  "observedRequestPaths": [
+    "DELETE /api/v2/blackouts/32",
+    "DELETE /api/v2/devices/13586/documents/1582",
+    "DELETE /api/v2/devices/13587",
+    "DELETE /api/v2/rbac/roles/12",
+    "DELETE /api/v2/reservation-rules/567",
+    "DELETE /api/v2/reservations/waitlist/37",
+    "DELETE /api/v2/users/5144",
+    "GET /api/v2/approvals/pending",
+    "GET /api/v2/auth/colleges",
+    "GET /api/v2/auth/csrf",
+    "GET /api/v2/auth/me",
+    "GET /api/v2/blackouts",
+    "GET /api/v2/colleges",
+    "GET /api/v2/dashboard/me",
+    "GET /api/v2/dashboard/overview",
+    "GET /api/v2/dashboard/summary",
+    "GET /api/v2/device-categories",
+    "GET /api/v2/device-pools/12183",
+    "GET /api/v2/device-pools/12183/availability",
+    "GET /api/v2/device-pools/options",
+    "GET /api/v2/devices",
+    "GET /api/v2/devices/13577",
+    "GET /api/v2/devices/13577/availability",
+    "GET /api/v2/devices/13577/documents",
+    "GET /api/v2/devices/13586/access",
+    "GET /api/v2/devices/13586/documents",
+    "GET /api/v2/devices/13586/qualifications",
+    "GET /api/v2/devices/13586/qualifications/mine",
+    "GET /api/v2/devices/13586/safety-documents",
+    "GET /api/v2/labs",
+    "GET /api/v2/live",
+    "GET /api/v2/maintenance-devices",
+    "GET /api/v2/maintenance-evidence/{asset_token}",
+    "GET /api/v2/maintenance-plans",
+    "GET /api/v2/maintenance-plans/104/records",
+    "GET /api/v2/notifications/mine",
+    "GET /api/v2/notifications/stream",
+    "GET /api/v2/organization/managers",
+    "GET /api/v2/rbac/permissions",
+    "GET /api/v2/rbac/roles",
+    "GET /api/v2/ready",
+    "GET /api/v2/recommendations",
+    "GET /api/v2/repair-reports",
+    "GET /api/v2/repair-reports/268/worklogs",
+    "GET /api/v2/repair-reports/mine",
+    "GET /api/v2/repair-uploads/{asset_token}",
+    "GET /api/v2/repair-uploads/{asset_token}",
+    "GET /api/v2/reports/export/devices",
+    "GET /api/v2/reports/export/repairs",
+    "GET /api/v2/reports/export/reservations",
+    "GET /api/v2/reports/exports/32",
+    "GET /api/v2/reports/exports/{task_id}/download",
+    "GET /api/v2/reports/summary",
+    "GET /api/v2/reservation-rules",
+    "GET /api/v2/reservations/1",
+    "GET /api/v2/reservations/235532",
+    "GET /api/v2/reservations/235532/feedback",
+    "GET /api/v2/reservations/handovers",
+    "GET /api/v2/reservations/mine",
+    "GET /api/v2/reservations/waitlist/mine",
+    "GET /api/v2/system/outbox/failed",
+    "GET /api/v2/users",
+    "PATCH /api/v2/devices/13586/qualifications/6",
+    "PATCH /api/v2/devices/13587/status",
+    "PATCH /api/v2/notifications/3264/read",
+    "PATCH /api/v2/notifications/read-all",
+    "PATCH /api/v2/rbac/roles/12",
+    "PATCH /api/v2/users/5144/status",
+    "POST /api/v2/approvals/235532/approve",
+    "POST /api/v2/approvals/235533/reject",
+    "POST /api/v2/approvals/batch-approve",
+    "POST /api/v2/auth/login",
+    "POST /api/v2/auth/logout",
+    "POST /api/v2/auth/refresh",
+    "POST /api/v2/auth/register",
+    "POST /api/v2/blackouts",
+    "POST /api/v2/colleges",
+    "POST /api/v2/devices",
+    "POST /api/v2/devices/13585/maintenance-evidence",
+    "POST /api/v2/devices/13585/maintenance-plans",
+    "POST /api/v2/devices/13586/documents",
+    "POST /api/v2/devices/13586/qualification-uploads",
+    "POST /api/v2/devices/13586/qualifications",
+    "POST /api/v2/devices/13586/safety-ack",
+    "POST /api/v2/labs",
+    "POST /api/v2/maintenance-plans/104/records",
+    "POST /api/v2/rbac/roles",
+    "POST /api/v2/repair-reports",
+    "POST /api/v2/repair-reports/268/confirm",
+    "POST /api/v2/repair-reports/268/resolve",
+    "POST /api/v2/repair-reports/268/take",
+    "POST /api/v2/repair-reports/269/reject",
+    "POST /api/v2/repair-reports/270/confirm",
+    "POST /api/v2/repair-reports/270/resolve",
+    "POST /api/v2/repair-reports/270/take",
+    "POST /api/v2/repair-uploads",
+    "POST /api/v2/reports/exports",
+    "POST /api/v2/reservations",
+    "POST /api/v2/reservations/235532/accept-return",
+    "POST /api/v2/reservations/235532/check-in",
+    "POST /api/v2/reservations/235532/feedback",
+    "POST /api/v2/reservations/235532/handover",
+    "POST /api/v2/reservations/235532/return",
+    "POST /api/v2/reservations/235536/cancel",
+    "POST /api/v2/reservations/235539/check-in",
+    "POST /api/v2/reservations/235539/handover",
+    "POST /api/v2/reservations/235539/violate",
+    "POST /api/v2/reservations/235540/cancel-handover-exception",
+    "POST /api/v2/reservations/235540/check-in",
+    "POST /api/v2/reservations/235540/handover",
+    "POST /api/v2/reservations/preflight",
+    "POST /api/v2/reservations/waitlist",
+    "POST /api/v2/reservations/waitlist/36/confirm",
+    "POST /api/v2/system/outbox/2147483647/retry",
+    "POST /api/v2/users",
+    "PUT /api/v2/colleges/1029",
+    "PUT /api/v2/devices/13587",
+    "PUT /api/v2/labs/1066",
+    "PUT /api/v2/maintenance-plans/104",
+    "PUT /api/v2/rbac/roles/12/permissions",
+    "PUT /api/v2/reservation-rules",
+    "PUT /api/v2/users/5144"
+  ],
+  "ids": {
+    "college": 1029,
+    "foreignCollege": 1030,
+    "manager": 5143,
+    "lab": 1066,
+    "mainDevice": 13577,
+    "queueDevice": 13578,
+    "rejectDevice": 13579,
+    "batchA": 13580,
+    "batchB": 13581,
+    "incidentDevice": 13582,
+    "exceptionDevice": 13583,
+    "repairDevice": 13584,
+    "maintenanceDevice": 13585,
+    "accessDevice": 13586,
+    "mainReservation": 235532,
+    "repair": 268
+  },
+  "pageErrors": [],
+  "http5xx": [],
+  "unknownApiCalls": [
+    "GET /api/v2/maintenance-evidence/{asset_token}",
+    "GET /api/v2/repair-uploads/{asset_token}",
+    "GET /api/v2/repair-uploads/{asset_token}",
+    "GET /api/v2/reports/exports/{task_id}/download"
+  ],
+  "failures": [],
+  "outcome": "PASS",
+  "coverageMeaning": "HTTP method/path coverage and UI route coverage; not source line or branch coverage."
+}

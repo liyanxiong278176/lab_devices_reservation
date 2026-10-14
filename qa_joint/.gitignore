@@ -1,0 +1,5 @@
+.runtime/
+results/*.log
+results/*.json
+results/playwright-report/
+results/test-results/

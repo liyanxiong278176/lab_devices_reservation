@@ -1,0 +1,772 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 90,
+      "row": 37
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\penalties.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nfrom datetime import UTC, datetime, timedelta\nfrom typing import Any\n\nfrom sqlalchemy import func, select\nfrom sqlalchemy.ext.asyncio import AsyncSession\n\nfrom app.application.lifecycle import append_audit\nfrom app.application.penalty_processing import (\n    _cancel_other_reservations,\n    _credit_delta,\n    enqueue_notification,\n    utcnow_naive,\n)\nfrom app.auth.security import Principal\nfrom app.core.errors import ApiError\nfrom app.infrastructure.db.models import (\n    College,\n    CollegeCreditAccount,\n    Device,\n    Lab,\n    PenaltyAppeal,\n    PenaltyCase,\n    PenaltyGraceBounds,\n    PenaltyRuleVersion,\n    Reservation,\n    ReservationBookingRestriction,\n    ReservationOverdue,\n    ReservationOverdueFollowUp,\n    Role,\n    User,\n    user_roles,\n)\nfrom app.infrastructure.db.pagination import delayed_page_ids, page_metadata, page_offset\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 40
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 89,
+      "row": 134
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\penalties.py",
+    "fix": null,
+    "location": {
+      "column": 86,
+      "row": 134
+    },
+    "message": "Line too long (103 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 134,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 88,
+      "row": 573
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\penalties.py",
+    "fix": null,
+    "location": {
+      "column": 83,
+      "row": 573
+    },
+    "message": "Line too long (109 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 573,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 23,
+      "row": 578
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\penalties.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 578
+    },
+    "message": "Undefined name `OutboxTask`",
+    "name": "undefined-name",
+    "noqa_row": 578,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 84,
+      "row": 651
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\penalties.py",
+    "fix": null,
+    "location": {
+      "column": 82,
+      "row": 651
+    },
+    "message": "Line too long (102 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 651,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 99,
+      "row": 769
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\penalties.py",
+    "fix": null,
+    "location": {
+      "column": 92,
+      "row": 769
+    },
+    "message": "Line too long (111 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 769,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 92,
+      "row": 1009
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\penalties.py",
+    "fix": null,
+    "location": {
+      "column": 80,
+      "row": 1009
+    },
+    "message": "Line too long (123 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 1009,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 31,
+      "row": 6
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\penalty_processing.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from datetime import UTC, datetime, time, timedelta",
+          "end_location": {
+            "column": 58,
+            "row": 6
+          },
+          "location": {
+            "column": 1,
+            "row": 6
+          }
+        }
+      ],
+      "message": "Remove unused import: `datetime.date`"
+    },
+    "location": {
+      "column": 27,
+      "row": 6
+    },
+    "message": "`datetime.date` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 6,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 83,
+      "row": 234
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\penalty_processing.py",
+    "fix": null,
+    "location": {
+      "column": 81,
+      "row": 234
+    },
+    "message": "Line too long (103 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 234,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 95,
+      "row": 416
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\penalty_processing.py",
+    "fix": null,
+    "location": {
+      "column": 79,
+      "row": 416
+    },
+    "message": "Line too long (132 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 416,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 104,
+      "row": 2744
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\application\\reservations.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 2744
+    },
+    "message": "Line too long (103 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 2744,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 103,
+      "row": 609
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\infrastructure\\db\\models.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 609
+    },
+    "message": "Line too long (102 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 609,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 118,
+      "row": 659
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\infrastructure\\db\\models.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 659
+    },
+    "message": "Line too long (117 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 659,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 77,
+      "row": 58
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\infrastructure\\tasks\\worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport logging\nimport random\nimport secrets\nimport time\nfrom datetime import UTC, date, datetime, timedelta\nfrom datetime import time as datetime_time\nfrom pathlib import Path\nfrom typing import Any\nfrom uuid import uuid4\n\nfrom fastapi import FastAPI\nfrom sqlalchemy import and_, delete, exists, func, or_, select, update\nfrom sqlalchemy.orm import selectinload\n\nfrom app.api.v2.schemas import ReservationPlanRequest\nfrom app.application.exports import csv_chunk_text, iter_export_rows\nfrom app.application.lifecycle import append_audit, change_device_status\nfrom app.application.penalty_processing import (\n    apply_violation_penalty,\n    enqueue_notification,\n    ensure_overdue_started,\n    process_overdue_deadline,\n)\nfrom app.application.reservations import ReservationService\nfrom app.auth.security import Principal\nfrom app.core.errors import ApiError\nfrom app.infrastructure.cache.cache import CacheService\nfrom app.infrastructure.cache.redis import get_redis_circuit, get_redis_for_app\nfrom app.infrastructure.db.models import (\n    AiEmbeddingRebuildJob,\n    College,\n    Device,\n    DeviceHandover,\n    DeviceMaintenancePlan,\n    ExportTask,\n    KnowledgeBuildJob,\n    KnowledgeDocument,\n    Lab,\n    Notification,\n    OutboxTask,\n    PenaltyAppeal,\n    PenaltyCase,\n    RepairReport,\n    RepairWorklog,\n    Reservation,\n    ReservationBlackout,\n    ReservationBookingRestriction,\n    ReservationItem,\n    ReservationOverdue,\n    ReservationWaitlist,\n    ReservationWaitlistOffer,\n    Role,\n    User,\n)\nfrom app.infrastructure.db.session import build_session_factory\nfrom app.infrastructure.notifications.sequence import next_delivery_sequence\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 60
+          },
+          "location": {
+            "column": 1,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 1,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 71,
+      "row": 929
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\infrastructure\\tasks\\worker.py",
+    "fix": null,
+    "location": {
+      "column": 70,
+      "row": 929
+    },
+    "message": "Line too long (101 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 929,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 84,
+      "row": 1038
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\app\\infrastructure\\tasks\\worker.py",
+    "fix": null,
+    "location": {
+      "column": 74,
+      "row": 1038
+    },
+    "message": "Line too long (119 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 1038,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 102,
+      "row": 31
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 31
+    },
+    "message": "Line too long (101 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 31,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 108,
+      "row": 32
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 32
+    },
+    "message": "Line too long (107 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 32,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 104,
+      "row": 61
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 61
+    },
+    "message": "Line too long (103 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 61,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 108,
+      "row": 62
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 62
+    },
+    "message": "Line too long (107 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 62,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 104,
+      "row": 97
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 97
+    },
+    "message": "Line too long (103 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 97,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 110,
+      "row": 147
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 147
+    },
+    "message": "Line too long (109 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 147,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 102,
+      "row": 149
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 149
+    },
+    "message": "Line too long (101 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 149,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 116,
+      "row": 152
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 152
+    },
+    "message": "Line too long (115 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 152,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 120,
+      "row": 177
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 177
+    },
+    "message": "Line too long (119 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 177,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 122,
+      "row": 178
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 178
+    },
+    "message": "Line too long (121 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 178,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 120,
+      "row": 208
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 208
+    },
+    "message": "Line too long (119 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 208,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 126,
+      "row": 209
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 209
+    },
+    "message": "Line too long (125 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 209,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 120,
+      "row": 210
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 210
+    },
+    "message": "Line too long (119 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 210,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 103,
+      "row": 240
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 240
+    },
+    "message": "Line too long (102 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 240,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 102,
+      "row": 242
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 242
+    },
+    "message": "Line too long (101 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 242,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 108,
+      "row": 280
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 280
+    },
+    "message": "Line too long (107 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 280,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 116,
+      "row": 281
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 281
+    },
+    "message": "Line too long (115 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 281,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 119,
+      "row": 282
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 282
+    },
+    "message": "Line too long (118 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 282,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 116,
+      "row": 283
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 283
+    },
+    "message": "Line too long (115 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 283,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 114,
+      "row": 286
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 286
+    },
+    "message": "Line too long (113 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 286,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 113,
+      "row": 287
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 287
+    },
+    "message": "Line too long (112 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 287,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "cell": null,
+    "code": "E501",
+    "end_location": {
+      "column": 102,
+      "row": 292
+    },
+    "filename": "D:\\agent_learning\\lab_devices_reservation\\backend\\migrations\\versions\\0038_college_penalties_and_overdue.py",
+    "fix": null,
+    "location": {
+      "column": 101,
+      "row": 292
+    },
+    "message": "Line too long (101 > 100)",
+    "name": "line-too-long",
+    "noqa_row": 292,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  }
+]

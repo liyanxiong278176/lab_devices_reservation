@@ -1,0 +1,207 @@
+{
+  "database": "lab_reservation",
+  "restored_count": 20,
+  "note": "Only task retry metadata from faulty startup was reset. Reservation rows were left untouched. Original end-of-start-date schedules restored at MySQL DATETIME precision.",
+  "rows": [
+    {
+      "task_id": 5573,
+      "reservation_id": 235514,
+      "reservation_status_unchanged": "APPROVED",
+      "handover_status_unchanged": "PENDING",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5595,
+      "reservation_id": 235515,
+      "reservation_status_unchanged": "COMPLETED",
+      "handover_status_unchanged": "RETURNED",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:01"
+    },
+    {
+      "task_id": 5608,
+      "reservation_id": 235517,
+      "reservation_status_unchanged": "APPROVED",
+      "handover_status_unchanged": "PENDING",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:12",
+      "restored_execute_at": "2026-10-04 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5611,
+      "reservation_id": 235518,
+      "reservation_status_unchanged": "APPROVED",
+      "handover_status_unchanged": "PENDING",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-04 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5627,
+      "reservation_id": 235522,
+      "reservation_status_unchanged": "APPROVED",
+      "handover_status_unchanged": "PENDING",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:14",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5649,
+      "reservation_id": 235523,
+      "reservation_status_unchanged": "COMPLETED",
+      "handover_status_unchanged": "RETURNED",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:14",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5662,
+      "reservation_id": 235525,
+      "reservation_status_unchanged": "APPROVED",
+      "handover_status_unchanged": "PENDING",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-04 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5665,
+      "reservation_id": 235526,
+      "reservation_status_unchanged": "APPROVED",
+      "handover_status_unchanged": "PENDING",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-04 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5681,
+      "reservation_id": 235530,
+      "reservation_status_unchanged": "VIOLATED",
+      "handover_status_unchanged": "CANCELLED",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:01"
+    },
+    {
+      "task_id": 5688,
+      "reservation_id": 235531,
+      "reservation_status_unchanged": "CANCELLED",
+      "handover_status_unchanged": "CANCELLED",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:12",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5746,
+      "reservation_id": 235532,
+      "reservation_status_unchanged": "COMPLETED",
+      "handover_status_unchanged": "RETURNED",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5759,
+      "reservation_id": 235534,
+      "reservation_status_unchanged": "APPROVED",
+      "handover_status_unchanged": "PENDING",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-04 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5762,
+      "reservation_id": 235535,
+      "reservation_status_unchanged": "APPROVED",
+      "handover_status_unchanged": "PENDING",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:14",
+      "restored_execute_at": "2026-10-04 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5778,
+      "reservation_id": 235539,
+      "reservation_status_unchanged": "VIOLATED",
+      "handover_status_unchanged": "CANCELLED",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5785,
+      "reservation_id": 235540,
+      "reservation_status_unchanged": "CANCELLED",
+      "handover_status_unchanged": "CANCELLED",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:14",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5842,
+      "reservation_id": 235541,
+      "reservation_status_unchanged": "COMPLETED",
+      "handover_status_unchanged": "RETURNED",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5855,
+      "reservation_id": 235543,
+      "reservation_status_unchanged": "APPROVED",
+      "handover_status_unchanged": "PENDING",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-04 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5858,
+      "reservation_id": 235544,
+      "reservation_status_unchanged": "APPROVED",
+      "handover_status_unchanged": "PENDING",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-04 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5875,
+      "reservation_id": 235548,
+      "reservation_status_unchanged": "VIOLATED",
+      "handover_status_unchanged": "CANCELLED",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    },
+    {
+      "task_id": 5882,
+      "reservation_id": 235549,
+      "reservation_status_unchanged": "CANCELLED",
+      "handover_status_unchanged": "CANCELLED",
+      "previous_attempts": 2,
+      "previous_execute_at": "2026-10-05 05:27:13",
+      "restored_execute_at": "2026-10-03 23:59:59",
+      "claimed_at_from_faulty_startup": "2026-10-05 05:27:02"
+    }
+  ]
+}

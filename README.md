@@ -50,6 +50,6 @@ Java 检查见 [backend-java/README.md](backend-java/README.md)。前端执行 `
 
 2026-10-14 重新运行并验证 14 条真实浏览器流程，覆盖普通用户、负责人和管理员的预约审批、交接与归还验收、报修、并发预约、通知及权限隔离。旧截图册已删除，不包含已移除的处罚申诉、逾期和维护校准计划流程。
 
-截图册是当前工作区的本地验收产物；支持搜索、流程筛选、放大和方向键逐张查看。[重新生成说明](docs/frontend-flow-gallery.md)。
+截图册随仓库交付；支持搜索、流程筛选、放大和方向键逐张查看。[重新生成说明](docs/frontend-flow-gallery.md)。
 
 违规申诉、信用处罚与计划维护/校准已移除，详见 [ADR 0042](docs/adr/0042-remove-penalties-and-planned-maintenance.md)。首日未领用自动取消；已领用设备直到归还验收完成才释放。

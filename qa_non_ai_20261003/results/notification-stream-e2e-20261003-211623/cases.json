@@ -1,0 +1,15 @@
+[
+  {
+    "id": "01",
+    "title": "正常实时推送",
+    "precondition": "测试用户已登录，SSE EventSource 返回 200，API 使用独立 Redis DB 14。",
+    "steps": "写入一条 NOTIFICATION Outbox 任务，等待消费、Stream ACK 和通知中心更新。",
+    "expected": "前端及时显示通知；CDP Network 捕获 SSE notification 事件和序号。",
+    "actual": "测试结束状态：failed；详见对应 Network、Redis/MySQL/监控证据。",
+    "status": "失败",
+    "screenshots": [
+      "case-01-frontend.png",
+      "case-01-sse-network.png"
+    ]
+  }
+]

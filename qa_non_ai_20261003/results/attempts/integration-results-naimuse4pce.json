@@ -1,0 +1,237 @@
+{
+  "runTag": "naimuse4pce",
+  "startedAt": "2026-10-03T12:51:07.214Z",
+  "finishedAt": "2026-10-03T12:52:23.155Z",
+  "inventory": {
+    "nonAiOperations": 107,
+    "observedOperations": 78,
+    "operationCoveragePercent": 72.9,
+    "missingOperations": [
+      "DELETE /api/v2/blackouts/{blackout_id}",
+      "DELETE /api/v2/reservation-rules/{rule_id}",
+      "GET /api/v2/blackouts",
+      "GET /api/v2/dashboard/summary",
+      "GET /api/v2/device-pools/options",
+      "GET /api/v2/maintenance-plans/{plan_id}/records",
+      "GET /api/v2/repair-reports/{report_id}/worklogs",
+      "GET /api/v2/reports/export/{export_type}",
+      "GET /api/v2/reports/exports/{task_id}",
+      "GET /api/v2/reservations/handovers",
+      "GET /api/v2/reservations/mine",
+      "PATCH /api/v2/notifications/read-all",
+      "PATCH /api/v2/notifications/{notification_id}/read",
+      "POST /api/v2/auth/logout",
+      "POST /api/v2/blackouts",
+      "POST /api/v2/devices/{device_id}/maintenance-evidence",
+      "POST /api/v2/devices/{device_id}/maintenance-plans",
+      "POST /api/v2/maintenance-plans/{plan_id}/records",
+      "POST /api/v2/repair-reports",
+      "POST /api/v2/repair-reports/{report_id}/confirm",
+      "POST /api/v2/repair-reports/{report_id}/reject",
+      "POST /api/v2/repair-reports/{report_id}/resolve",
+      "POST /api/v2/repair-reports/{report_id}/take",
+      "POST /api/v2/reports/exports",
+      "POST /api/v2/reservations/{reservation_id}/cancel-handover-exception",
+      "POST /api/v2/reservations/{reservation_id}/violate",
+      "POST /api/v2/system/outbox/{task_id}/retry",
+      "PUT /api/v2/maintenance-plans/{plan_id}",
+      "PUT /api/v2/reservation-rules"
+    ],
+    "pageRouteChecks": 20
+  },
+  "scenarios": [
+    {
+      "name": "登录、身份读取、Refresh 轮换与系统健康/Outbox 查询",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "公开注册入口尝试",
+      "result": "LIMITED",
+      "detail": "POST /auth/register HTTP 429；该共享 IP 配额已耗尽，当前角色由管理端创建"
+    },
+    {
+      "name": "学院/实验室/用户/角色管理 CRUD，普通账号注册与负责人登录",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "设备与资源池读写、状态历史、安全须知和资质上传审核",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "系统管理员 20/20 个非 AI Vue 页面路由和截图",
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Vue 预约表单 → 审批/签到/交接 → 归还/验收 → 使用评价",
+      "result": "PASS",
+      "detail": "reservation_id=235515"
+    },
+    {
+      "name": "驳回/批量审批、取消预约、候补递补/确认/取消",
+      "result": "PASS",
+      "detail": ""
+    }
+  ],
+  "routeChecks": [
+    {
+      "actor": "system-admin",
+      "route": "/organization",
+      "landed": "/organization",
+      "screenshot": "admin-organization.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/users",
+      "landed": "/users",
+      "screenshot": "admin-users.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/rbac",
+      "landed": "/rbac",
+      "screenshot": "admin-rbac.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/devices-manage",
+      "landed": "/devices-manage",
+      "screenshot": "admin-devices-manage.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservation-rules",
+      "landed": "/reservation-rules",
+      "screenshot": "admin-reservation-rules.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/maintenance",
+      "landed": "/maintenance",
+      "screenshot": "admin-maintenance.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reports",
+      "landed": "/reports",
+      "screenshot": "admin-reports.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/approvals/pending",
+      "landed": "/approvals/pending",
+      "screenshot": "admin-approvals_pending.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/handovers",
+      "landed": "/handovers",
+      "screenshot": "admin-handovers.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/repairs",
+      "landed": "/repairs",
+      "screenshot": "admin-repairs.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/notifications",
+      "landed": "/notifications",
+      "screenshot": "admin-notifications.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/dashboard",
+      "landed": "/dashboard",
+      "screenshot": "admin-dashboard.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/devices",
+      "landed": "/devices",
+      "screenshot": "admin-devices.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/devices/13555",
+      "landed": "/devices/13555",
+      "screenshot": "admin-devices_13555.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/recommendations",
+      "landed": "/recommendations",
+      "screenshot": "admin-recommendations.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservations/create?deviceId=13555&startDate=2026-10-03&endDate=2026-10-03",
+      "landed": "/reservations/create",
+      "screenshot": "admin-reservations_create_deviceId13555startDate2026-10-03.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservations/mine",
+      "landed": "/reservations/mine",
+      "screenshot": "admin-reservations_mine.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/repairs/submit",
+      "landed": "/repairs/submit",
+      "screenshot": "admin-repairs_submit.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/repairs/mine",
+      "landed": "/repairs/mine",
+      "screenshot": "admin-repairs_mine.png"
+    },
+    {
+      "actor": "system-admin",
+      "route": "/reservations/1",
+      "landed": "/reservations/1",
+      "screenshot": "admin-reservations_1.png"
+    }
+  ],
+  "registrationAttempts": [
+    {
+      "username": "naimuse4pceu1",
+      "status": 429
+    }
+  ],
+  "ids": {
+    "college": 1025,
+    "foreignCollege": 1026,
+    "manager": 5131,
+    "lab": 1064,
+    "mainDevice": 13555,
+    "queueDevice": 13556,
+    "rejectDevice": 13557,
+    "batchA": 13558,
+    "batchB": 13559,
+    "incidentDevice": 13560,
+    "exceptionDevice": 13561,
+    "repairDevice": 13562,
+    "maintenanceDevice": 13563,
+    "accessDevice": 13564,
+    "mainReservation": 235515
+  },
+  "pageErrors": [],
+  "http5xx": [],
+  "unknownApiCalls": [
+    "GET /api/v2/repair-uploads/{asset_token}"
+  ],
+  "failures": [
+    {
+      "message": "POST /reservations/235522/handover returned 422; response={\"code\":\"CHECKLIST_MISMATCH\",\"message\":\"必须逐项核对设备当前配件清单\",\"data\":null,\"request_id\":\"16913a4090f14d8e91944562f5973170\"}",
+      "stack": "Error: POST /reservations/235522/handover returned 422; response={\"code\":\"CHECKLIST_MISMATCH\",\"message\":\"必须逐项核对设备当前配件清单\",\"data\":null,\"request_id\":\"16913a4090f14d8e91944562f5973170\"}\n    at api (D:\\agent_learning\\lab_devices_reservation\\qa_non_ai_20261003\\runner.cjs:177:11)\n    at async main (D:\\agent_learning\\lab_devices_reservation\\qa_non_ai_20261003\\runner.cjs:514:5)"
+    }
+  ],
+  "outcome": "INCOMPLETE",
+  "coverageMeaning": "HTTP method/path coverage and UI route coverage; not source line or branch coverage."
+}
