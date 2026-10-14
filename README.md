@@ -2,7 +2,7 @@
 
 面向高校实验室的设备共享平台，支持自然日预约、资源池、多角色审批、候补、设备交接、归还验收、报修、安全准入、报表与通知。学院是租户边界。
 
-后端为 **Java 21 / Spring Boot / MyBatis / Flyway**，前端为 Vue 3 / TypeScript / Element Plus，依赖 MySQL 8 和 Redis 7。AI 工作台、知识库及 AI 运行依赖已移除。
+后端为 **Java 21 / Spring Boot / MyBatis / Flyway**，前端为 Vue 3 / TypeScript / Element Plus，依赖 MySQL 8 和 Redis 7。
 
 ## 本地启动
 
