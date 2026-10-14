@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { test, expect, type Locator, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page } from './flow-test'
 
 type Fixture = {
   prefix: string
@@ -668,7 +668,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await adminContext.close()
   })
 
-  test('交接发现配件损坏会阻止启用、生成报修并等待负责人处置', async ({ browser }) => {
+  test('交接发现配件损坏会阻止启用、生成报修并等待负责人处置', async ({ browser }, testInfo) => {
     test.setTimeout(150_000)
     const userContext = await browser.newContext()
     const userPage = await userContext.newPage()
@@ -731,7 +731,12 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     ).toContainText('维护中')
 
     await adminPage.getByRole('menuitem', { name: '报修处理', exact: true }).click()
-    await expect(adminPage.getByText(/交接异常/)).toBeVisible()
+    const faultReport = adminPage.locator('.el-table__row')
+      .filter({ hasText: fixture.second_device_name })
+      .filter({ hasText: '交接发现设备损坏或配件缺失' })
+    await expect(faultReport).toBeVisible()
+    await expect(faultReport).toContainText('待受理')
+    await adminPage.screenshot({ path: testInfo.outputPath('handover-damage-repair-workorder.png'), fullPage: true })
     await userContext.close()
     await adminContext.close()
   })

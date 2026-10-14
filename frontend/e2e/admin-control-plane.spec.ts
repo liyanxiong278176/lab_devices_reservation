@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './flow-test'
 
 type Fixture = {
   prefix: string

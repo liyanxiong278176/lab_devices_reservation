@@ -7,7 +7,7 @@ import {
   type ServerResponse,
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './flow-test'
 
 type Fixture = {
   username: string

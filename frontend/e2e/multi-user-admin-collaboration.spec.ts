@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { test, expect, type Page, type TestInfo } from '@playwright/test'
+import { test, expect, type Page, type TestInfo } from './flow-test'
 
 type Fixture = {
   username: string
