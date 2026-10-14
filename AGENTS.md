@@ -8,8 +8,7 @@
 backend-java/src/main/java/edu/labflow/ Java HTTP API、应用服务、认证、Outbox、名额对账与 SSE
 backend-java/src/main/resources/db/migration/ 追加式 Flyway SQL 迁移
 backend-java/src/test/             Java 单元和真实服务集成测试
-backend/migrations/                原 Alembic 历史，不改已执行 revision
-backend/app/、backend/scripts/      可选 SQL/Redis 数据工具，不是 HTTP 后端
+backend/.data/uploads/              保留原业务附件存储，忽略版本控制
 backend/benchmarks/                HTTP/SQL 容量验证工具
 frontend/src/                      Vue 3、TypeScript、Pinia、Element Plus
 frontend/e2e/                      标准 Playwright 浏览器验收
@@ -18,7 +17,7 @@ monitoring/                        Prometheus、Grafana 和 exporter
 
 `backend-java/` 是唯一后端构建入口。根目录忽略的 `target/` 是旧 Maven 产物，不作为实现依据；个人旧 Java 配置不属于项目配置，不得提交凭据。
 
-`qa_joint/`、`qa_joint_run_20261005/` 和 `qa_non_ai_20261003/` 保存迁移前的历史实验脚本和文字报告，不是当前项目入口；旧截图和原始会话仅保留在本地。先读各目录 README，不运行其旧 FastAPI 启动命令。标准浏览器测试以 `frontend/e2e/` 为准，最新版截图册随仓库交付。
+`qa_joint/`、`qa_joint_run_20261005/` 和 `qa_non_ai_20261003/` 保存迁移前的历史文字报告，不是当前项目入口；旧截图和原始会话仅保留在本地。先读各目录 README，不运行其旧 FastAPI 启动命令。标准浏览器测试以 `frontend/e2e/` 为准，最新版截图册随仓库交付。
 
 ## 本地开发命令
 
@@ -49,7 +48,7 @@ pnpm test
 pnpm test:e2e
 ```
 
-需要可见截图及普通用户/管理员人工复看时，如果工作区提供 `qa_joint/README.md`，可使用其页面复看指南；其中旧 FastAPI 启动命令已失效，应使用 Java + Vue + MySQL + Redis和 `qa_joint/scripts/`；不要把仓库中的历史手工 runner 当成当前标准 E2E 命令。
+需要可见截图及普通用户/管理员人工复看时，如果工作区提供 `qa_joint/README.md`，可使用其页面复看指南；其中旧 FastAPI 启动命令已失效，应使用 Java + Vue + MySQL + Redis；不要把仓库中的历史手工 runner 当成当前标准 E2E 命令。
 
 ## 当前架构约束
 
@@ -81,7 +80,7 @@ pnpm test:e2e
 
 ## 验证要求
 
-- 后端常规检查：在 `backend-java/` 执行 `.\mvnw.cmd verify` 和 `spotless:check`；并发、MySQL 唯一约束、Redis 故障与对账、Outbox 抢占和 Streams 使用真实服务验证。先确认 DSN 指向隔离测试库。可选 Python 数据工具使用 `uv run ruff check app scripts`。
+- 后端常规检查：在 `backend-java/` 执行 `.\mvnw.cmd verify` 和 `spotless:check`；并发、MySQL 唯一约束、Redis 故障与对账、Outbox 抢占和 Streams 使用真实服务验证。先确认 DSN 指向隔离测试库。浏览器造数与通知工具统一调用 Java CLI，不再依赖 Python。
 - 前端常规检查：`pnpm build`、`pnpm test`；Playwright 通过 `pnpm test:e2e` 运行 `frontend/e2e/`。真实多角色和截图联调按本地存在时的 `qa_joint/README.md` 操作。
 - 浏览器 E2E 应使用真实页面验证普通用户、负责人和系统管理员的预约/审批/履约、报修、通知、权限菜单和学院隔离。并发测试应验证同设备同自然日只能一个成功。
 

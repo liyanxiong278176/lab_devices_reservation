@@ -42,7 +42,7 @@ pnpm dev
 
 Java 检查见 [backend-java/README.md](backend-java/README.md)。前端执行 `pnpm build`、`pnpm test`、`pnpm test:e2e`。真实数据库测试必须指定隔离测试库，不能使用业务库。
 
-`backend/` 仅保留历史 Alembic 迁移与可选 SQL/Redis 验证工具，不提供 Python HTTP 服务。浏览器验收的 fixture 工具需要 Python 3.13 和 uv，执行 `uv sync --project backend`；Java 运行和 Docker 镜像不需要 Python。
+仓库已移除 Python 源码、依赖清单与旧验收运行脚本。浏览器测试通过 Java JAR 创建和清理带 `e2e-` 前缀的隔离数据；先打包后端并配置 Java 21。数据库升级只使用 Flyway SQL，已执行的 V1–V5 保持不变。原上传目录 `backend/.data/uploads` 保留。
 
 ## 前端流程截图册
 

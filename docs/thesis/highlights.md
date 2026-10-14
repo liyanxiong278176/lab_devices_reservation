@@ -1,3 +1,5 @@
+> 历史资料：下文记录迁移前的实现或验收，旧脚本已退役。当前 Java 架构和验证入口以根目录 README、`backend-java/` 与 `frontend/e2e/` 为准。
+
 # 项目技术亮点
 
 本页只记录当前 Python FastAPI 版本的非 AI 业务实现；AI 工作台保持独立，不作为本次

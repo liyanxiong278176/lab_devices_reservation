@@ -52,7 +52,8 @@ public class Settings {
 
   public boolean bool(String key, boolean fallback) {
     if ((key.equals("ENABLE_WORKERS") || key.equals("ENABLE_NOTIFICATION_RELAY"))
-        && !env.getProperty("labflow.migration", "none").equals("none")) return false;
+        && (!env.getProperty("labflow.migration", "none").equals("none")
+            || !env.getProperty("labflow.fixture", "none").equals("none"))) return false;
     return Boolean.parseBoolean(get(key, "" + fallback));
   }
 

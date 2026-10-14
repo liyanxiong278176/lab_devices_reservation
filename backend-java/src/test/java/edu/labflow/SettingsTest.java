@@ -7,6 +7,19 @@ import org.springframework.mock.env.MockEnvironment;
 
 class SettingsTest {
   @Test
+  void fixtureCommandsCannotStartBackgroundConsumers() {
+    var env =
+        new MockEnvironment()
+            .withProperty("LAB_JWT_SECRET", "public-test-secret-with-at-least-32-characters")
+            .withProperty("labflow.fixture", "seed")
+            .withProperty("LAB_ENABLE_WORKERS", "true")
+            .withProperty("LAB_ENABLE_NOTIFICATION_RELAY", "true");
+    var settings = new Settings(env);
+    assertThat(settings.bool("ENABLE_WORKERS", true)).isFalse();
+    assertThat(settings.bool("ENABLE_NOTIFICATION_RELAY", true)).isFalse();
+  }
+
+  @Test
   void emptyComposeOverridesUseDefaultsAndSharedSecretAliases() {
     var env =
         new MockEnvironment()

@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { javaCommand } from './java-command'
 import { test, expect, type Page } from './flow-test'
 
 type Fixture = {
@@ -15,15 +15,7 @@ const prefix = `e2e-${Date.now().toString(36)}`
 let fixture: Fixture
 
 function fixtureCommand(action: 'seed' | 'cleanup'): string {
-  return execFileSync(
-    'uv',
-    ['run', 'python', 'scripts/e2e_fixture.py', action, '--prefix', prefix],
-    {
-      cwd: new URL('../../backend', import.meta.url),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'inherit'],
-    },
-  ).trim()
+  return javaCommand(action, prefix)
 }
 
 async function login(page: Page, username: string, password: string) {

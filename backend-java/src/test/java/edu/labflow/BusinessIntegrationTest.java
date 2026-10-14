@@ -36,6 +36,47 @@ class BusinessIntegrationTest {
   @Autowired NotificationService notifications;
   @Autowired NotificationRelay relay;
   @Autowired StreamMetrics streamMetrics;
+  @Autowired FixtureCommand fixtures;
+  @Autowired org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+  @Test
+  void javaFixtureCleanupPreservesOtherTenantsAndSimilarPrefixes() {
+    String first = "e2e-fixture-" + suffix, second = first + "-b";
+    var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+    try {
+      var a = (Map<String, Object>) tx.execute(status -> fixtures.seed(first));
+      var b = (Map<String, Object>) tx.execute(status -> fixtures.seed(second));
+      db.execute(
+          "INSERT INTO sys_user (username,password,college_id,status) VALUES (?,'public-test-placeholder',?,0)",
+          first + "-crud-user",
+          a.get("college_id"));
+      assertThat(
+              auth.matches(
+                  "E2e-123456",
+                  db.one("SELECT password FROM sys_user WHERE id=?", a.get("user_id"))
+                      .get("password")
+                      .toString()))
+          .isTrue();
+      tx.execute(status -> fixtures.notification(first, "Java fixture notification"));
+      assertThat(
+              db.count(
+                  "SELECT delivery_sequence FROM notification WHERE user_id=?", a.get("user_id")))
+          .isEqualTo(1);
+      tx.execute(status -> fixtures.cleanup(first));
+      tx.execute(status -> fixtures.cleanup(first));
+      assertThat(db.count("SELECT COUNT(*) FROM sys_user WHERE username=?", first + "-crud-user"))
+          .isZero();
+      assertThat(db.count("SELECT COUNT(*) FROM college WHERE id=?", a.get("college_id"))).isZero();
+      assertThat(db.count("SELECT COUNT(*) FROM device_category WHERE name=?", first + "-category"))
+          .isZero();
+      assertThat(db.count("SELECT COUNT(*) FROM sys_user WHERE id=?", b.get("user_id")))
+          .isEqualTo(1);
+      assertThat(db.count("SELECT COUNT(*) FROM device WHERE id=?", device)).isEqualTo(1);
+    } finally {
+      tx.execute(status -> fixtures.cleanup(first));
+      tx.execute(status -> fixtures.cleanup(second));
+    }
+  }
 
   @Autowired
   @org.springframework.beans.factory.annotation.Qualifier("requestMappingHandlerMapping")
@@ -641,7 +682,8 @@ class BusinessIntegrationTest {
   @Test
   void verifiesPythonArgon2HashesWithoutResettingPassword() {
     // Produced by pwdlib with m=65536,t=3,p=4 and a deterministic public test salt.
-    String hash = System.getenv("LAB_TEST_PYTHON_ARGON2_HASH");
+    String hash =
+        "$argon2id$v=19$m=65536,t=3,p=4$Ayf5nn0EEVXNUU9E2unHrQ$F/m3RHNcJRGKmu7ohCU152PnT4P8Ni71eXakYQJT6WQ";
     assertThat(hash).isNotBlank();
     assertThat(auth.matches("python-compatibility-test", hash)).isTrue();
     assertThat(auth.matches("wrong-password", hash)).isFalse();

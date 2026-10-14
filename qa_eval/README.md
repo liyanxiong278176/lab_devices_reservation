@@ -1,3 +1,5 @@
+> 2026-10-14：此目录仅保留历史报告。旧可执行脚本及 Python 依赖已删除；下方命令和路径只记录历史实验，当前验证使用 `backend-java/` 和 `frontend/e2e/`。
+
 # Independent QA evaluation workspace
 
 This workspace contains new test assets. It does not import or execute anything from

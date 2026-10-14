@@ -1,3 +1,5 @@
+> 2026-10-14：此目录仅保留历史报告。旧可执行脚本及 Python 依赖已删除；下方命令和路径只记录历史实验，当前验证使用 `backend-java/` 和 `frontend/e2e/`。
+
 # Independent backend + AI evaluation harness
 
 This tree is self-contained and does not import `backend/tests`, `frontend/e2e`,

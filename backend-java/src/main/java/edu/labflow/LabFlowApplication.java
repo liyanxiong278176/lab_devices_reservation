@@ -11,7 +11,8 @@ public class LabFlowApplication {
     var app = new SpringApplication(LabFlowApplication.class);
     app.addInitializers(new RuntimeEnvironment());
     var context = app.run(args);
-    if (!context.getEnvironment().getProperty("labflow.migration", "none").equals("none"))
+    if (!context.getEnvironment().getProperty("labflow.migration", "none").equals("none")
+        || !context.getEnvironment().getProperty("labflow.fixture", "none").equals("none"))
       context.close();
   }
 }

@@ -1,3 +1,5 @@
+> 历史资料：下文记录迁移前的实现或验收，旧脚本已退役。当前 Java 架构和验证入口以根目录 README、`backend-java/` 与 `frontend/e2e/` 为准。
+
 # 总体架构说明
 
 本平台是面向高校实验室的自然日设备预约与管控系统，采用单体异步架构。后端只保留 Python FastAPI，前端使用 Vue 3 + TypeScript；MySQL 保存业务事实，Redis 提供缓存、辅助锁和限流，OutboxWorker 在同一 FastAPI 进程中执行可恢复异步任务。

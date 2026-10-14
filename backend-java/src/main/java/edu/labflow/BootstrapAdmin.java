@@ -20,7 +20,7 @@ public class BootstrapAdmin implements ApplicationRunner {
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
-    if (args.containsOption("labflow.migration")) return;
+    if (args.containsOption("labflow.migration") || args.containsOption("labflow.fixture")) return;
     String password = settings.get("BOOTSTRAP_ADMIN_PASSWORD", "");
     if (password.isBlank()) return;
     if (password.length() < 12)

@@ -17,16 +17,9 @@ java -jar backend-java/target/labflow-backend-1.0.0.jar --spring.main.web-applic
 
 ## 清理 AI 专属资源
 
-必须在删表前完成所有权清单，因为专属文件、向量集合和 Celery task ID 来自旧表：
+当前工作区已完成 AI 专属文件、向量集合和队列清理，相关旧工具随 Python 源码移除。此前的清理结果见迁移验收记录，不重新删除共享服务或业务附件。
 
-```powershell
-uv run --project backend python backend/scripts/remove_ai_resources.py --vector-url http://127.0.0.1:6333 --broker-url redis://127.0.0.1:6379/1
-uv run --project backend python backend/scripts/remove_ai_resources.py --apply --old-processes-stopped --vector-url http://127.0.0.1:6333 --broker-url redis://127.0.0.1:6379/1 --remove-ai-config
-```
-
-使用实际端点，先检查默认只读输出。只处理 `uploads/ai-knowledge`，保留 `v2_upload_asset` 引用的业务文件，遇到符号链接拒绝操作。Qdrant 集合来自本库 active/rebuild 索引记录和显式配置；不删除其他项目集合。Redis 仅处理 `knowledge-build` 队列、对应绑定/优先级队列、本库构建任务结果及该队列 unacked 项；不清空 Redis、不删除业务 Stream 或其他队列。配置清理仅删除根 `.env` 中 `LAB_AI_*`、`LAB_QDRANT_*`、`LAB_CELERY_*`。
-
-本地 `lab-qdrant` 容器也可能被其他项目使用；不能仅依据 Compose 标签删容器或卷。专属集合已清理后，保留共享服务给其他项目使用。独占的旧 Celery/Qdrant 运行服务可在核实无其他用途后退出。
+对尚未切换的旧安装，应在删表前使用迁移前的 Git 版本完成专属资源所有权核验和清理，再切回本版本执行 SQL 迁移。不得清空 Redis 或删除其他项目的 Qdrant 集合；原有业务存储卷继续保留。
 
 ## 迁移、登录失效及启动
 

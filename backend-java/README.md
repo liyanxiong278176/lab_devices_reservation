@@ -27,10 +27,23 @@ V4/V5 进一步移除违规申诉、信用处罚、计划维护/校准及逾期�
 - `LAB_TEST_MYSQL_URL=jdbc:mysql://127.0.0.1:33306/labflow_migration_test`、`LAB_TEST_MYSQL_PASSWORD`，该库先应用原 Alembic 0038，用于基线演练。
 - `LAB_REDIS_URL=redis://127.0.0.1:36379/14`、`LAB_ENVIRONMENT=test`、`LAB_JWT_SECRET`（测试专用，32 字符以上）、`LAB_COOKIE_SECURE=false`。
 - `LAB_ENABLE_WORKERS=false`、`LAB_ENABLE_NOTIFICATION_RELAY=false`。
-- `LAB_TEST_PYTHON_ARGON2_HASH`：用 pwdlib 对公开测试密码 `python-compatibility-test` 生成的哈希，验证旧密码兼容。
+旧 Argon2 密码兼容测试使用固定的公开测试哈希，不需要额外运行时或环境变量。
 
 初始化隔离空库后执行 `.\mvnw.cmd verify`；集成测试通过库名保护拒绝业务库。覆盖设备日并发唯一约束、事务、请求幂等、学院隔离、Cookie/CSRF/刷新轮换和迁移保存业务数据。
 
 代码格式：`.\mvnw.cmd spotless:apply`；前端 E2E 在 `frontend/` 执行，先打包 Java JAR，并通过 `E2E_API_URL`、`E2E_BACKEND_PORT` 和 `VITE_API_PROXY_TARGET` 指向测试 API。
 
 集成测试和浏览器 API Worker 不能同时处理同一个隔离库；分阶段运行，先停止浏览器测试 API，再执行 Outbox 集成测试。通知专项运维套件需两套 Java API、独立 Redis DB 14 和 Prometheus/Grafana，使用 `E2E_NOTIFICATION_LIVE=1` 或专项 Playwright 配置显式启用；普通 E2E 不会自动启动这些外部依赖。
+
+## 浏览器测试数据
+
+Playwright 通过 `frontend/e2e/java-command.ts` 调用同一 JAR，无新增测试 HTTP 接口。CLI 自动禁用 Worker、通知消费及管理员初始化，执行后退出。
+
+```powershell
+java -jar target/labflow-backend-1.0.0.jar --spring.main.web-application-type=none --labflow.fixture=seed --prefix=e2e-example123
+java -jar target/labflow-backend-1.0.0.jar --spring.main.web-application-type=none --labflow.fixture=cleanup --prefix=e2e-example123
+```
+
+先将数据库和 Redis 配置指向隔离测试服务，库名必须含 `test` 或 `e2e`。`seed` 支持 `--pool-units=1..20`；清理仅针对指定测试学院的账号及精确匹配的初始测试账号，保留其他数据与文件。通知造数、Outbox 批量发送和 Streams 检查同样使用该 CLI；Streams 写操作限定本机 Redis DB 14。
+
+旧 Alembic 源码已退出当前版本；V1 保留原 0038 结构快照，V2–V5 及既有 Flyway 校验值不变。需要升级更早的旧库时，先使用迁移前的 Git 版本升级至 0038，再按切换说明基线。

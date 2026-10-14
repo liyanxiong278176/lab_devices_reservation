@@ -1,3 +1,5 @@
+> 2026-10-14：此目录仅保留历史报告。旧可执行脚本及 Python 依赖已删除；下方命令和路径只记录历史实验，当前验证使用 `backend-java/` 和 `frontend/e2e/`。
+
 # 双角色前后端联调
 
 > 历史验收资料：本目录记录 Spring Boot 迁移前的 Python/FastAPI 实验。下方旧启动命令不适用于当前版本；当前运行入口和标准浏览器测试以根目录 README、`backend-java/` 与 `frontend/e2e/` 为准。旧截图与浏览器会话不入库。

@@ -6,7 +6,7 @@
 
 ## 重新生成
 
-先启动 Java API 与 Vue，使用独立测试 MySQL 和 Redis，并为数据工具配置 `LAB_MYSQL_DSN`、`LAB_REDIS_URL`、`LAB_ENVIRONMENT=test`。`E2E_API_URL`、`E2E_BACKEND_PORT`、`E2E_BASE_URL` 与 `VITE_API_PROXY_TARGET` 应指向这套测试服务；跨端口运行时，后端 `LAB_CORS_ORIGINS` 必须包含测试前端 Origin。
+先用 Java 21 打包后端 JAR，再启动 Java API 与 Vue，使用独立测试 MySQL 和 Redis，并为 Java 造数工具配置 `LAB_MYSQL_DSN`、`LAB_REDIS_URL`、`LAB_ENVIRONMENT=test`。`E2E_API_URL`、`E2E_BACKEND_PORT`、`E2E_BASE_URL` 与 `VITE_API_PROXY_TARGET` 应指向这套测试服务；跨端口运行时，后端 `LAB_CORS_ORIGINS` 必须包含测试前端 Origin。全部造数和清理均调用 Java，不再安装 Python 或 uv。
 
 在 `frontend/` 执行以下命令，将目录日期换成本轮日期：
 

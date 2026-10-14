@@ -1,3 +1,5 @@
+> 2026-10-14：此目录仅保留历史报告。旧可执行脚本及 Python 依赖已删除；下方命令和路径只记录历史实验，当前验证使用 `backend-java/` 和 `frontend/e2e/`。
+
 # OWASP WSTG authentication assessment
 
 This is an independent black-box assessment of the live FastAPI HTTP surface.

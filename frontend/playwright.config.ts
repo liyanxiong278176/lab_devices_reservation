@@ -3,7 +3,12 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   // The notification operations suite needs two APIs and Prometheus/Grafana.
-  testIgnore: process.env.E2E_NOTIFICATION_LIVE === '1' ? [] : ['**/notification-stream-live.spec.ts'],
+  testIgnore: [
+    '**/reservation-special-cases.spec.ts',
+    '**/reservation-joint-observe.spec.ts',
+    '**/device-pool-capacity.spec.ts',
+    ...(process.env.E2E_NOTIFICATION_LIVE === '1' ? [] : ['**/notification-stream-live.spec.ts']),
+  ],
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,

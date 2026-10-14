@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { javaCommand } from './java-command'
 import { once } from 'node:events'
 import {
   createServer,
@@ -18,13 +18,7 @@ let prefix = ''
 let fixture: Fixture
 
 function fixtureCommand(action: 'seed' | 'notification' | 'cleanup', title?: string): string {
-  const args = ['run', 'python', 'scripts/e2e_fixture.py', action, '--prefix', prefix]
-  if (title) args.push('--title', title)
-  return execFileSync('uv', args, {
-    cwd: new URL('../../backend', import.meta.url),
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
-  }).trim()
+  return javaCommand(action, prefix, title ? { title } : {})
 }
 
 async function login(page: Page, username: string, password: string) {

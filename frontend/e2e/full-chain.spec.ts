@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { javaCommand } from './java-command'
 import { test, expect, type Locator, type Page } from './flow-test'
 
 type Fixture = {
@@ -21,16 +21,7 @@ let prefix = ''
 let fixture: Fixture
 
 function fixtureCommand(action: 'seed' | 'cleanup'): string {
-  const output = execFileSync(
-    'uv',
-    ['run', 'python', 'scripts/e2e_fixture.py', action, '--prefix', prefix],
-    {
-      cwd: new URL('../../backend', import.meta.url),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'inherit'],
-    },
-  )
-  return output.trim()
+  return javaCommand(action, prefix)
 }
 
 async function login(page: Page, username: string, password: string) {
@@ -276,7 +267,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
         stableUnreadSamples = 0
       }
       return stableUnreadSamples
-    }, { interval: 500, timeout: 15_000 }).toBeGreaterThanOrEqual(8)
+    }, { intervals: [500], timeout: 15_000 }).toBeGreaterThanOrEqual(8)
     const unreadBefore = await userPage.evaluate(async () => {
       const response = await fetch('/api/v2/notifications/mine?onlyUnread=true&size=1', {
         credentials: 'include',
@@ -428,7 +419,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
       await alternatePage.reload()
       const row = alternatePage.locator('.mine__waitlist-row').filter({ hasText: cancelDate })
       return await row.innerText().catch(() => '')
-    }, { interval: 1200, timeout: 30_000 }).toContain('待确认保留')
+    }, { intervals: [1200], timeout: 30_000 }).toContain('待确认保留')
     const notifiedWaitlistRow = alternatePage.locator('.mine__waitlist-row').filter({ hasText: cancelDate })
     await notifiedWaitlistRow.getByRole('button', { name: '确认预约' }).click()
     const confirmedWaitlistReservation = alternatePage.locator('.mine__card').filter({ hasText: 'E2E 候补释放后重新预约' })

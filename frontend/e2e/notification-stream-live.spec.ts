@@ -1,4 +1,5 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { javaCommand } from './java-command'
+import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { createServer, request as proxyRequest, type ClientRequest, type ServerResponse } from 'node:http'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -46,7 +47,6 @@ type CaseResult = {
   screenshots: string[]
 }
 
-const backendCwd = resolve(process.cwd(), '..', 'backend')
 const artifactRoot = resolve(
   process.env.E2E_NOTIFICATION_EVIDENCE_DIR
     || join(process.cwd(), '.artifacts', 'notification-stream-e2e'),
@@ -129,49 +129,21 @@ const specifications: Record<string, Omit<CaseResult, 'actual' | 'status' | 'scr
   },
 }
 
-function commandJson(args: string[]): any {
-  const output = execFileSync('uv', args, {
-    cwd: backendCwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
-  })
-  if (!output.trim()) throw new Error(`Expected JSON from: ${args.join(' ')}`)
-  return JSON.parse(output)
-}
-
 function fixtureCommand(action: 'seed' | 'notification' | 'cleanup', title?: string): any {
-  const args = ['run', 'python', 'scripts/e2e_fixture.py', action, '--prefix', runPrefix]
-  if (title) args.push('--title', title)
-  if (action === 'cleanup') {
-    execFileSync('uv', args, {
-      cwd: backendCwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'inherit'],
-    })
-    return undefined
-  }
-  return commandJson(args)
+  return JSON.parse(javaCommand(action, runPrefix, title ? { title } : {}))
 }
-
 function streamCommand(action: string, options: Record<string, string | number | boolean> = {}): any {
-  const args = ['run', 'python', 'scripts/e2e_notification_stream.py', action, '--prefix', runPrefix]
-  for (const [name, value] of Object.entries(options)) {
-    if (typeof value === 'boolean') {
-      if (value) args.push(`--${name}`)
-    } else {
-      args.push(`--${name}`, String(value))
-    }
-  }
-  return commandJson(args)
+  return JSON.parse(javaCommand(action, runPrefix, options))
 }
-
 function streamOps(args: string[]): any {
-  const output = execFileSync(
-    'uv',
-    ['run', 'python', '-m', 'app.infrastructure.notifications.stream_ops', ...args],
-    { cwd: backendCwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
-  )
-  return JSON.parse(output)
+  const [action, ...rest] = args
+  const options: Record<string, string | boolean> = {}
+  if (action === 'destroy-group') options['group-name'] = rest.shift()!
+  while (rest.length) {
+    const name = rest.shift()!.slice(2)
+    options[name] = name === 'confirm' ? true : rest.shift()!
+  }
+  return streamCommand(action!, options)
 }
 
 function isSse(response: { url(): string; request(): { method(): string } }) {
@@ -427,7 +399,9 @@ async function startInterruptibleSseProxy(backendPort: number) {
       outgoing.writeHead(404).end()
       return
     }
-    const record = { lastEventId: String(incoming.headers['last-event-id'] || '') }
+    const record: { lastEventId: string; queued?: boolean } = {
+      lastEventId: String(incoming.headers['last-event-id'] || ''),
+    }
     requests.push(record)
     if (paused) {
       record.queued = true
