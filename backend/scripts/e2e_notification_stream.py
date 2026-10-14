@@ -103,6 +103,40 @@ async def enqueue_notification(prefix: str, title: str) -> dict[str, object]:
     return result
 
 
+async def enqueue_notification_batch(prefix: str, title: str, count: int) -> dict[str, object]:
+    """Commit a bounded batch of tenant-scoped Outbox tasks while SSE is offline."""
+    if not 1 <= count <= 100 or not title or len(title) > 180:
+        raise ValueError("batch needs 1..100 notifications and a title of 1..180 characters")
+    settings = Settings()
+    engine = build_engine(settings)
+    factory = build_session_factory(engine)
+    try:
+        async with factory() as session:
+            student = await session.scalar(select(User).where(User.username == f"{prefix}-user"))
+            if student is None:
+                raise RuntimeError("E2E student fixture does not exist")
+            titles = [f"{title} {index:03d}" for index in range(1, count + 1)]
+            for notification_title in titles:
+                session.add(
+                    OutboxTask(
+                        task_key=f"e2e:{prefix}:notification:{uuid4().hex}",
+                        task_type="NOTIFICATION",
+                        college_id=student.college_id,
+                        payload={
+                            "user_id": student.id,
+                            "college_id": student.college_id,
+                            "title": notification_title,
+                            "content": f"Outbox 断线补发批次 {prefix}",
+                        },
+                        execute_at=datetime.now(UTC).replace(tzinfo=None),
+                    )
+                )
+            await session.commit()
+            return {"count": count, "userId": student.id, "titles": titles}
+    finally:
+        await engine.dispose()
+
+
 async def duplicate_notification(prefix: str, title: str) -> dict[str, object]:
     settings = isolated_settings()
     engine = build_engine(settings)
@@ -379,6 +413,8 @@ async def main_async(args: argparse.Namespace) -> object:
     prefix = validate_prefix(args.prefix)
     if args.action == "enqueue":
         return await enqueue_notification(prefix, args.title or "")
+    if args.action == "enqueue-batch":
+        return await enqueue_notification_batch(prefix, args.title or "", args.count)
     if args.action == "duplicate":
         return await duplicate_notification(prefix, args.title or "")
     if args.action == "gap":
@@ -410,6 +446,7 @@ def main() -> None:
         "action",
         choices=(
             "enqueue",
+            "enqueue-batch",
             "duplicate",
             "gap",
             "rows",

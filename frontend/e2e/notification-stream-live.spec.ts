@@ -75,8 +75,8 @@ const specifications: Record<string, Omit<CaseResult, 'actual' | 'status' | 'scr
     id: '02',
     title: 'SSE 断线重连补发',
     precondition: 'SSE 已连接并已收到通知 A、B；测试代理可中断连接并暂停重连。',
-    steps: '中断 SSE；Outbox 产生 C、D；恢复代理，记录重连 Last-Event-ID 与 SSE 事件。',
-    expected: '重连请求携带 B 的 Last-Event-ID；只补发 C、D，按 deliverySequence 有序且不重复。',
+    steps: '中断并暂停 SSE 重连；Outbox 产生 100 条通知并全部落库；恢复代理，核对 SSE 序号和所有历史分页。',
+    expected: '重连携带断线前 Last-Event-ID；100 条通知按连续序号各补发一次，历史页面各显示一次。',
   },
   '03': {
     id: '03',
@@ -536,10 +536,12 @@ test.describe('Redis Stream 通知专项前后端联调', () => {
     })
     if (context) await context.close()
     context = undefined
-    try {
-      streamCommand('release-backlog')
-    } catch {
-      // No backlog key is expected in scenarios that do not create one.
+    if (['07', '08'].includes(caseNumber)) {
+      try {
+        streamCommand('release-backlog')
+      } catch {
+        // Cleanup must still remove the tenant when backlog release fails.
+      }
     }
     fixtureCommand('cleanup')
   })
@@ -580,8 +582,9 @@ test.describe('Redis Stream 通知专项前后端联调', () => {
   })
 
   test('用例2 SSE 断线重连按 Last-Event-ID 补发', async () => {
+    test.setTimeout(180_000)
     const page = await newTrackedPage()
-    const proxy = await startInterruptibleSseProxy(8000)
+    const proxy = await startInterruptibleSseProxy(Number(process.env.E2E_BACKEND_PORT || 8000))
     try {
       await page.route(/\/api\/v2\/notifications\/stream(?:\?.*)?$/, (route) => {
         const path = new URL(route.request().url()).pathname
@@ -590,27 +593,39 @@ test.describe('Redis Stream 通知专项前后端联调', () => {
       await login(page)
       const first = `断线前 A ${runPrefix}`
       const second = `断线前 B ${runPrefix}`
-      const third = `断线后 C ${runPrefix}`
-      const fourth = `断线后 D ${runPrefix}`
       streamCommand('enqueue', { title: first })
       streamCommand('enqueue', { title: second })
       await openNotificationCenter(page, first)
       await expect(page.locator('.notif-row__title').filter({ hasText: second })).toBeVisible()
       const lastBeforeDisconnect = notificationMessages(captures.get(page)!).at(-1)?.eventId
+      expect(lastBeforeDisconnect).toBeTruthy()
       proxy.pause()
-      streamCommand('enqueue', { title: third })
-      streamCommand('enqueue', { title: fourth })
+      const batch = streamCommand('enqueue-batch', {
+        title: `断线后 ${runPrefix}`, count: 100,
+      }) as { count: number; titles: string[] }
+      expect(batch.count).toBe(100)
+      const titles = new Set(batch.titles)
+      await expect.poll(() => {
+        const rows = streamCommand('rows') as Array<{ title: string }>
+        return rows.filter((row) => titles.has(row.title)).length
+      }, { timeout: 90_000, intervals: [1_000, 2_000] }).toBe(100)
+      const databaseRows = streamCommand('rows') as Array<{
+        id: number; title: string; deliverySequence: number
+      }>
+      expect(databaseRows).toHaveLength(102)
+      expect(new Set(databaseRows.map((row) => row.id)).size).toBe(102)
       await expect.poll(
         () => proxy.requests.some((item) => item.queued && item.lastEventId === lastBeforeDisconnect),
         { timeout: 15_000 },
       ).toBe(true)
+      // All 100 notifications exist before any successful reconnect can occur.
+      expect(notificationMessages(captures.get(page)!).filter((item) => titles.has(String(item.payload.title)))).toHaveLength(0)
       proxy.resume()
-      await expect(page.locator('.notif-row__title').filter({ hasText: third })).toBeVisible({ timeout: 25_000 })
-      await expect(page.locator('.notif-row__title').filter({ hasText: fourth })).toBeVisible({ timeout: 25_000 })
-      await expect(page.locator('.notif-row__title').filter({ hasText: first })).toHaveCount(1)
-      await expect(page.locator('.notif-row__title').filter({ hasText: second })).toHaveCount(1)
-      await expect(page.locator('.notif-row__title').filter({ hasText: third })).toHaveCount(1)
-      await expect(page.locator('.notif-row__title').filter({ hasText: fourth })).toHaveCount(1)
+      await expect.poll(() => notificationMessages(captures.get(page)!)
+        .filter((item) => titles.has(String(item.payload.title))).length,
+      { timeout: 30_000 }).toBe(100)
+      await expect(page.getByText('断线通知已同步', { exact: true })).toBeVisible()
+      await expect(page.getByText('断线期间有 100 条新通知，已同步到通知中心', { exact: true })).toBeVisible()
       const successfulReconnect = proxy.requests.find((item) => item.status === 200 && item.lastEventId === lastBeforeDisconnect)
       expect(successfulReconnect?.lastEventId).toBe(lastBeforeDisconnect)
       captures.get(page)!.records.push(...proxy.requests.map((item) => ({
@@ -618,10 +633,45 @@ test.describe('Redis Stream 通知专项前后端联调', () => {
         url: `${proxy.origin}/api/v2/notifications/stream`,
       })))
       const laterSequences = notificationMessages(captures.get(page)!)
-        .filter((item) => [third, fourth].includes(String(item.payload.title)))
+        .filter((item) => titles.has(String(item.payload.title)))
         .map((item) => item.payload.deliverySequence as number)
-      expect(laterSequences).toEqual([...laterSequences].sort((a, b) => a - b))
-      actual = `A/B 已在断线前各显示一次；断线后 MySQL 保存 C/D，浏览器重连 Last-Event-ID=${successfulReconnect?.lastEventId}（断线前游标 ${lastBeforeDisconnect}），按序补发 C/D 且各显示一次。`
+      expect(laterSequences).toEqual(Array.from({ length: 100 }, (_, index) => Number(lastBeforeDisconnect) + index + 1))
+      const delivered = notificationMessages(captures.get(page)!)
+        .filter((item) => titles.has(String(item.payload.title)))
+      expect(new Set(delivered.map((item) => item.payload.id)).size).toBe(100)
+      expect(new Set(delivered.map((item) => item.payload.title)).size).toBe(100)
+      const summaries = captures.get(page)!.records
+        .filter((record) => record.eventName === 'batch-complete')
+        .map((record) => JSON.parse(record.data || '{}'))
+      expect(summaries.some((summary) => summary.replay === true && summary.deliveredCount === 100)).toBe(true)
+
+      const visibleTitles: string[] = []
+      const expectedHistory = [...databaseRows].sort((a, b) => b.id - a.id).map((row) => row.title)
+      const next = page.locator('.el-pagination .btn-next')
+      for (let pageIndex = 0; ; pageIndex += 1) {
+        const rows = page.locator('.notif-row__title')
+        const expectedPage = expectedHistory.slice(pageIndex * 10, (pageIndex + 1) * 10)
+        await expect(rows).toHaveText(expectedPage)
+        visibleTitles.push(...await rows.allTextContents())
+        await page.screenshot({ path: join(artifactRoot, `case-02-history-page-${pageIndex + 1}.png`), fullPage: true })
+        explicitScreenshots.push(`case-02-history-page-${pageIndex + 1}.png`)
+        if (await next.isDisabled()) break
+        await next.click()
+      }
+      expect(visibleTitles).toEqual(expectedHistory)
+      expect(visibleTitles.filter((title) => titles.has(title))).toHaveLength(100)
+      expect(new Set(visibleTitles).size).toBe(102)
+      const evidence = {
+        offlineNotificationCount: 100, replayedCount: delivered.length,
+        uniqueReplayedIds: new Set(delivered.map((item) => item.payload.id)).size,
+        lastEventId: successfulReconnect?.lastEventId,
+        sequences: laterSequences, missingCount: 0, duplicateCount: 0,
+        historyTotal: visibleTitles.length, historyOfflineCount: 100,
+        syncSummaries: summaries,
+      }
+      writeFileSync(join(artifactRoot, 'case-02-replay-summary.json'), JSON.stringify(evidence, null, 2), 'utf8')
+      await evidencePage('case-02-replay-summary.png', '100 条断线通知补发与历史逐页核验', evidence)
+      actual = `断线前游标 ${lastBeforeDisconnect}；断线期间 Outbox 新增并落库 100 条通知，成功重连携带 Last-Event-ID=${successfulReconnect?.lastEventId}，SSE 按连续序号补发 100/100 条、100 个不同通知 ID、重复 0 条。逐页核验通知中心共 102 行，100 条离线通知各显示一次。`
     } finally {
       await proxy.close()
     }

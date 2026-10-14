@@ -40,9 +40,17 @@ def validate_prefix(value: str) -> str:
     return value
 
 
-async def seed_history(prefix: str) -> None:
+async def seed_history(prefix: str, rows_count: int = HISTORY_RESERVATIONS) -> None:
     prefix = validate_prefix(prefix)
     settings = Settings()
+    if rows_count not in {10_000, 100_000}:
+        raise ValueError("history size must be 10000 or 100000")
+    if rows_count != HISTORY_RESERVATIONS:
+        from sqlalchemy.engine import make_url
+
+        schema = make_url(settings.mysql_dsn).database or ""
+        if re.fullmatch(r"lab_resume_[a-f0-9]{8}", schema) is None:
+            raise RuntimeError("100k fixture requires a disposable lab_resume_* schema")
     engine = build_engine(settings)
     factory = build_session_factory(engine)
     try:
@@ -96,13 +104,14 @@ async def seed_history(prefix: str) -> None:
                     "slot_count": 1,
                     "status": "COMPLETED",
                 }
-                for index in range(HISTORY_RESERVATIONS)
+                for index in range(rows_count)
             ]
-            await session.execute(insert(Reservation), rows)
+            for start in range(0, len(rows), 1000):
+                await session.execute(insert(Reservation), rows[start : start + 1000])
             await session.commit()
     finally:
         await engine.dispose()
-    print(json.dumps({"prefix": prefix, "devices": 100, "reservations": 10_000}))
+    print(json.dumps({"prefix": prefix, "devices": 100, "reservations": rows_count}))
 
 
 def percentile(samples: list[float], ratio: float) -> float:
@@ -224,9 +233,7 @@ async def run_benchmark(args: argparse.Namespace) -> None:
 
         if args.warmup:
             warmup_pages = build_page_schedule(args.warmup, seed=args.page_seed + 1)
-            await asyncio.gather(
-                *(one(index, page) for index, page in enumerate(warmup_pages))
-            )
+            await asyncio.gather(*(one(index, page) for index, page in enumerate(warmup_pages)))
             samples.clear()
             statuses.clear()
             failures.clear()
@@ -235,9 +242,7 @@ async def run_benchmark(args: argparse.Namespace) -> None:
         page_request_counts = Counter(request_pages)
         started = time.perf_counter()
         if args.burst:
-            await asyncio.gather(
-                *(one(index, page) for index, page in enumerate(request_pages))
-            )
+            await asyncio.gather(*(one(index, page) for index, page in enumerate(request_pages)))
         else:
             indexes = count()
 
@@ -283,6 +288,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     seed_parser = subparsers.add_parser("seed-history")
     seed_parser.add_argument("--prefix", required=True)
+    seed_parser.add_argument("--rows", type=int, choices=(10_000, 100_000), default=10_000)
     smoke_parser = subparsers.add_parser("dashboard-smoke")
     smoke_parser.add_argument("--base-url", default="http://127.0.0.1:8000/api/v2")
     smoke_parser.add_argument("--origin", default="http://127.0.0.1:5173")
@@ -304,7 +310,7 @@ def main() -> None:
     run_parser.add_argument("--target-p95-ms", type=float)
     args = parser.parse_args()
     if args.command == "seed-history":
-        asyncio.run(seed_history(args.prefix))
+        asyncio.run(seed_history(args.prefix, args.rows))
     elif args.command == "dashboard-smoke":
         asyncio.run(smoke_dashboard(args))
     else:
