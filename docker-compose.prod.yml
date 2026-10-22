@@ -4,7 +4,7 @@
 #
 # ============================================================
 # 生产环境不再为数据库密码和 JWT 密钥提供默认值；缺失时直接拒绝启动。
-#   - 4G 机器内存分配：mysql 512M / redis 128M / Spring Boot app 768M / frontend 64M
+#   - 4G 机器内存分配：mysql 1G / redis 128M / Spring Boot app 768M / frontend 64M / gateway 128M
 # ============================================================
 name: labprod
 
@@ -76,7 +76,7 @@ services:
       - mysql_data:/var/lib/mysql
       - mysql_socket:/var/run/mysqld
     # 数据库只允许 Docker 内部 app 服务访问，不发布到宿主机/公网。
-    mem_limit: 512m
+    mem_limit: 1g
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$${MYSQL_ROOT_PASSWORD}\""]
       interval: 5s

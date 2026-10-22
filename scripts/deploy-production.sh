@@ -26,7 +26,7 @@ fi
 
 cli() {
   "${compose[@]}" run --rm --no-deps app java -jar /app/backend-java/app.jar \
-    --spring.main.web-application-type=none "--labflow.migration=$1"
+    --spring.main.web-application-type=none --LAB_DB_POOL_SIZE=2 "--labflow.migration=$1"
 }
 # Validate configuration and existing schema before interrupting traffic.
 cli verify
