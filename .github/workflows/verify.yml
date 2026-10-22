@@ -2,11 +2,41 @@ name: Verify Java and Vue
 on:
   push:
   pull_request:
+  workflow_call:
 permissions:
   contents: read
 jobs:
+  deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash -n scripts/deploy-production.sh && bash scripts/test-deploy-production.sh
   java:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-isolated-mysql-password
+          MYSQL_DATABASE: labflow_migration_test_fresh
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pci-only-isolated-mysql-password"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=20
+    env:
+      LAB_ENVIRONMENT: test
+      LAB_JDBC_URL: jdbc:mysql://127.0.0.1:3306/labflow_migration_test_fresh?allowPublicKeyRetrieval=true&useSSL=false
+      LAB_DB_USERNAME: root
+      LAB_DB_PASSWORD: ci-only-isolated-mysql-password
+      LAB_REDIS_URL: redis://127.0.0.1:6379/14
+      LAB_JWT_SECRET: ci-only-jwt-secret-with-at-least-32-characters
+      LAB_COOKIE_SECURE: 'false'
+      LAB_ENABLE_WORKERS: 'false'
+      LAB_ENABLE_NOTIFICATION_RELAY: 'false'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -14,6 +44,11 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - name: Initialize isolated MySQL schema
+        run: |
+          bash mvnw -B package -DskipTests
+          java -jar target/labflow-backend-1.0.0.jar --spring.main.web-application-type=none --labflow.migration=migrate
+        working-directory: backend-java
       - run: bash mvnw -B verify spotless:check
         working-directory: backend-java
   frontend:

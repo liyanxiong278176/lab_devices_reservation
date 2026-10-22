@@ -35,4 +35,19 @@ CLI 自动禁用 Worker 和 Streams 消费，迁移期间不执行业务任务�
 
 Docker 保留原 `mysql_data`、`redis_data`、`app_data` 卷。首次以 UID 10001 运行前，用一次性 root 容器把 `/app/backend/.data` 的所有权交给 10001；不移动或删除业务文件。后续部署流程只执行已基线库的 `migrate`，首次人工基线必须先完成，否则自动部署会失败关闭。
 
+## CI/CD 发布
+
+主分支推送或手动运行 `Deploy production services` 时，先通过 Java（真实隔离 MySQL/Redis）与 Vue 检查，再发布。源码归档解压到服务器根目录下全新的 `.releases/<commit>.<random>/`，不覆盖旧 checkout，防止已删除模块残留。每次核对完整前后端，不依据相邻提交差异跳过曾经失败的发布。
+
+根目录 `.env` 保留在原位置，由 Compose 显式读取。生产配置使用 HTTPS 的 `APP_PUBLIC_ORIGIN` 和 `LAB_COOKIE_SECURE=true`；Caddy 网关监听 80/443，自动申请及续期证书，前端不直接暴露公网端口。证书与业务数据分别使用持久卷。首次切换前必须确认域名解析及 80/443 可达。
+
+两个镜像构建成功、首次基线存在且配置/结构核验通过后，才停止旧 API 与旧 Celery Worker 并迁移。不会自动 baseline 或清库；迁移后的库不能自动回退到旧 Python Worker。失败日志应保留，并用当前 Java 版本继续修复。
+
+镜像使用提交 SHA 标签及 OCI revision 标签；前端 `/version.json` 返回同一 SHA。发布检查 Spring Boot ready、前后端容器版本与公网 HTTPS 接口，避免旧镜像健康被误报为新版成功。成功发布目录由服务器根目录 `current` 符号链接指向。运维 Compose 命令使用：
+
+```bash
+cd /www/wwwroot/lab_devices_reservation
+docker compose --env-file "$PWD/.env" --project-directory "$PWD/current" -f "$PWD/current/docker-compose.prod.yml" ps
+```
+
 恢复仅针对保留的非 AI 业务；清理后的 AI 历史没有恢复副本。

@@ -99,6 +99,7 @@ services:
     # Redis 只允许 Docker 内部 app 服务访问，不发布到宿主机/公网。
     mem_limit: 128m
   app:
+    image: labprod-app:${LABFLOW_REVISION:-latest}
     build: .
     networks: [lab-internal]
     restart: unless-stopped
@@ -130,6 +131,7 @@ services:
       retries: 12
       start_period: 60s
   frontend:
+    image: labprod-frontend:${LABFLOW_REVISION:-latest}
     build:
       context: ./frontend
       args:
@@ -138,11 +140,32 @@ services:
       lab-internal:
         ipv4_address: 172.29.0.7
     restart: unless-stopped
-    # 临时 HTTP 测试：由前端容器直接监听公网 80 端口。
-    ports: ["80:80"]
+    # Only the TLS gateway exposes browser traffic publicly.
+    expose: ["80"]
     depends_on:
       app: { condition: service_healthy }
     mem_limit: 64m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/version.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+  gateway:
+    image: caddy:2.11.7-alpine
+    networks:
+      lab-internal:
+        ipv4_address: 172.29.0.8
+    restart: unless-stopped
+    environment:
+      APP_PUBLIC_ORIGIN: ${APP_PUBLIC_ORIGIN:?APP_PUBLIC_ORIGIN must be set}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./monitoring/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend: { condition: service_healthy }
+    mem_limit: 128m
   mysql-exporter-setup:
     image: mysql:8.0
     networks: [lab-internal]
@@ -228,6 +251,8 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     mem_limit: 256m
 volumes:
+  caddy_data:
+  caddy_config:
   mysql_data:
   mysql_socket:
   redis_data:

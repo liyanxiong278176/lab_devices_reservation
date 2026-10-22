@@ -10,11 +10,14 @@ permissions:
 
 concurrency:
   group: labprod-production-deploy
-  queue: max
+  cancel-in-progress: false
 
 jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml
   deploy:
-    name: Sync code and update changed services
+    name: Deploy and verify complete release
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -22,84 +25,8 @@ jobs:
       DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_PATH: /www/wwwroot/lab_devices_reservation
-
     steps:
-      - name: Check out pushed commit
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect changed services
-        id: changes
-        shell: bash
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
-          CURRENT_SHA: ${{ github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-
-          backend=false
-          frontend=false
-          compose=false
-          prometheus=false
-          grafana=false
-          mysql_exporter=false
-
-          if [[ "$EVENT_NAME" == "workflow_dispatch" || \
-                -z "$BEFORE_SHA" || "$BEFORE_SHA" == "null" || \
-                "$BEFORE_SHA" =~ ^0+$ ]]; then
-            backend=true
-            frontend=true
-            compose=true
-            prometheus=true
-            grafana=true
-            mysql_exporter=true
-          else
-            while IFS= read -r path; do
-              case "$path" in
-                backend-java/*|backend/migrations/*|Dockerfile|.dockerignore)
-                  backend=true
-                  ;;
-                frontend/*)
-                  frontend=true
-                  ;;
-                docker-compose.prod.yml)
-                  compose=true
-                  ;;
-                monitoring/prometheus/*)
-                  prometheus=true
-                  ;;
-                monitoring/grafana/*)
-                  grafana=true
-                  ;;
-                monitoring/mysql/*)
-                  mysql_exporter=true
-                  ;;
-                .github/workflows/deploy.yml)
-                  # Workflow updates also reconcile frontend/backend Compose networking.
-                  backend=true
-                  frontend=true
-                  ;;
-              esac
-            done < <(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA")
-          fi
-
-          # Compose changes can affect either app image and the running stack.
-          if [[ "$compose" == true ]]; then
-            backend=true
-            frontend=true
-          fi
-
-          {
-            echo "backend=$backend"
-            echo "frontend=$frontend"
-            echo "compose=$compose"
-            echo "prometheus=$prometheus"
-            echo "grafana=$grafana"
-            echo "mysql_exporter=$mysql_exporter"
-          } >> "$GITHUB_OUTPUT"
-
+      - uses: actions/checkout@v4
       - name: Prepare SSH credentials
         shell: bash
         env:
@@ -107,203 +34,55 @@ jobs:
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-
-          if [[ -z "$DEPLOY_HOST" ]]; then
-            echo "::error::Missing required Actions secret: DEPLOY_HOST"
-            exit 1
-          fi
-          if [[ -z "$DEPLOY_PORT" ]]; then
-            echo "::error::Missing required Actions secret: DEPLOY_PORT"
-            exit 1
-          fi
-          if [[ -z "$DEPLOY_USER" ]]; then
-            echo "::error::Missing required Actions secret: DEPLOY_USER"
-            exit 1
-          fi
-          if [[ -z "$DEPLOY_SSH_KEY" ]]; then
-            echo "::error::Missing required Actions secret: DEPLOY_SSH_KEY"
-            exit 1
-          fi
-          if [[ -z "$DEPLOY_KNOWN_HOSTS" ]]; then
-            echo "::error::Missing required Actions secret: DEPLOY_KNOWN_HOSTS"
-            exit 1
-          fi
-
-          if [[ ! "$DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]] || (( DEPLOY_PORT < 1 || DEPLOY_PORT > 65535 )); then
-            echo "::error::DEPLOY_PORT must be a valid TCP port"
-            exit 1
-          fi
-
-          key_file="$RUNNER_TEMP/labflow_deploy_key"
-          known_hosts_file="$RUNNER_TEMP/labflow_known_hosts"
-          # Normalize Windows CRLF copied into a multiline Actions secret.
-          printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > "$key_file"
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts_file"
-          chmod 600 "$key_file" "$known_hosts_file"
-          ssh-keygen -y -f "$key_file" >/dev/null
-
-          {
-            echo "DEPLOY_SSH_KEY_FILE=$key_file"
-            echo "DEPLOY_KNOWN_HOSTS_FILE=$known_hosts_file"
-          } >> "$GITHUB_ENV"
-
-      - name: Upload pushed source to the server
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          target="${DEPLOY_USER}@${DEPLOY_HOST}"
-          remote_path="$(printf '%q' "$DEPLOY_PATH")"
-          ssh_options=(
-            -i "$DEPLOY_SSH_KEY_FILE"
-            -p "$DEPLOY_PORT"
-            -o BatchMode=yes
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o "UserKnownHostsFile=$DEPLOY_KNOWN_HOSTS_FILE"
-            -o ConnectTimeout=20
-          )
-
-          ssh "${ssh_options[@]}" "$target" "bash -s -- $remote_path" <<'REMOTE_PREFLIGHT'
-          set -euo pipefail
-
-          deploy_path="$1"
-          if [[ ! -d "$deploy_path" ]]; then
-            echo "::error::Deployment directory does not exist: $deploy_path" >&2
-            exit 1
-          fi
-          cd "$deploy_path"
-
-          if [[ ! -w . ]]; then
-            echo "::error::Deployment user cannot write to $deploy_path" >&2
-            exit 1
-          fi
-          for required_file in .env; do
-            if [[ ! -r "$required_file" ]]; then
-              echo "::error::Deployment user cannot read $deploy_path/$required_file" >&2
+          for key in DEPLOY_HOST DEPLOY_PORT DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            if [[ -z "${!key}" ]]; then
+              echo "::error::Missing required Actions secret: $key"
               exit 1
             fi
           done
-          required_env_keys=(
-            DB_ROOT_PASSWORD DB_APP_USER DB_APP_PASSWORD JWT_SECRET APP_PUBLIC_ORIGIN
-            PROMETHEUS_METRICS_TOKEN GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD
-            MYSQL_EXPORTER_PASSWORD LAB_AI_API_KEY LAB_AI_EMBEDDING_API_KEY LAB_AI_MINERU_API_KEY
-          )
-          for key in "${required_env_keys[@]}"; do
-            if ! grep -Eq "^[[:space:]]*${key}=[^[:space:]]" .env; then
-              echo "::error::Server root .env must contain a non-empty $key entry" >&2
-              exit 1
-            fi
-          done
-          if grep -Eq '^[[:space:]]*APP_PUBLIC_ORIGIN=http://' .env; then
-            if ! grep -Eq '^[[:space:]]*LAB_COOKIE_SECURE=false([[:space:]]|$)' .env || \
-               ! grep -Eq '^[[:space:]]*LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING=true([[:space:]]|$)' .env; then
-              echo "::error::HTTP APP_PUBLIC_ORIGIN requires LAB_COOKIE_SECURE=false and LAB_ALLOW_INSECURE_COOKIE_FOR_TESTING=true" >&2
-              exit 1
-            fi
-          fi
-          if ! command -v docker >/dev/null || ! docker compose version; then
-            echo "::error::Docker Compose is unavailable to the deployment user" >&2
-            exit 1
-          fi
-          if ! command -v tar >/dev/null; then
-            echo "::error::tar is unavailable on the server" >&2
-            exit 1
-          fi
-          echo "Remote deployment preflight passed."
-          REMOTE_PREFLIGHT
-
-          git archive --format=tar "$GITHUB_SHA" | gzip -1 | ssh "${ssh_options[@]}" "$target" "tar -xzf - -C $remote_path --no-same-owner"
-          ssh "${ssh_options[@]}" "$target" "cd $remote_path && find backend frontend -maxdepth 1 -type f -name '.env*' -delete"
-
-      - name: Build and restart affected services
-        shell: bash
-        env:
-          BACKEND_CHANGED: ${{ steps.changes.outputs.backend }}
-          COMPOSE_CHANGED: ${{ steps.changes.outputs.compose }}
-          PROMETHEUS_CHANGED: ${{ steps.changes.outputs.prometheus }}
-          GRAFANA_CHANGED: ${{ steps.changes.outputs.grafana }}
-          MYSQL_EXPORTER_CHANGED: ${{ steps.changes.outputs.mysql_exporter }}
-        run: |
-          set -euo pipefail
-
-          target="${DEPLOY_USER}@${DEPLOY_HOST}"
-          printf -v remote_command \
-            'DEPLOY_PATH=%q BACKEND_CHANGED=%q COMPOSE_CHANGED=%q PROMETHEUS_CHANGED=%q GRAFANA_CHANGED=%q MYSQL_EXPORTER_CHANGED=%q bash -s' \
-            "$DEPLOY_PATH" "$BACKEND_CHANGED" "$COMPOSE_CHANGED" \
-            "$PROMETHEUS_CHANGED" "$GRAFANA_CHANGED" "$MYSQL_EXPORTER_CHANGED"
-          ssh_options=(
-            -i "$DEPLOY_SSH_KEY_FILE"
-            -p "$DEPLOY_PORT"
-            -o BatchMode=yes
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o "UserKnownHostsFile=$DEPLOY_KNOWN_HOSTS_FILE"
-            -o ConnectTimeout=20
-          )
-
-          ssh "${ssh_options[@]}" "$target" "$remote_command" <<'REMOTE_SCRIPT'
-          set -euo pipefail
-
-          deploy_path="${DEPLOY_PATH:?DEPLOY_PATH was not forwarded to the remote script}"
-          backend_changed="${BACKEND_CHANGED:?BACKEND_CHANGED was not forwarded to the remote script}"
-          compose_changed="${COMPOSE_CHANGED:?COMPOSE_CHANGED was not forwarded to the remote script}"
-          prometheus_changed="${PROMETHEUS_CHANGED:?PROMETHEUS_CHANGED was not forwarded to the remote script}"
-          grafana_changed="${GRAFANA_CHANGED:?GRAFANA_CHANGED was not forwarded to the remote script}"
-          mysql_exporter_changed="${MYSQL_EXPORTER_CHANGED:?MYSQL_EXPORTER_CHANGED was not forwarded to the remote script}"
-
-          printf 'Deployment flags: backend=%s compose=%s prometheus=%s grafana=%s mysql_exporter=%s\n' \
-            "$backend_changed" "$compose_changed" "$prometheus_changed" "$grafana_changed" "$mysql_exporter_changed"
-
-          cd "$deploy_path"
-          compose=(docker compose -f docker-compose.prod.yml)
-
-          if [[ "$backend_changed" == true ]]; then
-            "${compose[@]}" build app
-            "${compose[@]}" up -d --wait --wait-timeout 300 mysql redis
-            "${compose[@]}" stop app
-            "${compose[@]}" run --rm --no-deps app java -jar /app/backend-java/app.jar --spring.main.web-application-type=none --LAB_ENABLE_WORKERS=false --labflow.migration=migrate
-            "${compose[@]}" run --rm --no-deps --user root app chown -R 10001:10001 /app/backend/.data
-            "${compose[@]}" up -d --no-deps --wait --wait-timeout 300 app
-          fi
-
-          if [[ "$prometheus_changed" == true ]]; then
-            "${compose[@]}" restart prometheus
-          fi
-
-          if [[ "$grafana_changed" == true ]]; then
-            "${compose[@]}" restart grafana
-          fi
-
-          if [[ "$mysql_exporter_changed" == true ]]; then
-            "${compose[@]}" run --rm --no-deps mysql-exporter-setup
-            "${compose[@]}" up -d --no-deps mysqld-exporter
-          fi
-
-          if [[ "$compose_changed" == true ]]; then
-            "${compose[@]}" up -d
-          fi
-          REMOTE_SCRIPT
-
-      - name: Build and restart frontend service
-        if: steps.changes.outputs.frontend == 'true'
+          [[ "$DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]] && (( DEPLOY_PORT > 0 && DEPLOY_PORT < 65536 ))
+          printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+          chmod 600 "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts"
+          ssh-keygen -y -f "$RUNNER_TEMP/deploy_key" >/dev/null
+      - name: Upload clean release source
         shell: bash
         run: |
           set -euo pipefail
-
           target="${DEPLOY_USER}@${DEPLOY_HOST}"
-          printf -v remote_command \
-            'cd %q && docker compose -f docker-compose.prod.yml build frontend && docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate --wait --wait-timeout 300 frontend && docker compose -f docker-compose.prod.yml ps frontend' \
-            "$DEPLOY_PATH"
-          ssh_options=(
-            -i "$DEPLOY_SSH_KEY_FILE"
-            -p "$DEPLOY_PORT"
-            -o BatchMode=yes
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o "UserKnownHostsFile=$DEPLOY_KNOWN_HOSTS_FILE"
-            -o ConnectTimeout=20
-          )
-
-          echo "Frontend sources changed; building and replacing the frontend container."
-          ssh "${ssh_options[@]}" "$target" "$remote_command"
+          ssh_options=(-i "$RUNNER_TEMP/deploy_key" -p "$DEPLOY_PORT"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/known_hosts" -o ConnectTimeout=20
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
+          # mktemp creates an empty context. Overlaying a checkout leaves removed modules behind.
+          printf -v prepare 'test -r %q/.env && mkdir -p %q/.releases && mktemp -d %q/.releases/%q.XXXXXX' \
+            "$DEPLOY_PATH" "$DEPLOY_PATH" "$DEPLOY_PATH" "$GITHUB_SHA"
+          release_path="$(ssh "${ssh_options[@]}" "$target" "$prepare")"
+          [[ "$release_path" == "$DEPLOY_PATH/.releases/$GITHUB_SHA."* ]]
+          printf -v extract 'tar -xzf - -C %q --no-same-owner' "$release_path"
+          # Runtime inputs only; never upload local secrets, generated files, or screenshot archives.
+          git archive "$GITHUB_SHA" Dockerfile .dockerignore docker-compose.prod.yml \
+            backend-java frontend monitoring scripts docs/springboot-cutover.md \
+            | gzip -1 | ssh "${ssh_options[@]}" "$target" "$extract"
+          echo "RELEASE_PATH=$release_path" >> "$GITHUB_ENV"
+      - name: Build, migrate, and verify production release
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${DEPLOY_USER}@${DEPLOY_HOST}"
+          ssh_options=(-i "$RUNNER_TEMP/deploy_key" -p "$DEPLOY_PORT"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/known_hosts" -o ConnectTimeout=20
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
+          printf -v deploy 'bash %q/scripts/deploy-production.sh %q %q %q' \
+            "$RELEASE_PATH" "$DEPLOY_PATH" "$RELEASE_PATH" "$GITHUB_SHA"
+          ssh "${ssh_options[@]}" "$target" "$deploy"
+      - name: Verify public HTTPS release
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=https://www.labdevicesreservation.online
+          curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 "$base/version.json" > /tmp/version.json
+          python3 -c 'import json,sys; assert json.load(open("/tmp/version.json"))["revision"] == sys.argv[1]' "$GITHUB_SHA"
+          curl --fail --silent --show-error "$base/api/v2/live"
+          curl --fail --silent --show-error "$base/api/v2/auth/csrf" > /dev/null

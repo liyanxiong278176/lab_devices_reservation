@@ -5,6 +5,8 @@ RUN mvn -B dependency:go-offline
 COPY backend-java/src ./src
 RUN mvn -B package -DskipTests
 FROM eclipse-temurin:21-jre-jammy
+ARG APP_REVISION=development
+LABEL org.opencontainers.image.revision=$APP_REVISION
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 labflow && mkdir -p /app/backend/.data/uploads \
     && chown -R labflow /app

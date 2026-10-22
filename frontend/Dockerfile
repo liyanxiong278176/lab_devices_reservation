@@ -11,6 +11,9 @@ RUN pnpm build
 
 # stage2: nginx serve
 FROM nginx:alpine
+ARG APP_REVISION=development
+LABEL org.opencontainers.image.revision=$APP_REVISION
 COPY --from=builder /build/dist /usr/share/nginx/html
+RUN printf '{"revision":"%s"}\n' "$APP_REVISION" > /usr/share/nginx/html/version.json
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
