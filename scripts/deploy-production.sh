@@ -48,6 +48,20 @@ for service in app frontend; do
   [[ "$actual" == "$revision" ]]
 done
 "${compose[@]}" exec -T frontend wget -q -O - http://127.0.0.1/version.json | grep -F "$revision"
+# Exercise the same TLS gateway and nginx body limit without depending on overseas upload speed.
+# Missing credentials/CSRF ensure this probe cannot create an upload.
+origin="$("${compose[@]}" exec -T gateway printenv APP_PUBLIC_ORIGIN)"
+host="${origin#https://}"
+[[ "$host" != "$origin" && "$host" != */* ]]
+probe="$(mktemp "$release_path/.upload-probe.XXXXXX")"
+trap 'rm -f -- "$probe"' EXIT
+head -c 2097152 /dev/zero > "$probe"
+status="$(curl --silent --show-error --max-time 30 --resolve "$host:443:127.0.0.1" \
+  -o /dev/null -w '%{http_code}' -H "Origin: $origin" \
+  -H 'Content-Type: application/octet-stream' --data-binary "@$probe" \
+  "$origin/api/v2/repair-uploads")"
+[[ "$status" == 401 || "$status" == 403 ]]
+echo 'PASS: 2 MiB request passes the TLS gateway and nginx limit; API authentication rejects it.'
 printf '%s\n' "$revision" > "$release_path/REVISION"
 ln -sfn "$release_path" "$deploy_path/current"
 printf 'Release %s is running from %s\n' "$revision" "$release_path"

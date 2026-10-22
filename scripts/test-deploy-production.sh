@@ -22,11 +22,16 @@ case "$*" in
   'inspect frontend '*) if [[ "$DEPLOY_TEST_SCENARIO" == stale-image ]]; then echo outdated; else echo "$DEPLOY_TEST_REVISION"; fi ;;
   'inspect app '*) echo "$DEPLOY_TEST_REVISION" ;;
   *' exec -T frontend '*) printf '{"revision":"%s"}\n' "$DEPLOY_TEST_REVISION" ;;
+  *' exec -T gateway printenv APP_PUBLIC_ORIGIN') echo https://www.labdevicesreservation.online ;;
 esac
 MOCK
-chmod +x "$test_root/bin/docker"
+cat > "$test_root/bin/curl" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "$DEPLOY_TEST_SCENARIO" == upload-limit ]]; then printf 413; else printf 403; fi
+MOCK
+chmod +x "$test_root/bin/docker" "$test_root/bin/curl"
 export PATH="$test_root/bin:$PATH"
-for scenario in build-failure no-baseline stale-image success; do
+for scenario in build-failure no-baseline stale-image upload-limit success; do
   export DEPLOY_TEST_SCENARIO="$scenario"
   : > "$DEPLOY_TEST_LOG"
   if bash "$script_dir/deploy-production.sh" "$test_root" "$test_root/.releases/$revision.test" "$revision" > "$test_root/output" 2>&1; then

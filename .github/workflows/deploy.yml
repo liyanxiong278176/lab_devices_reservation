@@ -86,10 +86,3 @@ jobs:
           python3 -c 'import json,sys; assert json.load(open("/tmp/version.json"))["revision"] == sys.argv[1]' "$GITHUB_SHA"
           curl --fail --silent --show-error "$base/api/v2/live"
           curl --fail --silent --show-error "$base/api/v2/auth/csrf" > /dev/null
-          # Evidence photos larger than nginx's default 1 MB must reach the API.
-          # Missing credentials/CSRF ensure this probe cannot create an upload.
-          head -c 2097152 /dev/zero > /tmp/upload-probe
-          status="$(curl --silent --show-error --max-time 30 -o /tmp/upload-result \
-            -w '%{http_code}' -H "Origin: $base" -H 'Content-Type: application/octet-stream' \
-            --data-binary @/tmp/upload-probe "$base/api/v2/repair-uploads")"
-          [[ "$status" == 401 || "$status" == 403 ]]
