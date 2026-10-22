@@ -77,9 +77,12 @@ public class ReportService {
           prior != null
               ? prior.get("new_status").toString()
               : !history.isEmpty()
-                  ? history.getFirst().get("old_status").toString()
+                  ? Database.str(
+                      history.getFirst(),
+                      "old_status",
+                      history.getFirst().get("new_status").toString())
                   : following != null
-                      ? following.get("old_status").toString()
+                      ? Database.str(following, "old_status", device.get("status").toString())
                       : device.get("status").toString();
       int index = 0;
       var blocked = new HashSet<LocalDate>();

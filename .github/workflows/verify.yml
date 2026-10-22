@@ -67,3 +67,66 @@ jobs:
         working-directory: frontend
       - run: pnpm build && pnpm test
         working-directory: frontend
+  browser:
+    name: Browser acceptance with isolated services
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-browser-mysql-password
+          MYSQL_DATABASE: labflow_e2e_test
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pci-only-browser-mysql-password"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=20
+    env:
+      LAB_ENVIRONMENT: test
+      LAB_JDBC_URL: jdbc:mysql://127.0.0.1:3306/labflow_e2e_test?allowPublicKeyRetrieval=true&useSSL=false
+      LAB_DB_USERNAME: root
+      LAB_DB_PASSWORD: ci-only-browser-mysql-password
+      LAB_REDIS_URL: redis://127.0.0.1:6379/14
+      LAB_JWT_SECRET: ci-only-browser-jwt-secret-at-least-32-characters
+      LAB_COOKIE_SECURE: 'false'
+      LAB_ENABLE_WORKERS: 'true'
+      LAB_ENABLE_NOTIFICATION_RELAY: 'true'
+      LAB_CORS_ORIGINS: '["http://127.0.0.1:5173"]'
+      VITE_API_PROXY_TARGET: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Build Java and initialize isolated database
+        working-directory: backend-java
+        run: |
+          bash mvnw -B package -DskipTests
+          java -jar target/labflow-backend-1.0.0.jar --spring.main.web-application-type=none --labflow.migration=migrate
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: frontend
+      - run: pnpm test:e2e
+        working-directory: frontend
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-acceptance-${{ github.run_id }}-${{ github.job }}
+          path: |
+            frontend/.artifacts/playwright-report
+            frontend/test-results

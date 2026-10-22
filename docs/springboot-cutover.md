@@ -37,7 +37,7 @@ Docker 保留原 `mysql_data`、`redis_data`、`app_data` 卷。首次以 UID 10
 
 ## CI/CD 发布
 
-主分支推送或手动运行 `Deploy production services` 时，先通过 Java（真实隔离 MySQL/Redis）与 Vue 检查，再发布。源码归档解压到服务器根目录下全新的 `.releases/<commit>.<random>/`，不覆盖旧 checkout，防止已删除模块残留。每次核对完整前后端，不依据相邻提交差异跳过曾经失败的发布。
+主分支推送或手动运行 `Deploy production services` 时，先通过 Java（真实隔离 MySQL/Redis）、Vue 和标准 Playwright 浏览器验收，再发布。浏览器使用独立测试库及 Redis DB 14，启用 Java Outbox 与通知消费，失败报告作为 Actions artifact 保留。源码归档解压到服务器根目录下全新的 `.releases/<commit>.<random>/`，不覆盖旧 checkout，防止已删除模块残留。每次核对完整前后端，不依据相邻提交差异跳过曾经失败的发布。
 
 根目录 `.env` 保留在原位置，由 Compose 显式读取。生产配置使用 HTTPS 的 `APP_PUBLIC_ORIGIN` 和 `LAB_COOKIE_SECURE=true`；Caddy 网关监听 80/443，自动申请及续期证书，前端不直接暴露公网端口。证书与业务数据分别使用持久卷。首次切换前必须确认域名解析及 80/443 可达。
 
