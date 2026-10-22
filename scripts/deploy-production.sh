@@ -35,7 +35,6 @@ if [[ -n "$ids" ]]; then docker stop $ids; fi
 "${compose[@]}" stop app
 cli migrate
 cli verify
-cli invalidate-sessions
 "${compose[@]}" run --rm --no-deps --user root app chown -R 10001:10001 /app/backend/.data
 "${compose[@]}" up -d --no-deps --wait --wait-timeout 300 app
 "${compose[@]}" exec -T app curl --fail --silent http://127.0.0.1:8000/api/v2/ready

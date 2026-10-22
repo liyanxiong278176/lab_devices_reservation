@@ -43,6 +43,8 @@ Docker 保留原 `mysql_data`、`redis_data`、`app_data` 卷。首次以 UID 10
 
 两个镜像构建成功、首次基线存在且配置/结构核验通过后，才停止旧 API 与旧 Celery Worker 并迁移。不会自动 baseline 或清库；迁移后的库不能自动回退到旧 Python Worker。失败日志应保留，并用当前 Java 版本继续修复。
 
+首次切换按上文显式执行 `invalidate-sessions`；常规发布不清除登录会话，避免每次更新都让所有用户退出。
+
 镜像使用提交 SHA 标签及 OCI revision 标签；前端 `/version.json` 返回同一 SHA。发布检查 Spring Boot ready、前后端容器版本与公网 HTTPS 接口，避免旧镜像健康被误报为新版成功。成功发布目录由服务器根目录 `current` 符号链接指向。运维 Compose 命令使用：
 
 ```bash
