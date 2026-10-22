@@ -157,7 +157,7 @@ onBeforeUnmount(stopPolling)
     </section>
 
     <p class="reports-page__definition">
-      占用率统计已被预约的设备日；实际使用率统计完成交接的设备日。两者均以可预约设备日为分母，维修、停用和配置的不可预约日不计入；爽约只计入预约占用。
+      占用率统计已被预约的设备日；实际使用率统计完成交接的设备日。两者均以可预约设备日为分母，维修、停用和配置的不可预约日不计入；已领用设备在归还验收前保持占用。
     </p>
 
     <section v-loading="loading" class="reports-page__metrics">

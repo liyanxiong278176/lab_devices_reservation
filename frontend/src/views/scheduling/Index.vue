@@ -147,7 +147,7 @@ watch(activeTab, (tab) => {
       <div>
         <span class="schedule-page__eyebrow">BOOKING POLICY</span>
         <h2>把节假日与教学占用日提前写进规则。</h2>
-        <p>停机日期还可以在“维护与校准”单独配置，这里用于学院、实验室或单台设备的临时不可预约日。</p>
+        <p>在这里设置学院、实验室或单台设备的临时不可预约日；设备维修期间会自动禁止预约。</p>
       </div>
     </section>
 
