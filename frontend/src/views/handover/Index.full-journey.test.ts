@@ -80,13 +80,6 @@ function mountPage() {
 function setup(wrapper: ReturnType<typeof mount>) {
   return (wrapper.vm as any).$?.setupState as Record<string, any>
 }
-function uploadInput(wrapper: ReturnType<typeof mount>) {
-  return wrapper.get('.dialog input[type="file"]')
-}
-async function chooseFiles(input: ReturnType<typeof mount>['get'] extends (...args: any) => infer T ? T : never, files: File[]) {
-  Object.defineProperty(input.element, 'files', { configurable: true, value: files })
-  await input.trigger('change')
-}
 async function settledPage() {
   const wrapper = mountPage()
   await flushPromises()
@@ -132,90 +125,40 @@ describe('handover and return acceptance full user journeys', () => {
     expect(wrapper.text()).toContain('暂无待处理交接异常')
   })
 
-  it('validates field notes and photos, then completes a normal handover with uploaded evidence', async () => {
+  it('completes handover without photos and still requires notes for damage', async () => {
     const wrapper = await settledPage()
     await wrapper.findAll('.handover-card .gradient-button')[0].trigger('click')
-    const state = setup(wrapper)
-    expect(state.dialogMode).toBe('handover')
-    expect(state.checklist).toHaveLength(2)
-    await wrapper.get('.dialog-model-close').trigger('click')
-    expect(state.dialogVisible).toBe(false)
-    await wrapper.findAll('.handover-card .gradient-button')[0].trigger('click')
-
+    expect(wrapper.find('input[type="file"]').exists()).toBe(false)
     await wrapper.get('.dialog .radio-group [data-value="DAMAGED"]').trigger('click')
     await wrapper.get('.dialog .gradient-button').trigger('click')
     expect(messages.warning).toHaveBeenCalledWith('发现损坏或缺失时，请补充验收说明')
+    expect(api.handoverReservation).not.toHaveBeenCalled()
     await wrapper.get('.dialog .radio-group [data-value="NORMAL"]').trigger('click')
     await wrapper.get('.dialog .gradient-button').trigger('click')
-    expect(messages.warning).toHaveBeenCalledWith('办理交接前必须上传现场照片')
-
-    const file = new File(['photo'], 'handover.jpg', { type: 'image/jpeg' })
-    await chooseFiles(uploadInput(wrapper), [file])
-    expect(state.evidenceFiles).toEqual([file])
-    await wrapper.get('.dialog .gradient-button').trigger('click')
     await flushPromises()
-    expect(api.uploadRepairImage).toHaveBeenCalledWith(file)
+    expect(api.uploadRepairImage).not.toHaveBeenCalled()
     expect(api.handoverReservation).toHaveBeenCalledWith(11, {
       condition: 'NORMAL', note: undefined,
       checklist: [{ name: '电源线', condition: 'NORMAL' }, { name: '数据线', condition: 'NORMAL' }],
-      imageUrls: ['/uploads/handover.jpg'],
     })
     expect(messages.success).toHaveBeenCalledWith('设备已完成交接，用户可以开始使用')
-    expect(state.saving).toBe(false)
-    expect(state.dialogVisible).toBe(false)
+    expect(setup(wrapper).dialogVisible).toBe(false)
   })
 
-  it('rejects invalid evidence, records accessory damage, and releases the saving state after upload failure', async () => {
+  it('preserves the form on handover failure and records accessory damage without photos', async () => {
     const wrapper = await settledPage()
     const state = setup(wrapper)
     state.openAction(reservation(), 'handover')
     await nextTick()
-    state.onEvidenceChange({ target: { files: undefined, value: 'fake' } } as any)
-    await chooseFiles(uploadInput(wrapper), [])
-    expect(messages.warning).toHaveBeenCalledWith('请上传 1 至 6 张现场照片')
-    const tooMany = Array.from({ length: 7 }, (_, index) => new File(['x'], `${index}.png`, { type: 'image/png' }))
-    await chooseFiles(uploadInput(wrapper), tooMany)
-    expect(state.evidenceFiles).toEqual([])
-    await chooseFiles(uploadInput(wrapper), [new File(['x'], 'large.png', { type: 'image/png', lastModified: 0 })])
-    const oversized = new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' })
-    await chooseFiles(uploadInput(wrapper), [oversized])
-    expect(messages.warning).toHaveBeenCalledWith('照片仅支持 5 MB 以内 JPG、PNG 或 WebP')
-    await chooseFiles(uploadInput(wrapper), [new File(['x'], 'bad.gif', { type: 'image/gif' })])
-    expect(state.evidenceFiles).toEqual([])
-
-    await chooseFiles(uploadInput(wrapper), [new File(['x'], 'valid.jpg', { type: 'image/jpeg' })])
-    await wrapper.get('.dialog .el-select, .dialog select').trigger('change')
-    const selects = wrapper.findAll('.dialog select')
-    await selects[0].setValue('DAMAGED')
-    expect(wrapper.findAll('.dialog input:not([type="file"])')).toHaveLength(2)
-    await wrapper.findAll('.dialog input:not([type="file"])')[0].setValue('接头损坏')
-    api.uploadRepairImage.mockRejectedValueOnce(new Error('storage down'))
-    await expect(state.submitAction()).resolves.toBeUndefined()
-    expect(state.saving).toBe(false)
-    expect(state.dialogVisible).toBe(true)
-
-    api.uploadRepairImage.mockResolvedValueOnce({ url: '/uploads/valid.jpg' })
+    await wrapper.findAll('.dialog select')[0].setValue('DAMAGED')
+    await wrapper.findAll('.dialog input')[0].setValue('接头损坏')
+    api.handoverReservation.mockRejectedValueOnce(new Error('设备不可用'))
     await state.submitAction()
-    await flushPromises()
-    expect(messages.warning).toHaveBeenCalledWith('已记录交接异常，设备已转维修并生成关联工单')
-  })
-
-  it('keeps the handover form and evidence after a maintenance restriction rejects the request', async () => {
-    const wrapper = await settledPage()
-    const state = setup(wrapper)
-    state.openAction(reservation(), 'handover')
-    await nextTick()
-    const evidence = new File(['x'], 'handover.png', { type: 'image/png' })
-    await chooseFiles(uploadInput(wrapper), [evidence])
-    api.handoverReservation.mockRejectedValueOnce(Object.assign(new Error('校准逾期，不能交接'), {
-      response: { status: 409, data: { code: 'DEVICE_MAINTENANCE_RESTRICTION' } },
-    }))
-    await expect(state.submitAction()).resolves.toBeUndefined()
     expect(state.dialogVisible).toBe(true)
     expect(state.saving).toBe(false)
-    expect(state.evidenceFiles).toEqual([evidence])
-    expect(messages.success).not.toHaveBeenCalled()
-    expect(api.pendingHandovers).toHaveBeenCalledOnce()
+    await state.submitAction()
+    expect(messages.warning).toHaveBeenCalledWith('已记录交接异常，设备已转维修并生成关联工单')
+    expect(api.uploadRepairImage).not.toHaveBeenCalled()
   })
 
   it('accepts a returned device with damage notes and preserves the users return photos', async () => {
@@ -261,7 +204,12 @@ describe('handover and return acceptance full user journeys', () => {
     await wrapper.get('[data-tab="RETURN_PENDING"]').trigger('click')
     await flushPromises()
     await wrapper.get('.handover-card .gradient-button').trigger('click')
-    expect(wrapper.text()).toContain('缺少照片，后端将阻止验收完成')
+    expect(wrapper.text()).not.toContain('缺少照片')
+    await wrapper.get('.dialog .gradient-button').trigger('click')
+    await flushPromises()
+    expect(api.acceptReservationReturn).toHaveBeenCalledWith(32, expect.objectContaining({ condition: 'NORMAL' }))
+    state.openAction(reservation({ id: 32 }), 'return')
+    await nextTick()
     await wrapper.get('.dialog .ghost-button').trigger('click')
     expect(state.dialogVisible).toBe(false)
   })

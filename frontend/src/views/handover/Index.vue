@@ -8,7 +8,6 @@ import {
   handoverReservation,
   pendingHandovers,
 } from '@/api/reservation'
-import { uploadRepairImage } from '@/api/repair'
 import type { AccessoryCheckPayload } from '@/api/reservation'
 import type { ReservationVO } from '@/types/reservation'
 import type { Page } from '@/types/common'
@@ -32,7 +31,6 @@ const target = ref<ReservationVO | null>(null)
 const condition = ref<'NORMAL' | 'DAMAGED' | 'MISSING'>('NORMAL')
 const note = ref('')
 const saving = ref(false)
-const evidenceFiles = ref<File[]>([])
 const checklist = ref<AccessoryCheckPayload[]>([])
 
 const tabs = [
@@ -63,28 +61,8 @@ function openAction(row: ReservationVO, mode: 'handover' | 'return') {
   dialogMode.value = mode
   condition.value = 'NORMAL'
   note.value = ''
-  evidenceFiles.value = []
   checklist.value = (row.accessorySnapshot || []).map((name) => ({ name, condition: 'NORMAL' }))
   dialogVisible.value = true
-}
-
-function onEvidenceChange(event: Event) {
-  const input = event.target as HTMLInputElement
-  const files = Array.from(input.files || [])
-  const allowed = ['image/jpeg', 'image/png', 'image/webp']
-  if (files.length < 1 || files.length > 6) {
-    ElMessage.warning('请上传 1 至 6 张现场照片')
-    evidenceFiles.value = []
-    input.value = ''
-    return
-  }
-  if (files.some((file) => file.size > 5 * 1024 * 1024 || !allowed.includes(file.type))) {
-    ElMessage.warning('照片仅支持 5 MB 以内 JPG、PNG 或 WebP')
-    evidenceFiles.value = []
-    input.value = ''
-    return
-  }
-  evidenceFiles.value = files
 }
 
 async function submitAction() {
@@ -95,21 +73,13 @@ async function submitAction() {
   }
   saving.value = true
   try {
-    if (dialogMode.value === 'handover' && evidenceFiles.value.length === 0) {
-      ElMessage.warning('办理交接前必须上传现场照片')
-      return
-    }
     const payload = {
       condition: condition.value,
       note: note.value.trim() || undefined,
       checklist: checklist.value,
     }
     if (dialogMode.value === 'handover') {
-      const uploads = await Promise.all(evidenceFiles.value.map((file) => uploadRepairImage(file)))
-      await handoverReservation(target.value.id, {
-        ...payload,
-        imageUrls: uploads.map((image) => image.url),
-      })
+      await handoverReservation(target.value.id, payload)
       if (condition.value === 'NORMAL' && checklist.value.every((item) => item.condition === 'NORMAL')) {
         ElMessage.success('设备已完成交接，用户可以开始使用')
       } else {
@@ -192,7 +162,7 @@ onMounted(load)
           <span>关联报修单：#{{ row.faultRepairId || '处理中' }}；请取消预约释放日期，或先联系用户协商本学院同类设备。</span>
         </section>
         <footer class="handover-card__foot">
-          <span>{{ activeStatus === 'PENDING' ? (canHandover(row) ? '请核对设备、配件并完成领用交接' : `预约开始日 ${fmt(row.startDate)} 才能办理交接`) : activeStatus === 'EXCEPTION' ? '待负责人处理异常预约' : '请核对用户归还照片、设备和配件' }}</span>
+          <span>{{ activeStatus === 'PENDING' ? (canHandover(row) ? '请核对设备、配件并完成领用交接' : `预约开始日 ${fmt(row.startDate)} 才能办理交接`) : activeStatus === 'EXCEPTION' ? '待负责人处理异常预约' : '请核对归还设备和配件' }}</span>
           <div>
             <GhostButton v-if="activeStatus === 'EXCEPTION'" size="small" @click="cancelException(row)">取消预约并释放日期</GhostButton>
             <GradientButton v-if="activeStatus !== 'EXCEPTION'" size="small" :disabled="activeStatus === 'PENDING' && !canHandover(row)" @click="openAction(row, activeStatus === 'PENDING' ? 'handover' : 'return')">
@@ -221,17 +191,11 @@ onMounted(load)
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'handover' ? '完成设备交接' : '确认归还验收'" width="620px">
       <div class="handover-dialog">
         <p>设备：{{ target?.deviceName }}（{{ target?.deviceAssetCode || `#${target?.deviceId}` }}）</p>
-        <section v-if="dialogMode === 'handover'" class="handover-dialog__photos">
-          <label>交接现场照片（必填，1–6 张，每张不超过 5 MB）</label>
-          <input type="file" accept="image/jpeg,image/png,image/webp" multiple @change="onEvidenceChange" />
-          <small>{{ evidenceFiles.length }} 张已选择</small>
-        </section>
-        <section v-else class="handover-dialog__photos">
+        <section v-if="target?.returnImageUrls?.length" class="handover-dialog__photos">
           <label>用户归还现场照片</label>
           <div v-if="target?.returnImageUrls?.length" class="handover-dialog__evidence-links">
             <a v-for="url in target.returnImageUrls" :key="url" :href="url" target="_blank" rel="noreferrer">打开照片</a>
           </div>
-          <small v-else>缺少照片，后端将阻止验收完成。</small>
         </section>
         <section v-if="checklist.length" class="handover-dialog__checklist">
           <strong>设备配件逐项核对</strong>
@@ -245,7 +209,7 @@ onMounted(load)
             <el-input v-if="item.condition !== 'NORMAL'" v-model="item.note" maxlength="300" placeholder="异常说明" />
           </div>
         </section>
-        <p v-else class="handover-dialog__empty-checklist">该设备未配置配件清单，仍需上传现场照片并记录设备状态。</p>
+        <p v-else class="handover-dialog__empty-checklist">该设备未配置配件清单，请核对并记录设备状态。</p>
         <el-radio-group v-model="condition">
           <el-radio value="NORMAL">状态正常</el-radio>
           <el-radio value="DAMAGED">发现损坏</el-radio>

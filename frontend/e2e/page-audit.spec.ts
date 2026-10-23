@@ -14,11 +14,6 @@ type Fixture = {
   second_device_name: string
 }
 
-const samplePng = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p1sAAAAASUVORK5CYII=',
-  'base64',
-)
-
 let prefix = ''
 let fixture: Fixture
 
@@ -47,14 +42,6 @@ async function selectDateRange(page: Page, date: string) {
   const end = page.locator('input[placeholder="结束日期"]')
   await end.fill(date)
   await page.keyboard.press('Enter')
-}
-
-async function attachEvidence(page: Page, dialogName: string, fileName: string) {
-  await page.getByRole('dialog', { name: dialogName }).locator('input[type="file"]').setInputFiles({
-    name: fileName,
-    mimeType: 'image/png',
-    buffer: samplePng,
-  })
 }
 
 async function capture(page: Page, testInfo: TestInfo, name: string) {
@@ -211,7 +198,6 @@ test.describe('普通用户与管理员非 AI 页面实际渲染截图验收', (
     await capture(adminPage, testInfo, 'admin-handover-pending')
     await handoverCard.getByRole('button', { name: '核对并完成交接' }).click()
     await expect(adminPage.getByRole('dialog', { name: '完成设备交接' })).toBeVisible()
-    await attachEvidence(adminPage, '完成设备交接', 'page-audit-handover.png')
     await adminPage.getByRole('dialog', { name: '完成设备交接' }).getByRole('button', { name: '确认' }).click()
     await expect(handoverCard).toHaveCount(0)
 
@@ -220,7 +206,6 @@ test.describe('普通用户与管理员非 AI 页面实际渲染截图验收', (
     await expect(inUseCard).toContainText('使用中')
     await inUseCard.getByRole('button', { name: '归还' }).click()
     await expect(userPage.getByRole('dialog', { name: '提交归还' })).toBeVisible()
-    await attachEvidence(userPage, '提交归还', 'page-audit-return.png')
     await userPage.getByRole('dialog', { name: '提交归还' }).getByRole('button', { name: '确认归还' }).click()
     await expect(inUseCard).toContainText('待负责人验收')
 

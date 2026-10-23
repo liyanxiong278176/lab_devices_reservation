@@ -13,7 +13,6 @@ import {
   getReservation,
   submitReservationFeedback,
 } from '@/api/reservation'
-import { uploadRepairImage } from '@/api/repair'
 import type { ReservationFeedbackVO } from '@/api/reservation'
 import { getDevice } from '@/api/device'
 import type { DeviceVO } from '@/types/device'
@@ -42,7 +41,6 @@ const loading = ref(false)
 const returnDialogVisible = ref(false)
 const returnCondition = ref<'NORMAL' | 'DAMAGED' | 'MISSING'>('NORMAL')
 const returnNote = ref('')
-const returnPhotoFiles = ref<File[]>([])
 const feedback = ref<ReservationFeedbackVO | null>(null)
 const feedbackDialogVisible = ref(false)
 const feedbackRating = ref(5)
@@ -298,26 +296,7 @@ function openReturnDialog() {
   if (!reservation.value) return
   returnCondition.value = 'NORMAL'
   returnNote.value = ''
-  returnPhotoFiles.value = []
   returnDialogVisible.value = true
-}
-
-function onReturnPhotoChange(event: Event) {
-  const input = event.target as HTMLInputElement
-  const files = Array.from(input.files || [])
-  if (files.length < 1 || files.length > 6) {
-    ElMessage.warning('请上传 1 至 6 张归还现场照片')
-    returnPhotoFiles.value = []
-    input.value = ''
-    return
-  }
-  if (files.some((file) => file.size > 5 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type))) {
-    ElMessage.warning('照片仅支持 5 MB 以内 JPG、PNG 或 WebP')
-    returnPhotoFiles.value = []
-    input.value = ''
-    return
-  }
-  returnPhotoFiles.value = files
 }
 
 function openFeedbackDialog() {
@@ -346,15 +325,9 @@ async function submitFeedback() {
 async function submitReturn() {
   if (!reservation.value) return
   try {
-    if (returnPhotoFiles.value.length === 0) {
-      ElMessage.warning('请先上传 1 至 6 张归还现场照片')
-      return
-    }
-    const uploads = await Promise.all(returnPhotoFiles.value.map((file) => uploadRepairImage(file)))
     await checkOutReservation(reservation.value.id, {
       condition: returnCondition.value,
       note: returnNote.value.trim() || undefined,
-      imageUrls: uploads.map((image) => image.url),
     })
     returnDialogVisible.value = false
     ElMessage.success('已提交归还，等待负责人验收')
@@ -450,11 +423,6 @@ onMounted(load)
           show-word-limit
           placeholder="补充验收备注（可选）"
         />
-        <label class="rsv-detail__return-photos">
-          <span>归还现场照片（必填，1–6 张）</span>
-          <input type="file" accept="image/jpeg,image/png,image/webp" multiple @change="onReturnPhotoChange" />
-          <small>{{ returnPhotoFiles.length }} 张已选择</small>
-        </label>
       </div>
       <template #footer>
         <GhostButton @click="returnDialogVisible = false">取消</GhostButton>
@@ -505,7 +473,6 @@ onMounted(load)
       grid-template-columns: 1fr;
     }
   }
-
   // ---- 详情卡 ----------------------------------------------------------------
   &__main {
     display: flex;
@@ -559,7 +526,6 @@ onMounted(load)
       word-break: break-word;
     }
   }
-
   // ---- 用途区 --------------------------------------------------------------
   &__purpose {
     padding-top: 18px;
@@ -599,16 +565,6 @@ onMounted(load)
     line-height: 1.6;
   }
 
-  &__return-photos {
-    display: grid;
-    gap: 8px;
-    color: var(--text-secondary);
-    font-size: 12px;
-
-    input { color: var(--text-tertiary); }
-    small { color: var(--text-tertiary); }
-  }
-
   // ---- 操作区 --------------------------------------------------------------
   &__actions {
     display: flex;
@@ -631,7 +587,6 @@ onMounted(load)
       border-color: var(--status-danger) !important;
     }
   }
-
   // ---- Timeline 卡 ---------------------------------------------------------
   &__timeline {
     padding: 24px;

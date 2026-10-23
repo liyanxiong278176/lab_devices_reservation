@@ -121,10 +121,6 @@ function mountPage() {
   })
 }
 
-function setFiles(input: HTMLInputElement, files: File[] | null) {
-  Object.defineProperty(input, 'files', { configurable: true, value: files })
-}
-
 describe('my reservations page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -236,88 +232,32 @@ describe('my reservations page', () => {
     expect(mocks.confirmWaitlistOffer).toHaveBeenCalledTimes(2)
   })
 
-  it('validates return photos, opens and closes the return form, and submits uploaded evidence', async () => {
+  it('returns without photos while preserving condition and notes', async () => {
     const wrapper = mountPage()
     await flushPromises()
     await wrapper.findAll('.mine__cell')[2].find('.ghost').trigger('click')
-    expect(wrapper.find('.dialog').exists()).toBe(true)
-    expect(wrapper.text()).toContain('0 张已选择')
-    expect(wrapper.find('.radio-group').text()).toContain('设备状态正常')
-    expect(wrapper.find('.radio-group').text()).toContain('设备缺失')
-
-    await wrapper.find('.dialog-close').trigger('click')
-    expect(wrapper.find('.dialog').exists()).toBe(false)
-    await wrapper.findAll('.mine__cell')[2].find('.ghost').trigger('click')
-    await wrapper.findAll('.dialog .ghost')[0].trigger('click')
-    expect(wrapper.find('.dialog').exists()).toBe(false)
-    await wrapper.findAll('.mine__cell')[2].find('.ghost').trigger('click')
-
-    const input = wrapper.get('input[type="file"]').element as HTMLInputElement
-    setFiles(input, null)
-    await wrapper.get('input[type="file"]').trigger('change')
-    expect(mocks.warning).toHaveBeenCalledWith('请上传 1 至 6 张归还现场照片')
-
-    setFiles(input, [])
-    await wrapper.get('input[type="file"]').trigger('change')
-    expect(mocks.warning).toHaveBeenCalledWith('请上传 1 至 6 张归还现场照片')
-
-    const tooMany = Array.from({ length: 7 }, (_, index) => new File([String(index)], `${index}.png`, { type: 'image/png' }))
-    setFiles(input, tooMany)
-    await wrapper.get('input[type="file"]').trigger('change')
-    expect(mocks.warning).toHaveBeenLastCalledWith('请上传 1 至 6 张归还现场照片')
-
-    setFiles(input, [new File(['large'], 'large.png', { type: 'application/octet-stream' })])
-    await wrapper.get('input[type="file"]').trigger('change')
-    expect(mocks.warning).toHaveBeenLastCalledWith('照片仅支持 5 MB 以内 JPG、PNG 或 WebP')
-
-    setFiles(input, [new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'oversized.png', { type: 'image/png' })])
-    await wrapper.get('input[type="file"]').trigger('change')
-    expect(mocks.warning).toHaveBeenLastCalledWith('照片仅支持 5 MB 以内 JPG、PNG 或 WebP')
-
-    const photo = new File(['image'], 'return.png', { type: 'image/png' })
-    setFiles(input, [photo])
-    await wrapper.get('input[type="file"]').trigger('change')
+    expect(wrapper.find('input[type="file"]').exists()).toBe(false)
     await wrapper.find('.damaged').trigger('click')
     await wrapper.find('.dialog textarea').setValue('  外壳损坏  ')
-    expect(wrapper.text()).toContain('1 张已选择')
     await wrapper.findAll('.dialog .ghost')[1].trigger('click')
     await flushPromises()
-
-    expect(mocks.uploadRepairImage).toHaveBeenCalledWith(photo)
+    expect(mocks.uploadRepairImage).not.toHaveBeenCalled()
     expect(mocks.checkOutReservation).toHaveBeenCalledWith(3, {
-      condition: 'DAMAGED',
-      note: '外壳损坏',
-      imageUrls: ['/uploads/return.png'],
+      condition: 'DAMAGED', note: '外壳损坏',
     })
     expect(mocks.success).toHaveBeenCalledWith('已提交归还，等待负责人验收')
     expect(wrapper.find('.dialog').exists()).toBe(false)
   })
 
-  it('requires evidence before returning and keeps the form open when upload or return fails', async () => {
+  it('keeps the return form open when the return request fails', async () => {
     const wrapper = mountPage()
     await flushPromises()
-    const setup = (wrapper.vm as unknown as { $: { setupState: Record<string, unknown> } }).$.setupState
-    await (setup.submitReturn as () => Promise<void>)()
-    expect(mocks.warning).not.toHaveBeenCalled()
-
     await wrapper.findAll('.mine__cell')[2].find('.ghost').trigger('click')
-    await wrapper.findAll('.dialog .ghost')[1].trigger('click')
-    await flushPromises()
-    expect(mocks.warning).toHaveBeenCalledWith('请先上传 1 至 6 张归还现场照片')
-    expect(mocks.checkOutReservation).not.toHaveBeenCalled()
-
-    const input = wrapper.get('input[type="file"]').element as HTMLInputElement
-    setFiles(input, [new File(['image'], 'return.jpg', { type: 'image/jpeg' })])
-    await wrapper.get('input[type="file"]').trigger('change')
-    mocks.uploadRepairImage.mockRejectedValueOnce(new Error('upload failed'))
-    await wrapper.findAll('.dialog .ghost')[1].trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.dialog').exists()).toBe(true)
-
     mocks.checkOutReservation.mockRejectedValueOnce(new Error('return failed'))
     await wrapper.findAll('.dialog .ghost')[1].trigger('click')
     await flushPromises()
     expect(wrapper.find('.dialog').exists()).toBe(true)
+    expect(mocks.uploadRepairImage).not.toHaveBeenCalled()
   })
 
   it('renders empty and truncated pages, resets on filtering, and tolerates list loading failures', async () => {

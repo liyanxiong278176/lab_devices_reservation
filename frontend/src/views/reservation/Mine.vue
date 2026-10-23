@@ -14,7 +14,6 @@ import {
   myWaitlist,
   myReservations,
 } from '@/api/reservation'
-import { uploadRepairImage } from '@/api/repair'
 import type {
   ReservationHandoverStatus,
   ReservationQuery,
@@ -50,7 +49,6 @@ const returnDialogVisible = ref(false)
 const returningRow = ref<ReservationVO | null>(null)
 const returnCondition = ref<'NORMAL' | 'DAMAGED' | 'MISSING'>('NORMAL')
 const returnNote = ref('')
-const returnPhotoFiles = ref<File[]>([])
 
 // “待验收”是交接子状态，不是预约状态；由服务端过滤。
 const tabs: { label: string; value: ReservationTabValue }[] = [
@@ -188,39 +186,16 @@ async function onCheckOut(row: ReservationVO) {
   returningRow.value = row
   returnCondition.value = 'NORMAL'
   returnNote.value = ''
-  returnPhotoFiles.value = []
   returnDialogVisible.value = true
-}
-
-function onReturnPhotoChange(event: Event) {
-  const input = event.target as HTMLInputElement
-  const files = Array.from(input.files || [])
-  if (files.length < 1 || files.length > 6) {
-    ElMessage.warning('请上传 1 至 6 张归还现场照片')
-    input.value = ''
-    returnPhotoFiles.value = []
-  } else if (files.some((file) => file.size > 5 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type))) {
-    ElMessage.warning('照片仅支持 5 MB 以内 JPG、PNG 或 WebP')
-    input.value = ''
-    returnPhotoFiles.value = []
-  } else {
-    returnPhotoFiles.value = files
-  }
 }
 
 async function submitReturn() {
   const row = returningRow.value
   if (!row) return
   try {
-    if (returnPhotoFiles.value.length < 1 || returnPhotoFiles.value.length > 6) {
-      ElMessage.warning('请先上传 1 至 6 张归还现场照片')
-      return
-    }
-    const uploads = await Promise.all(returnPhotoFiles.value.map((file) => uploadRepairImage(file)))
     await checkOutReservation(row.id, {
       condition: returnCondition.value,
       note: returnNote.value.trim() || undefined,
-      imageUrls: uploads.map((image) => image.url),
     })
     returnDialogVisible.value = false
     returningRow.value = null
@@ -423,11 +398,6 @@ onMounted(() => {
           show-word-limit
           placeholder="补充验收备注（可选）"
         />
-        <label class="mine__return-photos">
-          <span>归还现场照片（必填，1–6 张）</span>
-          <input type="file" accept="image/jpeg,image/png,image/webp" multiple @change="onReturnPhotoChange" />
-          <small>{{ returnPhotoFiles.length }} 张已选择</small>
-        </label>
       </div>
       <template #footer>
         <GhostButton @click="returnDialogVisible = false">取消</GhostButton>
@@ -442,7 +412,6 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 20px;
-
   // ---- 筛选区 -------------------------------------------------------------
   &__filter {
     display: flex;
@@ -515,16 +484,6 @@ onMounted(() => {
     gap: 10px;
   }
 
-  &__return-photos {
-    display: grid;
-    gap: 8px;
-    color: var(--text-secondary);
-    font-size: 12px;
-
-    input { color: var(--text-tertiary); }
-    small { color: var(--text-tertiary); }
-  }
-
   // ---- 卡片网格 -----------------------------------------------------------
   &__grid {
     display: grid;
@@ -547,7 +506,6 @@ onMounted(() => {
   &__cell {
     display: block;
   }
-
   // ---- 卡片 ----------------------------------------------------------------
   &__card {
     display: flex;
@@ -599,7 +557,6 @@ onMounted(() => {
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
-
   // ---- 时段(双端点 + 连接线,深色科技风)-----------------------------------
   &__card-time {
     display: flex;
@@ -647,7 +604,6 @@ onMounted(() => {
     margin-left: 3.5px;
     background: var(--border-default);
   }
-
   // ---- meta chip 行(时长 + 时段数)-----------------------------------------
   &__card-meta {
     display: flex;
@@ -685,7 +641,6 @@ onMounted(() => {
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-
   // ---- 卡脚:创建时间 + 操作 ----------------------------------------------
   &__card-foot {
     display: flex;
@@ -723,7 +678,6 @@ onMounted(() => {
       border-color: var(--status-danger) !important;
     }
   }
-
   // ---- 分页 ----------------------------------------------------------------
   &__pager {
     display: flex;

@@ -193,7 +193,7 @@ export const checkInReservation = (id: number) =>
 
 export const checkOutReservation = (
   id: number,
-  payload: { condition?: 'NORMAL' | 'DAMAGED' | 'MISSING'; note?: string; imageUrls: string[] },
+  payload: { condition?: 'NORMAL' | 'DAMAGED' | 'MISSING'; note?: string; imageUrls?: string[] },
 ) => request.post<unknown, void>(`/reservations/${id}/return`, {
   condition: payload.condition,
   note: payload.note,
@@ -208,7 +208,7 @@ export interface AccessoryCheckPayload {
 
 export const handoverReservation = (
   id: number,
-  payload: { condition: 'NORMAL' | 'DAMAGED' | 'MISSING'; note?: string; imageUrls: string[]; checklist: AccessoryCheckPayload[] },
+  payload: { condition: 'NORMAL' | 'DAMAGED' | 'MISSING'; note?: string; imageUrls?: string[]; checklist: AccessoryCheckPayload[] },
 ) => request.post<unknown, void>(`/reservations/${id}/handover`, {
   condition: payload.condition,
   note: payload.note,

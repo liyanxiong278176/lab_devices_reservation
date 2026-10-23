@@ -1,5 +1,5 @@
 import { javaCommand } from './java-command'
-import { test, expect, type Locator, type Page } from './flow-test'
+import { test, expect, type Page } from './flow-test'
 
 type Fixture = {
   prefix: string
@@ -11,11 +11,6 @@ type Fixture = {
   second_device_id: number
   second_device_name: string
 }
-
-const samplePng = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p1sAAAAASUVORK5CYII=',
-  'base64',
-)
 
 let prefix = ''
 let fixture: Fixture
@@ -50,14 +45,6 @@ function dateAfter(days: number): string {
   const month = String(value.getMonth() + 1).padStart(2, '0')
   const day = String(value.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
-}
-
-async function attachEvidence(dialog: Locator, name: string) {
-  await dialog.locator('input[type="file"]').setInputFiles({
-    name,
-    mimeType: 'image/png',
-    buffer: samplePng,
-  })
 }
 
 async function submitReservation(page: Page, deviceName: string, date: string, purpose: string) {
@@ -171,7 +158,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await handoverCard.getByRole('button', { name: '核对并完成交接' }).click()
     const handoverDialog = adminPage.getByRole('dialog', { name: '完成设备交接' })
     await expect(handoverDialog).toBeVisible()
-    await attachEvidence(handoverDialog, 'handover.png')
+    await expect(handoverDialog.locator('input[type="file"]')).toHaveCount(0)
     const handoverResponsePromise = adminPage.waitForResponse((response) =>
       response.request().method() === 'POST'
       && /\/api\/v2\/reservations\/\d+\/handover$/.test(new URL(response.url()).pathname),
@@ -188,7 +175,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await userPage.getByRole('button', { name: '归还' }).click()
     const returnDialog = userPage.getByRole('dialog', { name: '提交归还' })
     await expect(returnDialog).toBeVisible()
-    await attachEvidence(returnDialog, 'return.png')
+    await expect(returnDialog.locator('input[type="file"]')).toHaveCount(0)
     const returnResponsePromise = userPage.waitForResponse((response) =>
       response.request().method() === 'POST'
       && /\/api\/v2\/reservations\/\d+\/return$/.test(new URL(response.url()).pathname),
@@ -225,7 +212,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await acceptanceCard.getByRole('button', { name: '核对并确认验收' }).click()
     const acceptanceDialog = adminPage.getByRole('dialog', { name: '确认归还验收' })
     await expect(acceptanceDialog).toBeVisible()
-    await expect(acceptanceDialog.getByText('打开照片')).toBeVisible()
+    await expect(acceptanceDialog.getByText('打开照片')).toHaveCount(0)
     await acceptanceDialog.getByRole('button', { name: '确认' }).click()
     await expect(acceptanceCard).toHaveCount(0)
     await userPage.reload()
@@ -595,7 +582,6 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await expect(handoverCard.getByRole('button', { name: '核对并完成交接' })).toBeEnabled()
     await handoverCard.getByRole('button', { name: '核对并完成交接' }).click()
     const normalHandoverDialog = adminPage.getByRole('dialog', { name: '完成设备交接' })
-    await attachEvidence(normalHandoverDialog, 'handover-damaged-test.png')
     const handoverResponsePromise = adminPage.waitForResponse((response) =>
       response.request().method() === 'POST'
       && /\/api\/v2\/reservations\/\d+\/handover$/.test(new URL(response.url()).pathname),
@@ -611,7 +597,6 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     const returnDialog = userPage.getByRole('dialog', { name: '提交归还' })
     await returnDialog.locator('label.el-radio').filter({ hasText: '发现损坏' }).click()
     await returnDialog.getByPlaceholder('补充验收备注（可选）').fill('E2E 检测到设备异常，需停用检修。')
-    await attachEvidence(returnDialog, 'return-damaged.png')
     const damagedReturnResponsePromise = userPage.waitForResponse((response) =>
       response.request().method() === 'POST'
       && /\/api\/v2\/reservations\/\d+\/return$/.test(new URL(response.url()).pathname),
@@ -640,7 +625,7 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     const acceptanceDialog = adminPage.getByRole('dialog', { name: '确认归还验收' })
     await acceptanceDialog.locator('label.el-radio').filter({ hasText: '发现损坏' }).click()
     await acceptanceDialog.getByPlaceholder('补充交接或验收说明').fill('确认外壳破损，设备进入维护。')
-    await expect(acceptanceDialog.getByText('打开照片')).toBeVisible()
+    await expect(acceptanceDialog.getByText('打开照片')).toHaveCount(0)
     await acceptanceDialog.getByRole('button', { name: '确认' }).click()
     await expect(acceptanceCard).toHaveCount(0)
 
@@ -691,7 +676,6 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     const handoverCard = adminPage.locator('.handover-card').filter({ hasText: purpose })
     await handoverCard.getByRole('button', { name: '核对并完成交接' }).click()
     const dialog = adminPage.getByRole('dialog', { name: '完成设备交接' })
-    await attachEvidence(dialog, 'accessory-damage.png')
     await dialog.locator('.handover-dialog__check .el-select').click()
     await adminPage.getByRole('option', { name: '损坏', exact: true }).click()
     const handoverResponsePromise = adminPage.waitForResponse((response) =>

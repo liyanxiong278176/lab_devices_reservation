@@ -212,7 +212,7 @@ public class ReservationLifecycle {
         data.get("note"),
         db.json(db.parse(device.get("accessory_checklist"), List.of())),
         db.json(data.getOrDefault("checklist", List.of())),
-        db.json(data.get("image_urls")),
+        db.json(data.getOrDefault("image_urls", List.of())),
         id);
     if (!normal) fault(p, r, data, "交接发现设备损坏或配件缺失");
     events.audit(p, "DEVICE_HANDOVER", "RESERVATION", id, Map.of("condition", condition));
@@ -240,7 +240,7 @@ public class ReservationLifecycle {
         p.userId(),
         c,
         data.get("note"),
-        db.json(data.get("image_urls")),
+        db.json(data.getOrDefault("image_urls", List.of())),
         id);
     events.audit(p, "RESERVATION_RETURN_REQUEST", "RESERVATION", id, Map.of("condition", c));
     return reservations.get(p, id);
@@ -255,9 +255,7 @@ public class ReservationLifecycle {
     reservations.validateLifecycleDates(r, device);
     checklist(device, data.getOrDefault("checklist", List.of()));
     var handover = db.one("SELECT * FROM v2_device_handover WHERE reservation_id=?", id);
-    if (handover == null
-        || db.parse(handover.get("return_image_urls"), List.of()).equals(List.of()))
-      throw new ApiError("RETURN_EVIDENCE_REQUIRED", "归还照片缺失", 409);
+    if (handover == null) throw new ApiError("HANDOVER_NOT_FOUND", "交接记录缺失", 409);
     String c = condition(data);
     update(r, "IN_USE", "COMPLETED", "handover_status='COMPLETED',check_out_at=UTC_TIMESTAMP()");
     db.execute(

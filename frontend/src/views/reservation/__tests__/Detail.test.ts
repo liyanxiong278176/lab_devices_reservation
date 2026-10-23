@@ -82,10 +82,6 @@ function mountPage() {
   return mount(Detail, { global: { stubs, directives: { loading: { mounted() {}, updated() {} } } } })
 }
 
-function setFiles(input: HTMLInputElement, files: File[] | null) {
-  Object.defineProperty(input, 'files', { configurable: true, value: files })
-}
-
 describe('reservation detail lifecycle page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -165,70 +161,26 @@ describe('reservation detail lifecycle page', () => {
     }
   })
 
-  it('submits an evidence-backed return and validates file count, type, size and server failure', async () => {
+  it('submits a return without photos and keeps the form open after API failure', async () => {
     mocks.getReservation.mockResolvedValue(reservation('IN_USE', { handoverStatus: 'HANDED_OVER' }))
     const wrapper = mountPage()
     await flushPromises()
-    expect(wrapper.findAll('.rsv-detail__actions button').map((button) => button.text())).toContain('归还')
     await wrapper.find('.rsv-detail__actions .gradient').trigger('click')
-    expect(wrapper.find('.dialog').exists()).toBe(true)
-    await wrapper.find('.dialog .gradient').trigger('click')
-    expect(mocks.warning).toHaveBeenCalledWith('请先上传 1 至 6 张归还现场照片')
-    await wrapper.find('.dialog-model-close').trigger('click')
-    expect(wrapper.find('.dialog').exists()).toBe(false)
-    await wrapper.find('.rsv-detail__actions .gradient').trigger('click')
-    await wrapper.find('.dialog .ghost').trigger('click')
-    expect(wrapper.find('.dialog').exists()).toBe(false)
-    await wrapper.find('.rsv-detail__actions .gradient').trigger('click')
-
-    const input = wrapper.get('input[type="file"]').element as HTMLInputElement
-    setFiles(input, null)
-    await wrapper.get('input[type="file"]').trigger('change')
-    expect(mocks.warning).toHaveBeenCalledWith('请上传 1 至 6 张归还现场照片')
-    const tooMany = Array.from({ length: 7 }, (_, index) => new File([String(index)], `${index}.jpg`, { type: 'image/jpeg' }))
-    setFiles(input, tooMany)
-    await wrapper.get('input[type="file"]').trigger('change')
-    expect(mocks.warning).toHaveBeenLastCalledWith('请上传 1 至 6 张归还现场照片')
-    setFiles(input, [new File(['bad'], 'bad.txt', { type: 'text/plain' })])
-    await wrapper.get('input[type="file"]').trigger('change')
-    expect(mocks.warning).toHaveBeenLastCalledWith('照片仅支持 5 MB 以内 JPG、PNG 或 WebP')
-    setFiles(input, [new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' })])
-    await wrapper.get('input[type="file"]').trigger('change')
-    expect(mocks.warning).toHaveBeenLastCalledWith('照片仅支持 5 MB 以内 JPG、PNG 或 WebP')
-
-    const photo = new File(['evidence'], 'return.webp', { type: 'image/webp' })
-    setFiles(input, [photo])
-    await wrapper.get('input[type="file"]').trigger('change')
+    expect(wrapper.find('input[type="file"]').exists()).toBe(false)
     await wrapper.find('.radio-group .missing-condition').trigger('click')
     await wrapper.find('.dialog textarea').setValue('  外壳破损  ')
+    mocks.checkOutReservation.mockRejectedValueOnce(new Error('return failed'))
     await wrapper.find('.dialog .gradient').trigger('click')
     await flushPromises()
-    expect(mocks.uploadRepairImage).toHaveBeenCalledWith(photo)
+    expect(wrapper.find('.dialog').exists()).toBe(true)
+    await wrapper.find('.dialog .gradient').trigger('click')
+    await flushPromises()
     expect(mocks.checkOutReservation).toHaveBeenCalledWith(55, {
-      condition: 'MISSING', note: '外壳破损', imageUrls: ['/return/photo.png'],
+      condition: 'MISSING', note: '外壳破损',
     })
+    expect(mocks.uploadRepairImage).not.toHaveBeenCalled()
     expect(mocks.success).toHaveBeenCalledWith('已提交归还，等待负责人验收')
     expect(wrapper.find('.dialog').exists()).toBe(false)
-
-    mocks.getReservation.mockResolvedValueOnce(reservation('IN_USE'))
-    const failedReturn = mountPage()
-    await flushPromises()
-    await failedReturn.find('.rsv-detail__actions .gradient').trigger('click')
-    const secondInput = failedReturn.get('input[type="file"]').element as HTMLInputElement
-    setFiles(secondInput, [new File(['evidence'], 'return.png', { type: 'image/png' })])
-    await failedReturn.get('input[type="file"]').trigger('change')
-    mocks.uploadRepairImage.mockRejectedValueOnce(new Error('upload failure'))
-    await failedReturn.find('.dialog .gradient').trigger('click')
-    await flushPromises()
-    expect(failedReturn.find('.dialog').exists()).toBe(true)
-
-    mocks.checkOutReservation.mockRejectedValueOnce(new Error('return request failed'))
-    await failedReturn.find('.dialog .gradient').trigger('click')
-    await flushPromises()
-    expect(mocks.checkOutReservation).toHaveBeenCalledWith(55, {
-      condition: 'NORMAL', note: undefined, imageUrls: ['/return/photo.png'],
-    })
-    expect(failedReturn.find('.dialog').exists()).toBe(true)
   })
 
   it('allows one feedback submission after completion and keeps the dialog open after failure', async () => {

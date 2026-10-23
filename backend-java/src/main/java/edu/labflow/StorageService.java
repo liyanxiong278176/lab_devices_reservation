@@ -144,11 +144,11 @@ public class StorageService {
   }
 
   public void evidence(Principal p, Object urls, long college) {
+    if (urls == null || (urls instanceof List<?> values && values.isEmpty())) return;
     if (!(urls instanceof List<?> list)
-        || list.isEmpty()
         || list.size() > 6
         || new HashSet<>(list).size() != list.size())
-      throw new ApiError("EVIDENCE_REQUIRED", "必须上传 1 至 6 张不重复现场照片", 422);
+      throw new ApiError("EVIDENCE_REQUIRED", "现场照片最多 6 张且不能重复", 422);
     for (Object value : list) {
       String url = value.toString();
       String prefix = "/api/v2/repair-uploads/";
