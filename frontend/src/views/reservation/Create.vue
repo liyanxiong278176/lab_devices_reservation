@@ -47,6 +47,7 @@ const userStore = useUserStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const preflightLoading = ref(false)
+const preflightError = ref('')
 const submitting = ref(false)
 const device = ref<DeviceVO | null>(null)
 const pendingRequest = ref<PendingReservationRequest | null>(null)
@@ -221,6 +222,7 @@ async function loadDevice() {
 
 async function runPreflight() {
   const requestId = ++preflightRequestId
+  preflightError.value = ''
   if (!device.value || !selectedDates.value) {
     preflight.value = null
     preflightLoading.value = false
@@ -255,6 +257,12 @@ async function runPreflight() {
       safetyDocs.value = []
       qualification.value = null
     }
+  } catch (error) {
+    if (requestId !== preflightRequestId) return
+    preflight.value = null
+    safetyDocs.value = []
+    qualification.value = null
+    preflightError.value = reservationErrorMessage(error)
   } finally {
     if (requestId === preflightRequestId) preflightLoading.value = false
   }
@@ -526,6 +534,7 @@ onBeforeUnmount(() => {
             <el-icon v-loading="preflightLoading"><Refresh /></el-icon>
           </div>
           <div v-if="!selectedDates" class="preflight-empty"><Calendar />选择日期后自动检查</div>
+          <div v-else-if="preflightError" class="conflict-tip" role="alert">{{ preflightError }}</div>
           <template v-else-if="preflight">
             <div class="preflight-summary">
               <span class="summary-good"><Check /> {{ preflight.available_units ?? 0 }} 台可覆盖所选全日期</span>
@@ -632,6 +641,7 @@ onBeforeUnmount(() => {
             {{ device?.needApproval ? '提交后会进入负责人待审批列表。' : '该设备提交后会直接确认，不会出现在管理员待审批列表。' }}
           </p>
           <p class="summary-card__hint">提交后仍会在数据库唯一键层做最终并发校验。</p>
+          <p v-if="preflightError" class="summary-card__hint">{{ preflightError }}</p>
           <GradientButton :loading="submitting" :disabled="!canSubmit" class="submit-button" @click="onSubmit">提交预约</GradientButton>
           <GhostButton class="cancel-button" @click="onCancel">取消</GhostButton>
         </section>

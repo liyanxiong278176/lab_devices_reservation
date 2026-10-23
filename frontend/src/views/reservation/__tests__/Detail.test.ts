@@ -96,6 +96,23 @@ describe('reservation detail lifecycle page', () => {
     mocks.confirm.mockResolvedValue(undefined)
   })
 
+  it('renders the canonical completed handover status in Chinese', async () => {
+    mocks.getReservation.mockResolvedValueOnce(reservation('COMPLETED', { handoverStatus: 'COMPLETED' }))
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('已完成归还验收')
+    expect(wrapper.text()).not.toContain('COMPLETED')
+  })
+
+  it('explains handover exceptions in the status field and lifecycle', async () => {
+    mocks.getReservation.mockResolvedValueOnce(reservation('APPROVED', { handoverStatus: 'EXCEPTION' }))
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('交接异常，等待负责人处理')
+    expect(wrapper.find('.timeline').text()).toContain('暂不能开始使用')
+    expect(wrapper.find('.timeline').text()).not.toContain('等待负责人交接')
+  })
+
   it('loads a pending reservation, renders fallback details, and handles cancellation confirmation and API results', async () => {
     mocks.getDevice.mockRejectedValueOnce(new Error('device catalog offline'))
     mocks.getReservation.mockResolvedValueOnce(reservation('PENDING', {

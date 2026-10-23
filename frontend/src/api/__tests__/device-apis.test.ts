@@ -256,9 +256,9 @@ describe('device API contracts', () => {
     try {
       await deviceApi.downloadDeviceDocument({
         id: 1, deviceId: 2, documentType: 'MANUAL', title: 'guide', version: '1.0', requiresAck: false,
-        originalName: 'guide.pdf', contentType: 'application/pdf', sizeBytes: 20, url: '/docs/1', createdBy: 3,
+        originalName: 'guide.pdf', contentType: 'application/pdf', sizeBytes: 20, url: '/api/v2/device-documents/test-token', createdBy: 3,
       })
-      expect(http.get).toHaveBeenNthCalledWith(2, '/docs/1', { responseType: 'blob' })
+      expect(http.get).toHaveBeenNthCalledWith(2, '/device-documents/test-token', { responseType: 'blob' })
       expect(click).toHaveBeenCalledOnce()
       expect(createObjectURL).toHaveBeenCalledOnce()
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:document')

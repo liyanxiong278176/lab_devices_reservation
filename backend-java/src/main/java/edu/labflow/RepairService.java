@@ -13,7 +13,7 @@ public class RepairService {
   private final Settings settings;
   private final DeviceLifecycle lifecycle;
   private static final String SELECT =
-      "SELECT rr.*,d.name device_name,COALESCE(u.real_name,u.username) reporter_name,COALESCE(h.real_name,h.username) handler_name FROM v2_repair_report rr JOIN device d ON d.id=rr.device_id JOIN sys_user u ON u.id=rr.reporter_id LEFT JOIN sys_user h ON h.id=rr.handler_id ";
+      "SELECT rr.*,d.name device_name,COALESCE(u.real_name,u.username) reporter_name,COALESCE(h.real_name,h.username) handler_name,(SELECT wl.created_at FROM v2_repair_worklog wl WHERE wl.report_id=rr.id AND wl.status='PENDING' ORDER BY wl.id LIMIT 1) creation_event_at FROM v2_repair_report rr JOIN device d ON d.id=rr.device_id JOIN sys_user u ON u.id=rr.reporter_id LEFT JOIN sys_user h ON h.id=rr.handler_id ";
 
   public RepairService(
       Database db,
@@ -31,8 +31,29 @@ public class RepairService {
   private Map<String, Object> view(long id) {
     var row = db.one(SELECT + "WHERE rr.id=?", id);
     if (row == null) throw new ApiError("REPAIR_NOT_FOUND", "报修工单不存在", 404);
-    row.put("image_urls", db.parse(row.get("image_urls"), null));
+    decorate(row);
     return row;
+  }
+
+  private void decorate(Map<String, Object> row) {
+    row.put("image_urls", db.parse(row.get("image_urls"), null));
+    // Creation events were explicitly written in UTC even when a legacy database
+    // default wrote the report's created_at in its local session timezone.
+    Object created = row.remove("creation_event_at");
+    if (created != null) row.put("created_at", created);
+    for (String field :
+        List.of(
+            "created_at",
+            "updated_at",
+            "taken_at",
+            "resolved_at",
+            "closed_at",
+            "user_confirmed_at",
+            "response_due_at",
+            "resolve_due_at")) {
+      if (row.get(field) instanceof LocalDateTime value)
+        row.put(field, value.atOffset(ZoneOffset.UTC));
+    }
   }
 
   private Map<String, Object> load(Principal p, long id, boolean manage) {
@@ -84,7 +105,7 @@ public class RepairService {
     }
     long id =
         db.insert(
-            "INSERT INTO v2_repair_report (device_id,reservation_id,college_id,reporter_id,title,description,image_urls,status,priority,response_due_at,resolve_due_at) VALUES (?,?,?,?,?,?,?,'PENDING','IMPORTANT',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 DAY),DATE_ADD(UTC_TIMESTAMP(),INTERVAL 2 DAY))",
+            "INSERT INTO v2_repair_report (device_id,reservation_id,college_id,reporter_id,title,description,image_urls,status,priority,response_due_at,resolve_due_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'PENDING','IMPORTANT',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 DAY),DATE_ADD(UTC_TIMESTAMP(),INTERVAL 2 DAY),UTC_TIMESTAMP(),UTC_TIMESTAMP())",
             device,
             reservation,
             d.get("college_id"),
@@ -125,7 +146,7 @@ public class RepairService {
         };
     long id =
         db.insert(
-            "INSERT INTO v2_repair_report (college_id,device_id,reporter_id,title,description,image_urls,status,priority,response_due_at,resolve_due_at) VALUES (?,?,?,?,?,?,'PENDING',?,?,?)",
+            "INSERT INTO v2_repair_report (college_id,device_id,reporter_id,title,description,image_urls,status,priority,response_due_at,resolve_due_at,created_at,updated_at) VALUES (?,?,?,?,?,?,'PENDING',?,?,?,UTC_TIMESTAMP(),UTC_TIMESTAMP())",
             device.get("college_id"),
             deviceId,
             p.userId(),
@@ -191,7 +212,7 @@ public class RepairService {
         db.rows(
             SELECT + "JOIN (" + ids + ") page_ids ON page_ids.id=rr.id ORDER BY rr.id DESC",
             values.toArray());
-    for (var row : rows) row.put("image_urls", db.parse(row.get("image_urls"), null));
+    rows.forEach(this::decorate);
     return page.result(rows, total);
   }
 
@@ -288,7 +309,7 @@ public class RepairService {
       scope.device(p, Database.id(report, "device_id"), false);
     else scope.device(p, Database.id(report, "device_id"), true);
     var rows = db.rows("SELECT * FROM v2_repair_worklog WHERE report_id=? ORDER BY id", id);
-    for (var row : rows) row.put("image_urls", db.parse(row.get("image_urls"), null));
+    rows.forEach(this::decorate);
     return rows;
   }
 }

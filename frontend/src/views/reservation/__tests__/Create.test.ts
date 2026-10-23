@@ -190,6 +190,35 @@ describe('reservation creation page', () => {
     mocks.joinWaitlist.mockResolvedValue(undefined)
   })
 
+  it('contains preflight failures, shows the server reason, and recovers on a new date', async () => {
+    mocks.preflightReservation.mockRejectedValueOnce({
+      response: { data: { message: '单次最多连续预约 1 天' } },
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toBe('单次最多连续预约 1 天')
+    expect(wrapper.find('.submit-button').attributes('disabled')).toBeDefined()
+    const setup = setupOf(wrapper)
+    setup.selectedDates = ['2026-10-03', '2026-10-03']
+    await wrapper.findAll('textarea')[0].setValue('显微观察')
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.find('.submit-button').attributes('disabled')).toBeUndefined()
+  })
+
+  it('ignores a stale rejected preflight after a newer successful result', async () => {
+    let rejectOld!: (reason: unknown) => void
+    mocks.preflightReservation.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject }))
+    const wrapper = mountPage()
+    await flushPromises()
+    setupOf(wrapper).selectedDates = ['2026-10-03', '2026-10-03']
+    await flushPromises()
+    rejectOld(new Error('旧请求超时'))
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(setupOf(wrapper).preflight).not.toBeNull()
+  })
+
   it('loads a device and its calendar, restores a valid route range, and renders preflight data', async () => {
     const wrapper = mountPage()
     await flushPromises()
@@ -488,7 +517,10 @@ describe('reservation creation page', () => {
     expect(wrapper.text()).toContain('已通过')
 
     mocks.listSafetyDocuments.mockRejectedValueOnce(new Error('documents unavailable'))
-    await expect((setup.runPreflight as () => Promise<void>)()).rejects.toThrow('documents unavailable')
+    await expect((setup.runPreflight as () => Promise<void>)()).resolves.toBeUndefined()
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toBe('documents unavailable')
+    await (setup.runPreflight as () => Promise<void>)()
     mocks.uploadQualificationMaterial.mockRejectedValueOnce(new Error('upload failed'))
     setup.qualificationFile = new File(['x'], 'x.pdf', { type: 'application/pdf' })
     await expect((setup.applyQualification as () => Promise<void>)()).rejects.toThrow('upload failed')

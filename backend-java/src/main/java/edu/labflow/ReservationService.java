@@ -540,6 +540,11 @@ public class ReservationService {
       p.require(kind.equals("approvals") ? "reservation:approve" : "reservation:handover");
       where = scope.devicePredicate(p, "d", true);
       if (kind.equals("approvals")) where += " AND r.status='PENDING'";
+      else if (kind.equals("handovers"))
+        where +=
+            "RETURN_PENDING".equals(handover)
+                ? " AND r.status='IN_USE'"
+                : " AND r.status='APPROVED'";
     }
     var params = new ArrayList<Object>();
     if (status != null && !status.isBlank()) {

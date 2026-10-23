@@ -225,6 +225,8 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
 
     await completedReservationCard.getByRole('button', { name: '详情' }).click()
     await expect(userPage).toHaveURL(/reservations\/\d+/)
+    await expect(userPage.getByText('已完成归还验收', { exact: true })).toBeVisible()
+    await expect(userPage.locator('.rsv-detail__grid')).not.toContainText('COMPLETED')
     await userPage.getByRole('button', { name: '评价设备' }).click()
     await expect(userPage.getByText('评价本次使用')).toBeVisible()
     await userPage.locator('textarea').last().fill('设备运行稳定，页面链路验收通过。')
@@ -314,6 +316,11 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     })
     await adminPage.getByRole('dialog').getByRole('button', { name: '上传' }).click()
     await expect(adminPage.getByText('E2E 设备操作规程')).toBeVisible()
+    const documentDownloadPromise = adminPage.waitForEvent('download')
+    await adminPage.locator('.device-document').filter({ hasText: 'E2E 设备操作规程' }).getByRole('button', { name: '查看', exact: true }).click()
+    const documentDownload = await documentDownloadPromise
+    expect(documentDownload.suggestedFilename()).toBe('e2e-sop.pdf')
+    expect(await documentDownload.failure()).toBeNull()
 
     await adminPage.getByRole('menuitem', { name: '设备管理', exact: true }).click()
     await adminPage.getByRole('button', { name: '预约规则' }).click()
@@ -340,8 +347,18 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await adminPage.locator('.radmin__drawer-actions').getByRole('button', { name: '确认处理', exact: true }).click()
     await expect(repairRow.getByText('待用户确认')).toBeVisible()
 
+    const repairListPromise = userPage.waitForResponse((response) => new URL(response.url()).pathname === '/api/v2/repair-reports/mine')
     await userPage.reload()
+    const repairList = await (await repairListPromise).json()
+    const repairTimes = repairList.data.items.find((item: { title: string }) => item.title === 'E2E 设备故障')
+    expect(repairTimes.created_at).toMatch(/Z$/)
+    expect(repairTimes.resolved_at).toMatch(/Z$/)
+    expect(Math.abs(Date.parse(repairTimes.resolved_at) - Date.parse(repairTimes.created_at))).toBeLessThan(300_000)
+    const displayedResolutionTime = await userPage.evaluate((value: string) => new Intl.DateTimeFormat('sv-SE', {
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).format(new Date(value)), repairTimes.resolved_at)
     const userRepairCard = userPage.locator('.rmine__card').filter({ hasText: 'E2E 设备故障' })
+    await expect(userRepairCard.locator('.rmine__card-timeline')).toContainText(displayedResolutionTime)
     await expect(userRepairCard.locator('.rmine__card-head').getByText('待用户确认', { exact: true })).toBeVisible()
     const confirmRepairAction = userRepairCard.getByText('确认已修复', { exact: true })
     await expect(confirmRepairAction).toBeVisible()
@@ -426,6 +443,10 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     await expect(rejectedApproval).toHaveCount(0)
     await userPage.reload()
     await expect(rejectedCard.getByText('已拒绝', { exact: true })).toBeVisible()
+    const rejectedQueuePromise = adminPage.waitForResponse((response) => new URL(response.url()).pathname === '/api/v2/reservations/handovers')
+    await adminPage.getByRole('menuitem', { name: '设备交接', exact: true }).click()
+    expect((await rejectedQueuePromise).status()).toBe(200)
+    await expect(adminPage.locator('.handover-card').filter({ hasText: rejectPurpose })).toHaveCount(0)
 
     await userPage.screenshot({ path: testInfo.outputPath('reservation-rejected-and-cancelled-user.png'), fullPage: true })
     await alternatePage.screenshot({ path: testInfo.outputPath('waitlist-notified-user.png'), fullPage: true })
@@ -686,6 +707,13 @@ test.describe('普通用户与管理员真实页面完整链路', () => {
     const handoverResponse = await handoverResponsePromise
     expect(handoverResponse.status(), await handoverResponse.text()).toBe(200)
     await expect(adminPage.getByText('已记录交接异常，设备已转维修并生成关联工单')).toBeVisible()
+    await userPage.reload()
+    await expect(userPage.locator('.mine__card').filter({ hasText: purpose })).toContainText('交接异常，等待负责人处理')
+    await userPage.locator('.mine__card').filter({ hasText: purpose }).getByRole('button', { name: '详情', exact: true }).click()
+    await expect(userPage.getByText('交接异常，等待负责人处理').first()).toBeVisible()
+    await expect(userPage.getByText('设备或配件存在异常，暂不能开始使用；请联系负责人处理或取消预约。')).toBeVisible()
+    await userPage.getByRole('menuitem', { name: '我的预约', exact: true }).click()
+    await expect(reservationCard).toBeVisible()
 
     await adminPage.getByRole('radio', { name: '交接异常' }).click()
     const exceptionCard = adminPage.locator('.handover-card').filter({ hasText: purpose })

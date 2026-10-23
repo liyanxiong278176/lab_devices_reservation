@@ -134,6 +134,17 @@ describe('my reservations page', () => {
     mocks.checkOutReservation.mockResolvedValue(undefined)
   })
 
+  it('shows handover exceptions instead of the ordinary waiting message', async () => {
+    mocks.myReservations.mockResolvedValueOnce(page([
+      reservation(9, 'APPROVED', { requiresHandover: true, handoverStatus: 'EXCEPTION' }),
+    ]))
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('交接异常，等待负责人处理')
+    expect(wrapper.text()).not.toContain('等待负责人交接')
+    expect(wrapper.findAll('.mine__card-actions .ghost').map((button) => button.text())).not.toContain('归还')
+  })
+
   it('loads reservation and waitlist cards with state-specific actions and fallbacks', async () => {
     const wrapper = mountPage()
     await flushPromises()

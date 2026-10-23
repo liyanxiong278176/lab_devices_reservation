@@ -111,11 +111,16 @@ public class ReservationLifecycle {
         r,
         "PENDING",
         approve ? "APPROVED" : "REJECTED",
-        "approver_id=?,approved_at=UTC_TIMESTAMP(),reject_reason=?",
+        "approver_id=?,approved_at=UTC_TIMESTAMP(),reject_reason=?,handover_status=?",
         p.userId(),
-        approve ? null : reason);
-    if (!approve) release(r);
-    else
+        approve ? null : reason,
+        approve ? "PENDING" : "CANCELLED");
+    if (!approve) {
+      db.execute(
+          "UPDATE v2_device_handover SET status='CANCELLED' WHERE reservation_id=? AND status='PENDING'",
+          id);
+      release(r);
+    } else
       events.task(
           "reservation:unclaimed-cancel:" + id,
           "RESERVATION_UNCLAIMED_CANCEL",

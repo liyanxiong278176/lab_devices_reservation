@@ -344,7 +344,8 @@ export const archiveDeviceDocument = (deviceId: number, documentId: number) =>
   request.delete<unknown, void>(`/devices/${deviceId}/documents/${documentId}`)
 
 export const downloadDeviceDocument = async (document: DeviceDocumentVO) => {
-  const blob = await request.get<Blob, Blob>(document.url, { responseType: 'blob' })
+  const path = document.url.replace(/^\/api\/v2(?=\/)/, '')
+  const blob = await request.get<Blob, Blob>(path, { responseType: 'blob' })
   const url = URL.createObjectURL(blob)
   const anchor = window.document.createElement('a')
   anchor.href = url

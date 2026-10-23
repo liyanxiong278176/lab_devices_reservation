@@ -328,7 +328,7 @@ onMounted(() => {
             <div class="mine__card-actions">
               <TextButton size="small" @click="goDetail(row)">详情</TextButton>
               <Tag v-if="row.status === 'APPROVED' && row.requiresHandover" variant="warning" size="small" round>
-                等待负责人交接
+                {{ row.handoverStatus === 'EXCEPTION' ? '交接异常，等待负责人处理' : '等待负责人交接' }}
               </Tag>
               <GhostButton
                 v-if="canCheckOut(row)"

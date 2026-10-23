@@ -19,6 +19,7 @@ export type ReservationHandoverStatus =
   | 'EXCEPTION'
   | 'RETURN_PENDING'
   | 'RETURNED'
+  | 'COMPLETED'
   | 'CANCELLED'
 
 /** 后端自然日预约视图。 */

@@ -156,6 +156,15 @@ const timelineItems = computed<TimelineItem[]>(() => {
     })
     return items
   }
+  if (s === 'APPROVED' && r.handoverStatus === 'EXCEPTION') {
+    items.push({
+      id: 'handover',
+      title: '交接异常，等待负责人处理',
+      desc: '设备或配件存在异常，暂不能开始使用；请联系负责人处理或取消预约。',
+      status: 'current',
+    })
+    return items
+  }
   const handoverDone = ['IN_USE', 'COMPLETED', 'VIOLATED'].includes(s)
   const legacyInUse = r.handoverStatus === 'LEGACY_IN_USE'
   items.push({
@@ -255,6 +264,8 @@ function handoverLabel(status?: string): string {
     LEGACY_IN_USE: '规则调整前已开始使用，归还后待验收',
     RETURN_PENDING: '已归还，待负责人验收',
     RETURNED: '已完成归还验收',
+    COMPLETED: '已完成归还验收',
+    EXCEPTION: '交接异常，等待负责人处理',
     CANCELLED: '交接流程已取消',
     NOT_REQUIRED: '历史记录无需交接',
   }
