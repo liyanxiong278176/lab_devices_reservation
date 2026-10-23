@@ -497,7 +497,8 @@ onBeforeUnmount(() => {
                 :key="day.date"
                 type="button"
                 class="availability-calendar__day"
-                :class="{ 'is-available': (day.availableUnits ?? Number(day.available)) >= quantity, 'is-conflict': (day.availableUnits ?? Number(day.available)) < quantity, 'is-selected': selectedDates?.includes(day.date) }"
+                :class="{ 'is-available': (day.availableUnits ?? Number(day.available)) >= quantity, 'is-conflict': (day.availableUnits ?? Number(day.available)) < quantity, 'is-selected': Boolean(selectedDates && day.date >= selectedDates[0] && day.date <= selectedDates[1]) }"
+                :aria-pressed="Boolean(selectedDates && day.date >= selectedDates[0] && day.date <= selectedDates[1])"
                 :disabled="(day.availableUnits ?? Number(day.available)) < quantity"
                 @click="selectAvailableDate(day.date)"
               >

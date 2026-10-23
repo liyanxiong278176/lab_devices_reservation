@@ -231,6 +231,27 @@ describe('reservation creation page', () => {
     expect((setupOf(wrapper).form as { purposeCategory: string }).purposeCategory).toBe('RESEARCH')
   })
 
+  it('highlights every day in the inclusive range and clears highlights outside a new range', async () => {
+    mocks.route.query = { deviceId: '42', startDate: '2026-10-23', endDate: '2026-10-25' }
+    mocks.deviceAvailability.mockResolvedValue(
+      ['2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25', '2026-10-26']
+        .map((date) => ({ date, available: true })),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const days = wrapper.findAll('.availability-calendar__day')
+    expect(days.map((day) => day.classes().includes('is-selected')))
+      .toEqual([false, true, true, true, false])
+    expect(days.map((day) => day.attributes('aria-pressed')))
+      .toEqual(['false', 'true', 'true', 'true', 'false'])
+
+    await days[4].trigger('click')
+    await flushPromises()
+    expect(days.map((day) => day.classes().includes('is-selected')))
+      .toEqual([false, false, false, false, true])
+  })
+
   it('restores an unresolved request and resends the identical payload and token', async () => {
     const payload = {
       poolId: 17,
