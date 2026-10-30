@@ -171,17 +171,18 @@ public class StorageService {
     if (!token.matches("[A-Za-z0-9_-]{20,64}")) throw ApiError.missing("附件");
     var row = db.one("SELECT * FROM v2_upload_asset WHERE asset_token=?", token);
     if (row == null) throw ApiError.missing("附件");
-    if (!p.systemAdmin() && Database.id(row, "college_id") != p.tenant())
-      throw ApiError.forbidden();
-    if (Database.id(row, "user_id") == p.userId() || p.systemAdmin()) return row;
+    if (p.systemAdmin()) return row;
     var doc =
         db.one(
             "SELECT device_id FROM v2_device_document WHERE asset_id=? AND active=1",
             row.get("id"));
     if (doc != null) {
+      p.require("device:read");
       scope.device(p, Database.id(doc, "device_id"), false);
       return row;
     }
+    if (Database.id(row, "college_id") != p.tenant()) throw ApiError.forbidden();
+    if (Database.id(row, "user_id") == p.userId()) return row;
     if (!p.manager()) throw ApiError.forbidden();
     var devices =
         db.rows(

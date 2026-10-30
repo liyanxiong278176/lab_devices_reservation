@@ -214,7 +214,7 @@ async function onSubmit() {
     }
     dialogVisible.value = false
     query.value.page = 1
-    await load()
+    await Promise.all([load(), loadOptions()])
   } catch {
     // 拦截器已提示
   } finally {

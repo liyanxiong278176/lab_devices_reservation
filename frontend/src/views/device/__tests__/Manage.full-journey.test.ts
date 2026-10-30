@@ -256,6 +256,27 @@ describe('device management full CRUD journeys', () => {
     expect(messages.success).toHaveBeenCalledWith('已新建')
   })
 
+  it('refreshes pool options after creation so the next drawer can reuse the new pool', async () => {
+    const wrapper = await settledPage()
+    const state = setup(wrapper)
+    api.listDevicePoolOptions.mockResolvedValueOnce([
+      { id: 99, name: '新资源池设备', labId: 10, labName: '光学实验室', unitCount: 1 },
+    ])
+    await wrapper.get('.gradient-button').trigger('click')
+    state.form.name = '新资源池设备'
+    state.form.categoryId = 2
+    state.form.labId = 10
+    await wrapper.get('.drawer-footer .gradient-button').trigger('click')
+    await flushPromises()
+    await wrapper.get('.gradient-button').trigger('click')
+    state.form.name = '新资源池设备'
+    state.form.labId = 10
+    await nextTick()
+    expect(wrapper.findAll('option').map((option) => option.text()))
+      .toContain('新资源池设备（1 台，光学实验室）')
+    expect(api.listDevicePoolOptions).toHaveBeenCalledTimes(2)
+  })
+
   it('updates every visible form control and closes the drawer through its model event', async () => {
     const wrapper = await settledPage()
     await wrapper.get('.gradient-button').trigger('click')
